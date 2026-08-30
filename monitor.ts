@@ -2522,12 +2522,14 @@ class TelegramSessionMonitor {
   }
 
   /**
-   * Render one aligned field line for HTML parse mode: a bold label padded to
-   * LABEL_WIDTH (colon dropped, a single space separates it from the value),
-   * then the HTML-escaped value so every value starts on the same column.
+   * Render one aligned field line for HTML parse mode: a bold label in a
+   * monospace <code> span padded to LABEL_WIDTH (colon dropped, a single space
+   * separates it from the value), then the HTML-escaped value. The label runs
+   * in a fixed-width font so every value starts on the same visual column even
+   * though Telegram's default message font is proportional.
    */
   private field(label: string, value: string) {
-    return `<b>${label.padEnd(LABEL_WIDTH)}</b> ${this.escapeHtml(value)}`;
+    return `<b><code>${label.padEnd(LABEL_WIDTH)}</code></b> ${this.escapeHtml(value)}`;
   }
 
   private summarizeError(value: unknown): ErrorSummary {
@@ -2689,12 +2691,22 @@ class TelegramSessionMonitor {
 
   private limitMessage(text: string) {
     if (text.length <= TELEGRAM_MESSAGE_LIMIT) return text;
-    let truncated = `${text.slice(0, TELEGRAM_MESSAGE_LIMIT - 16)}\n... truncated`;
-    // Ensure any <b> tag opened before the cut is closed so Telegram's HTML
-    // parser does not reject the message.
-    const opens = (truncated.match(/<b>/g) ?? []).length;
-    const closes = (truncated.match(/<\/b>/g) ?? []).length;
-    if (opens > closes) truncated += "</b>".repeat(opens - closes);
+    // Reserve room for closing any tags that remain open at the cut point
+    // (worst case "</code></b>" = 14 chars), so the result stays within limit.
+    const RESERVED = "</code></b>".length;
+    let truncated =
+      `${text.slice(0, TELEGRAM_MESSAGE_LIMIT - 16 - RESERVED)}\n... truncated`;
+    // Ensure any <code>/<b> tags opened before the cut are closed so Telegram's
+    // HTML parser does not reject the message. <code> nests inside <b>, so close
+    // it first when both are still open.
+    const codeOpens = (truncated.match(/<code>/g) ?? []).length;
+    const codeCloses = (truncated.match(/<\/code>/g) ?? []).length;
+    const bOpens = (truncated.match(/<b>/g) ?? []).length;
+    const bCloses = (truncated.match(/<\/b>/g) ?? []).length;
+    const codeOpen = codeOpens - codeCloses;
+    const bOpen = bOpens - bCloses;
+    if (codeOpen > 0) truncated += "</code>".repeat(codeOpen);
+    if (bOpen > 0) truncated += "</b>".repeat(bOpen);
     return truncated;
   }
 
