@@ -93,21 +93,10 @@ jobs:
       # temporary npm token. --provenance attaches build provenance to the
       # published attestations. The strip step below guards against a leftover
       # empty _authToken line that would short-circuit the OIDC flow.
-      - name: Diagnose OIDC env
-        run: |
-          echo "ID-req-url set: $([ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && echo yes || echo no)"
-          echo "ID-req-token set: $([ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && echo yes || echo no)"
-          echo "GITHUB_REF: $GITHUB_REF"
-          echo "GITHUB_REF_NAME: $GITHUB_REF_NAME"
-          echo "--- npmrc ---"
-          npm config get userconfig
-          cat "$(npm config get userconfig)" 2>/dev/null || echo "(no userconfig file)"
-          npm whoami 2>&1 || true
-
       - name: Publish to npm
         run: |
           npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
           if [ -f "$npmrc" ]; then
             sed -i '/_authToken/d' "$npmrc"
           fi
-          npm publish --provenance --access public --loglevel verbose
+          npm publish --provenance --access public
