@@ -184,6 +184,7 @@ import type {
 const SERVICE = "telegram-session-monitor";
 const TARGET_OPENCODE_VERSION = "1.18.23";
 const IDLE_DEBOUNCE_MS = 5_000;
+const WAITING_NOTIFY_DEBOUNCE_MS = 2_000;
 const TELEGRAM_POLL_SECONDS = 25;
 const TELEGRAM_POLL_TIMEOUT_MS = 35_000;
 const TELEGRAM_SEND_TIMEOUT_MS = 15_000;
@@ -335,6 +336,10 @@ class TelegramSessionMonitor {
   private readonly sessionInfo = new Map<string, Session>();
   private readonly seenEventIDs = new Set<string>();
   private readonly seenWaitingRequestIDs = new Set<string>();
+  private readonly waitingNotifyTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   private readonly terminalMessageIDs = new Set<string>();
   private readonly tasks = new Set<Promise<void>>();
   private readonly abortController = new AbortController();
@@ -387,6 +392,11 @@ class TelegramSessionMonitor {
       clearTimeout(this.pollerRetryTimer);
       this.pollerRetryTimer = undefined;
     }
+
+    for (const timer of this.waitingNotifyTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.waitingNotifyTimers.clear();
 
     for (const session of this.sessions.values()) {
       if (session.idleTimer) clearTimeout(session.idleTimer);
@@ -528,6 +538,9 @@ class TelegramSessionMonitor {
         const root = await this.primarySession(id);
         const projection = this.sessions.get(id);
         if (projection?.idleTimer) clearTimeout(projection.idleTimer);
+        for (const requestID of projection?.waitingByRequestID.keys() ?? []) {
+          this.cancelWaitingNotify(requestID);
+        }
         this.sessions.delete(id);
         this.sessionInfo.delete(id);
         if (this.selectedSessionID === id) this.selectedSessionID = undefined;
@@ -660,8 +673,10 @@ class TelegramSessionMonitor {
         const requestID =
           this.string(properties.requestID) ??
           this.string(properties.permissionID);
-        if (requestID)
+        if (requestID) {
+          this.cancelWaitingNotify(requestID);
           this.ensureSession(sessionID).waitingByRequestID.delete(requestID);
+        }
         return;
       }
 
@@ -695,8 +710,10 @@ class TelegramSessionMonitor {
       case "question.v2.rejected": {
         if (!sessionID) return;
         const requestID = this.string(properties.requestID);
-        if (requestID)
+        if (requestID) {
+          this.cancelWaitingNotify(requestID);
           this.ensureSession(sessionID).waitingByRequestID.delete(requestID);
+        }
         return;
       }
 
@@ -817,10 +834,41 @@ class TelegramSessionMonitor {
     if (this.seenWaitingRequestIDs.has(waiting.requestID)) return;
     this.rememberBounded(this.seenWaitingRequestIDs, waiting.requestID);
     session.waitingByRequestID.set(waiting.requestID, waiting);
+    if (waiting.type === "permission") {
+      // opencode's auto-approve mode answers permission requests client-side
+      // within milliseconds of publishing permission.asked. Defer the Telegram
+      // notification by a short window so auto-approved requests (which arrive
+      // with a permission.replied right after) don't spam the chat; only
+      // permissions that are still pending after the window are reported.
+      this.scheduleWaitingNotify(sessionID, waiting);
+      return;
+    }
     this.track(
       this.notifyWaiting(sessionID, waiting),
       "Waiting notification failed",
     );
+  }
+
+  private scheduleWaitingNotify(sessionID: string, waiting: WaitingProjection) {
+    dline(`scheduleWaitingNotify(${waiting.requestID}) type=${waiting.type}`);
+    const timer = setTimeout(() => {
+      this.waitingNotifyTimers.delete(waiting.requestID);
+      if (this.disposed) return;
+      this.track(
+        this.notifyWaiting(sessionID, waiting),
+        "Waiting notification failed",
+      );
+    }, WAITING_NOTIFY_DEBOUNCE_MS);
+    this.waitingNotifyTimers.set(waiting.requestID, timer);
+  }
+
+  private cancelWaitingNotify(requestID: string) {
+    const timer = this.waitingNotifyTimers.get(requestID);
+    if (timer) {
+      dline(`cancelWaitingNotify(${requestID})`);
+      clearTimeout(timer);
+      this.waitingNotifyTimers.delete(requestID);
+    }
   }
 
   private async notifyWaiting(sessionID: string, waiting: WaitingProjection) {
@@ -828,6 +876,7 @@ class TelegramSessionMonitor {
     const source = this.sessions.get(sessionID);
     if (!source || !source.waitingByRequestID.has(waiting.requestID)) return;
     if (!(await this.isProjectEnabled())) return;
+    if (!source.waitingByRequestID.has(waiting.requestID)) return;
     const tool = waiting.toolCallID
       ? source.toolsByCallID.get(waiting.toolCallID)?.tool
       : undefined;
