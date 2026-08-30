@@ -1,0 +1,93 @@
+# opencode-telegram-monitor
+
+A read-only [opencode](https://opencode.ai) plugin that keeps you in the loop on your opencode sessions from **Telegram**.
+
+It watches opencode sessions in real time and reports their lifecycle — started, busy, idle, retried, completed, failed or cancelled — plus token usage and cost, to a Telegram bot chat of your choice. The bot is fully read-only: approvals, permission prompts and answers are always handled in opencode itself.
+
+## Features
+
+- **Session lifecycle notifications** — track sessions through `idle` / `busy` / `retry` states and `completed` / `failed` / `cancelled` outcomes, delivered straight to Telegram.
+- **Token usage & cost** — aggregated input / output / reasoning / cache tokens with estimated cost per session.
+- **Todo projection** — see the current session's todo list from Telegram.
+- **Project registry & inline menu** — a registry of monitored projects (`~/.otg/projects.json`) with an inline-keyboard menu (`/menu`) to manage them from the chat.
+- **Read-only bot** — intentional design; approvals and answers stay in opencode.
+- **Cross-process poller lock** — when several opencode windows are open on the same machine, a file-based lock (`PollerLock`) guarantees only one instance polls Telegram at a time.
+- **Proxy support** — optional HTTP/HTTPS proxy (with auth and CONNECT tunneling) for reaching the Telegram Bot API.
+- **Resilient messaging** — long polling (`getUpdates`, 25 s interval), retries with backoff, message length clamping, and bot-token redaction in all logs.
+
+## Requirements
+
+- Node.js (runtime for opencode plugins)
+- opencode `>= 1.18` (plugin targets `1.18.23`)
+- A Telegram bot token (create one with [@BotFather](https://t.me/BotFather)) and your Telegram `chatId`
+
+## Installation
+
+1. Copy `monitor.ts` into your opencode plugins directory:
+
+   ```bash
+   mkdir -p ~/.config/opencode/plugins
+   cp monitor.ts ~/.config/opencode/plugins/telegram-session-monitor.ts
+   ```
+
+2. Restart opencode. The plugin loads automatically from the plugins directory.
+
+## Configuration
+
+The plugin reads its configuration from `~/.otg/telegram.json`:
+
+```json
+{
+  "botToken": "123456789:ABCdef...",
+  "chatId": "987654321",
+  "proxy": "http://user:pass@proxy.example.com:8080"
+}
+```
+
+| Field      | Required | Description                                                              |
+| ---------- | :------: | ------------------------------------------------------------------------ |
+| `botToken` |   yes    | Your Telegram bot token (validated on load).                             |
+| `chatId`   |   yes    | The chat the bot is allowed to talk to / listen from.                    |
+| `proxy`    |    no    | Optional `http://` or `https://` proxy URL (may include auth).           |
+
+> If the config is missing or invalid, the plugin logs an error and disables itself instead of crashing opencode.
+
+## Telegram commands
+
+| Command              | Description                                        |
+| -------------------- | -------------------------------------------------- |
+| `/start`             | Check the plugin connection and bot health.        |
+| `/sessions`          | List active sessions.                              |
+| `/use <short-id>`    | Select a session to inspect.                       |
+| `/status`            | Show the selected session's status.                |
+| `/todo`              | Show the selected session's todo list.             |
+| `/usage`             | Show the selected session's token usage and cost.  |
+| `/menu`              | Manage monitored projects (inline keyboard).       |
+| `/help`              | Show this help.                                    |
+
+## How it works
+
+- The plugin subscribes to opencode's event stream through the `@opencode-ai/sdk` client and maintains an in-memory projection of every session: state, outcome, tools, todos, waiting prompts and token totals.
+- A background poller talks to the Telegram Bot API (`getUpdates` long polling) so you can send commands from the chat; replies are sent back through the same channel with retries.
+- When several opencode processes share one machine, `PollerLock` (`~/.otg/`) elects a single poller to avoid duplicate `getUpdates` consumers.
+- A self-healing registrar re-asserts the current project into the registry every 5 minutes, so a project removed via `/menu` comes back as disabled while its window stays open.
+
+### State & data files (`~/.otg/`)
+
+| File               | Purpose                                        |
+| ------------------ | ---------------------------------------------- |
+| `telegram.json`    | Plugin configuration (bot token, chat id).     |
+| `projects.json`    | Registry of monitored projects.                |
+| `tgdiag.log`       | Diagnostics log (token-redacted).              |
+| `*.lock`           | Cross-process poller lock files.               |
+
+## Security notes
+
+- The bot is **read-only** — it never acts on your behalf inside opencode.
+- Messages are limited to the originating `chatId`; updates from any other chat are ignored.
+- The bot token is redacted (`[REDACTED]`) in all log output and diagnostics.
+- The plugin runs locally and talks to the public Telegram Bot API only.
+
+## License
+
+[MIT](LICENSE)
