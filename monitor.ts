@@ -215,11 +215,6 @@ const ICON_SESSIONS = "🗂️";
 const ICON_READY = "🟢";
 const ICON_STATUS = "📊";
 
-// Fixed width used to left-align field labels so every value starts on the
-// same column. Chosen to fit the longest label ("Total tokens" / "Current
-// tool" are 12 chars) with headroom; labels shorter than this are padded.
-const LABEL_WIDTH = 14;
-
 dline("MODULE LOADED");
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -904,21 +899,19 @@ class TelegramSessionMonitor {
     const tool = waiting.toolCallID
       ? source.toolsByCallID.get(waiting.toolCallID)?.tool
       : undefined;
-    const lines = [
-      this.iconForWaitingType(waiting.type),
-      this.field("Project", this.projectLabel),
-      this.field("Session", this.sessionLabel(root)),
-      this.field("Type", waiting.type),
+    const rows = [
+      this.fieldRow("Project", this.projectLabel),
+      this.fieldRow("Session", this.sessionLabel(root)),
+      this.fieldRow("Type", waiting.type),
     ];
     if (source.sessionID !== root.sessionID) {
-      lines.push(this.field("Subtask", this.sessionTitle(source)));
+      rows.push(this.fieldRow("Subtask", this.sessionTitle(source)));
     }
-    if (tool) lines.push(this.field("Tool", this.safeText(tool, 80)));
-    lines.push(
-      this.field("Request", waiting.summary),
-      "Action required in OpenCode.",
-    );
-    this.enqueueMessage(lines.join("\n"));
+    if (tool) rows.push(this.fieldRow("Tool", this.safeText(tool, 80)));
+    rows.push(this.fieldRow("Request", waiting.summary));
+    const parts = [this.fieldTable(this.iconForWaitingType(waiting.type), rows)];
+    parts.push("<p>Action required in OpenCode.</p>");
+    this.enqueueMessage(parts.join("\n"));
   }
 
   private applyStatus(
@@ -1450,19 +1443,20 @@ class TelegramSessionMonitor {
       connected = false;
     }
 
+    const rows = [
+      this.fieldRow("Project", this.projectLabel),
+      this.fieldRow("OpenCode target", TARGET_OPENCODE_VERSION),
+      this.fieldRow(
+        "OpenCode connection",
+        connected ? "available" : "unavailable",
+      ),
+      this.fieldRow("Authorization", "verified"),
+      this.fieldRow("Mode", "read-only"),
+    ];
     this.enqueueMessage(
       [
-        ICON_READY,
-        this.field("Project", this.projectLabel),
-        this.field("OpenCode target", TARGET_OPENCODE_VERSION),
-        this.field(
-          "OpenCode connection",
-          connected ? "available" : "unavailable",
-        ),
-        this.field("Authorization", "verified"),
-        this.field("Mode", "read-only"),
-        "",
-        "Use /sessions to list active sessions.",
+        this.fieldTable(ICON_READY, rows),
+        "<p>Use /sessions to list active sessions.</p>",
       ].join("\n"),
     );
   }
@@ -1474,30 +1468,44 @@ class TelegramSessionMonitor {
       `commandSessions: total tracked=${this.sessions.size}, activePrimary=${active.length}`,
     );
     if (active.length === 0) {
-      const lines = [ICON_SESSIONS, this.field("Project", this.projectLabel), ""];
-      lines.push("No active sessions.");
+      const parts = [
+        this.fieldTable(ICON_SESSIONS, [
+          this.fieldRow("Project", this.projectLabel),
+        ]),
+        "<p>No active sessions.</p>",
+      ];
       const last = this.lastCompletedSessionID
         ? this.sessions.get(this.lastCompletedSessionID)
         : undefined;
-      if (last) lines.push("", `Last completed: ${this.sessionLabel(last)}`);
-      this.enqueueMessage(lines.join("\n"));
+      if (last) {
+        parts.push(
+          `<p>Last completed: ${this.escapeHtml(this.sessionLabel(last))}</p>`,
+        );
+      }
+      this.enqueueMessage(parts.join("\n"));
       return;
     }
 
-    const lines = [ICON_SESSIONS, this.field("Project", this.projectLabel), ""];
-    for (const session of active) {
-      const marker = session.sessionID === this.selectedSessionID ? "*" : "-";
-      lines.push(
-        `${marker} ${this.shortID(session.sessionID)} | ${this.displayState(session)} | ${this.escapeHtml(this.sessionTitle(session))}`,
-      );
-    }
-    lines.push("", "Select one with /use &lt;short-id&gt;.");
-    this.enqueueMessage(lines.join("\n"));
+    const listItems = active
+      .map((session) => {
+        const marker = session.sessionID === this.selectedSessionID ? "*" : "-";
+        return `<li>${marker} ${this.shortID(session.sessionID)} | ${this.displayState(session)} | ${this.escapeHtml(this.sessionTitle(session))}</li>`;
+      })
+      .join("");
+    this.enqueueMessage(
+      [
+        this.fieldTable(ICON_SESSIONS, [
+          this.fieldRow("Project", this.projectLabel),
+        ]),
+        `<ul>${listItems}</ul>`,
+        "<p>Select one with /use &lt;short-id&gt;.</p>",
+      ].join("\n"),
+    );
   }
 
   private async commandUse(argument?: string) {
     if (!argument) {
-      this.enqueueMessage("Usage: /use &lt;short-id&gt;");
+      this.enqueueMessage(this.paragraph("Usage: /use &lt;short-id&gt;"));
       return;
     }
 
@@ -1508,21 +1516,24 @@ class TelegramSessionMonitor {
 
     if (matches.length === 0) {
       this.enqueueMessage(
-        `No observed session matches: ${this.escapeHtml(this.safeText(argument, 40))}`,
+        this.paragraph(
+          `No observed session matches: ${this.safeText(argument, 40)}`,
+        ),
       );
       return;
     }
     if (matches.length > 1) {
+      const listItems = matches
+        .slice(0, 10)
+        .map(
+          (session) =>
+            `<li>${this.shortID(session.sessionID)} | ${this.escapeHtml(this.sessionTitle(session))}</li>`,
+        )
+        .join("");
       this.enqueueMessage(
-        [
-          "Session ID is ambiguous:",
-          ...matches
-            .slice(0, 10)
-            .map(
-              (session) =>
-                `- ${this.shortID(session.sessionID)} | ${this.escapeHtml(this.sessionTitle(session))}`,
-            ),
-        ].join("\n"),
+        [this.paragraph("Session ID is ambiguous:"), `<ul>${listItems}</ul>`].join(
+          "\n",
+        ),
       );
       return;
     }
@@ -1530,7 +1541,7 @@ class TelegramSessionMonitor {
     const session = matches[0]!;
     this.selectedSessionID = session.sessionID;
     await this.reconcileSession(session.sessionID);
-    this.enqueueMessage(`Selected: ${this.escapeHtml(this.sessionLabel(session))}`);
+    this.enqueueMessage(this.paragraph(`Selected: ${this.sessionLabel(session)}`));
   }
 
   private async commandStatus() {
@@ -1539,18 +1550,18 @@ class TelegramSessionMonitor {
     if (!session) {
       const active = this.activePrimarySessions();
       if (active.length > 0) {
+        const listItems = active
+          .slice(0, 10)
+          .map(
+            (item) =>
+              `<li>${this.shortID(item.sessionID)} | ${this.displayState(item)} | ${this.escapeHtml(this.sessionTitle(item))}</li>`,
+          )
+          .join("");
         this.enqueueMessage(
           [
-            ICON_STATUS,
-            "No session selected.",
-            ...active
-              .slice(0, 10)
-              .map(
-                (item) =>
-                  `- ${this.shortID(item.sessionID)} | ${this.displayState(item)} | ${this.escapeHtml(this.sessionTitle(item))}`,
-              ),
-            "",
-            "Select one with /use &lt;short-id&gt;.",
+            this.paragraph(`${ICON_STATUS} No session selected.`),
+            `<ul>${listItems}</ul>`,
+            this.paragraph("Select one with /use &lt;short-id&gt;."),
           ].join("\n"),
         );
         return;
@@ -1561,8 +1572,10 @@ class TelegramSessionMonitor {
         : undefined;
       this.enqueueMessage(
         last
-          ? `${ICON_STATUS}\nNo active sessions.\nLast completed: ${this.sessionLabel(last)}`
-          : `${ICON_STATUS}\nNo active sessions.`,
+          ? this.paragraph(
+              `${ICON_STATUS} No active sessions.\nLast completed: ${this.sessionLabel(last)}`,
+            )
+          : this.paragraph(`${ICON_STATUS} No active sessions.`),
       );
       return;
     }
@@ -1575,7 +1588,9 @@ class TelegramSessionMonitor {
     const session = this.selectedSession();
     if (!session) {
       this.enqueueMessage(
-        "No session selected. Use /sessions and /use &lt;short-id&gt; first.",
+        this.paragraph(
+          "No session selected. Use /sessions and /use &lt;short-id&gt; first.",
+        ),
       );
       return;
     }
@@ -1587,7 +1602,9 @@ class TelegramSessionMonitor {
     const session = this.selectedSession();
     if (!session) {
       this.enqueueMessage(
-        "No session selected. Use /sessions and /use &lt;short-id&gt; first.",
+        this.paragraph(
+          "No session selected. Use /sessions and /use &lt;short-id&gt; first.",
+        ),
       );
       return;
     }
@@ -1604,29 +1621,34 @@ class TelegramSessionMonitor {
   }
 
   private menuText(registry: ProjectRegistry) {
-    const lines = [`📋 项目监控列表（${registry.projects.length}）`, ""];
+    const parts = [
+      this.paragraph(`📋 项目监控列表（${registry.projects.length}）`),
+    ];
     if (registry.projects.length === 0) {
-      lines.push("（暂无项目，启动 opencode 后会自动注册）");
+      parts.push(this.paragraph("（暂无项目，启动 opencode 后会自动注册）"));
     } else {
+      const items = [];
       for (
         let i = 0;
         i < Math.min(registry.projects.length, MENU_MAX_PROJECTS);
         i += 1
       ) {
         const entry = registry.projects[i]!;
-        lines.push(
-          `${entry.enabled ? "✅" : "⚪"} ${this.escapeHtml(basename(entry.path))}`,
+        items.push(
+          `<li>${entry.enabled ? "✅" : "⚪"} ${this.escapeHtml(basename(entry.path))}</li>`,
         );
       }
+      parts.push(`<ul>${items.join("")}</ul>`);
       if (registry.projects.length > MENU_MAX_PROJECTS) {
-        lines.push(
-          "",
-          `... 以及另外 ${registry.projects.length - MENU_MAX_PROJECTS} 个项目`,
+        parts.push(
+          this.paragraph(
+            `... 以及另外 ${registry.projects.length - MENU_MAX_PROJECTS} 个项目`,
+          ),
         );
       }
     }
-    lines.push("", "✅ 已监控 · ⚪ 已注册未开启 · 🗑 删除");
-    return lines.join("\n");
+    parts.push(this.paragraph("✅ 已监控 · ⚪ 已注册未开启 · 🗑 删除"));
+    return parts.join("\n");
   }
 
   private buildMenuKeyboard(registry: ProjectRegistry): TelegramInlineKeyboard {
@@ -1767,51 +1789,54 @@ class TelegramSessionMonitor {
       .filter((tool) => tool.state === "pending" || tool.state === "running")
       .sort((left, right) => right.updatedAt - left.updatedAt)[0];
     const todo = this.todoCounts(session.todos);
-    const lines = [
-      this.iconForState(this.displayState(session)),
-      this.field("Project", this.projectLabel),
-      this.field("Session", this.sessionLabel(session)),
+    const rows = [
+      this.fieldRow("Project", this.projectLabel),
+      this.fieldRow("Session", this.sessionLabel(session)),
     ];
 
-    if (session.agent) lines.push(this.field("Agent", session.agent));
+    if (session.agent) rows.push(this.fieldRow("Agent", session.agent));
     if (currentTool) {
-      lines.push(this.field("Current tool", this.safeText(currentTool.tool, 80)));
-      if (currentTool.target) lines.push(this.field("Target", currentTool.target));
-      lines.push(this.field("Tool state", currentTool.state));
-      if (currentTool.progress) lines.push(this.field("Progress", currentTool.progress));
+      rows.push(this.fieldRow("Current tool", this.safeText(currentTool.tool, 80)));
+      if (currentTool.target) rows.push(this.fieldRow("Target", currentTool.target));
+      rows.push(this.fieldRow("Tool state", currentTool.state));
+      if (currentTool.progress) rows.push(this.fieldRow("Progress", currentTool.progress));
     }
-    lines.push(this.field("Todo", this.todoSummary(todo)));
+    rows.push(this.fieldRow("Todo", this.todoSummary(todo)));
     if (session.turnStartedAt && session.status !== "idle") {
-      lines.push(
-        this.field(
+      rows.push(
+        this.fieldRow(
           "Elapsed",
           this.formatDuration(Date.now() - session.turnStartedAt),
         ),
       );
     }
 
+    const parts = [this.fieldTable(this.iconForState(this.displayState(session)), rows)];
+
     const children = this.childSessions(session.sessionID);
     const activeChildren = children.filter(
       (child) => child.status !== "idle" || child.waitingByRequestID.size > 0,
     );
     if (activeChildren.length > 0) {
-      lines.push("", "Active subtasks:");
-      for (const child of activeChildren.slice(0, 5)) {
-        const tool = [...child.toolsByCallID.values()]
-          .filter(
-            (item) => item.state === "pending" || item.state === "running",
-          )
-          .sort((left, right) => right.updatedAt - left.updatedAt)[0];
-        lines.push(
-          `- ${this.escapeHtml(this.sessionTitle(child))} | ${this.displayState(child)}${tool ? ` | ${this.escapeHtml(tool.tool)}` : ""}`,
-        );
-      }
+      const listItems = activeChildren
+        .slice(0, 5)
+        .map((child) => {
+          const tool = [...child.toolsByCallID.values()]
+            .filter(
+              (item) => item.state === "pending" || item.state === "running",
+            )
+            .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+          return `<li>${this.escapeHtml(this.sessionTitle(child))} | ${this.displayState(child)}${tool ? ` | ${this.escapeHtml(tool.tool)}` : ""}</li>`;
+        })
+        .join("");
+      parts.push(this.paragraph("Active subtasks:"));
+      parts.push(`<ul>${listItems}</ul>`);
       if (activeChildren.length > 5) {
-        lines.push(`- ... and ${activeChildren.length - 5} more`);
+        parts.push(this.paragraph(`... and ${activeChildren.length - 5} more`));
       }
     }
 
-    return this.limitMessage(lines.join("\n"));
+    return this.limitMessage(parts.join("\n"));
   }
 
   private formatTerminalNotification(
@@ -1820,28 +1845,27 @@ class TelegramSessionMonitor {
     error?: ErrorSummary,
   ) {
     const todo = this.todoCounts(session.todos);
-    const lines = [
-      this.iconForOutcome(outcome),
-      this.field("Project", this.projectLabel),
-      this.field("Session", this.sessionLabel(session)),
+    const rows = [
+      this.fieldRow("Project", this.projectLabel),
+      this.fieldRow("Session", this.sessionLabel(session)),
     ];
     if (session.turnStartedAt) {
-      lines.push(
-        this.field(
+      rows.push(
+        this.fieldRow(
           "Duration",
           this.formatDuration(Date.now() - session.turnStartedAt),
         ),
       );
     }
     if (error && outcome === "failed") {
-      lines.push(
-        this.field(
+      rows.push(
+        this.fieldRow(
           "Error",
           error.message ? `${error.name}: ${error.message}` : error.name,
         ),
       );
     }
-    lines.push(this.field("Todo", this.todoSummary(todo)));
+    rows.push(this.fieldRow("Todo", this.todoSummary(todo)));
 
     const children = this.childSessions(session.sessionID);
     if (children.length > 0) {
@@ -1857,8 +1881,8 @@ class TelegramSessionMonitor {
       const active = children.filter(
         (child) => child.status !== "idle" || child.observedRunning,
       ).length;
-      lines.push(
-        this.field(
+      rows.push(
+        this.fieldRow(
           "Subtasks",
           `${completed} completed, ${failed} failed, ${cancelled} cancelled, ${active} active`,
         ),
@@ -1866,17 +1890,17 @@ class TelegramSessionMonitor {
     }
 
     const tokens = this.aggregateTokens(session);
-    lines.push(this.field("Tokens", this.formatNumber(this.totalTokens(tokens))));
-    lines.push(this.field("Input", this.formatNumber(tokens.input)));
-    lines.push(this.field("Output", this.formatNumber(tokens.output)));
-    lines.push(
-      this.field(
+    rows.push(this.fieldRow("Tokens", this.formatNumber(this.totalTokens(tokens))));
+    rows.push(this.fieldRow("Input", this.formatNumber(tokens.input)));
+    rows.push(this.fieldRow("Output", this.formatNumber(tokens.output)));
+    rows.push(
+      this.fieldRow(
         "Cache",
         this.formatNumber(tokens.cacheRead + tokens.cacheWrite),
       ),
     );
-    lines.push(this.field("Cost", this.formatCost(tokens)));
-    return this.limitMessage(lines.join("\n"));
+    rows.push(this.fieldRow("Cost", this.formatCost(tokens)));
+    return this.limitMessage(this.fieldTable(this.iconForOutcome(outcome), rows));
   }
 
   private formatTodos(session: SessionProjection) {
@@ -1892,70 +1916,74 @@ class TelegramSessionMonitor {
       completed: "COMPLETED",
       cancelled: "CANCELLED",
     };
-    const lines = [
-      ICON_TODO,
-      this.field("Project", this.projectLabel),
-      this.field("Session", this.sessionLabel(session)),
-    ];
+    const table = this.fieldTable(ICON_TODO, [
+      this.fieldRow("Project", this.projectLabel),
+      this.fieldRow("Session", this.sessionLabel(session)),
+    ]);
 
     if (session.todos.length === 0) {
-      lines.push("", "No todos reported.");
-      return lines.join("\n");
+      return this.limitMessage([table, this.paragraph("No todos reported.")].join("\n"));
     }
 
+    const parts = [table];
     let shown = 0;
     for (const group of groups) {
       const todos = session.todos.filter((todo) => todo.status === group);
       if (todos.length === 0) continue;
-      lines.push("", this.escapeHtml(labels[group]));
+      parts.push(this.paragraph(labels[group]));
+      const items: string[] = [];
       for (const todo of todos) {
         const line = `- ${this.escapeHtml(this.safeText(todo.content, 180))}`;
         if (
-          lines.join("\n").length + line.length >
+          parts.join("\n").length + items.join("\n").length + line.length >
           TELEGRAM_MESSAGE_LIMIT - 100
         )
           break;
-        lines.push(line);
+        items.push(`<li>${this.escapeHtml(this.safeText(todo.content, 180))}</li>`);
         shown += 1;
       }
+      if (items.length > 0) parts.push(`<ul>${items.join("")}</ul>`);
     }
 
     if (shown < session.todos.length) {
-      lines.push("", `... and ${session.todos.length - shown} more items`);
+      parts.push(this.paragraph(`... and ${session.todos.length - shown} more items`));
     }
-    return this.limitMessage(lines.join("\n"));
+    return this.limitMessage(parts.join("\n"));
   }
 
   private formatUsage(session: SessionProjection) {
     const tokens = this.aggregateTokens(session);
-    return [
-      ICON_USAGE,
-      this.field("Project", this.projectLabel),
-      this.field("Session", this.sessionLabel(session)),
-      this.field("Total tokens", this.formatNumber(this.totalTokens(tokens))),
-      this.field("Input", this.formatNumber(tokens.input)),
-      this.field("Output", this.formatNumber(tokens.output)),
-      this.field("Reasoning", this.formatNumber(tokens.reasoning)),
-      this.field("Cache read", this.formatNumber(tokens.cacheRead)),
-      this.field("Cache write", this.formatNumber(tokens.cacheWrite)),
-      this.field("Cost", this.formatCost(tokens)),
-    ].join("\n");
+    return this.fieldTable(ICON_USAGE, [
+      this.fieldRow("Project", this.projectLabel),
+      this.fieldRow("Session", this.sessionLabel(session)),
+      this.fieldRow("Total tokens", this.formatNumber(this.totalTokens(tokens))),
+      this.fieldRow("Input", this.formatNumber(tokens.input)),
+      this.fieldRow("Output", this.formatNumber(tokens.output)),
+      this.fieldRow("Reasoning", this.formatNumber(tokens.reasoning)),
+      this.fieldRow("Cache read", this.formatNumber(tokens.cacheRead)),
+      this.fieldRow("Cache write", this.formatNumber(tokens.cacheWrite)),
+      this.fieldRow("Cost", this.formatCost(tokens)),
+    ]);
   }
 
   private helpText() {
-    return [
-      ICON_HELP,
-      "Commands:",
+    const commands = [
       "/start - Check the plugin connection",
       "/sessions - List active sessions",
-      "/use &lt;short-id&gt; - Select a session",
+      "/use <short-id> - Select a session",
       "/status - Show selected session status",
       "/todo - Show selected session todos",
       "/usage - Show selected session token usage and cost",
       "/menu - Manage monitored projects",
       "/help - Show this help",
-      "",
-      "This bot is read-only. Approvals and answers must be handled in OpenCode.",
+    ];
+    const listItems = commands
+      .map((command) => `<li>${this.escapeHtml(command)}</li>`)
+      .join("");
+    return [
+      `<p>${ICON_HELP} Commands:</p>`,
+      `<ul>${listItems}</ul>`,
+      "<p>This bot is read-only. Approvals and answers must be handled in OpenCode.</p>",
     ].join("\n");
   }
 
@@ -1980,11 +2008,9 @@ class TelegramSessionMonitor {
 
   private async sendMessage(text: string) {
     if (this.abortController.signal.aborted) return;
-    await this.telegramWithRetry("sendMessage", {
+    await this.telegramWithRetry("sendRichMessage", {
       chat_id: this.config.chatId,
-      text: this.limitMessage(text),
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
+      rich_message: { html: this.limitMessage(text) },
     });
   }
 
@@ -1993,12 +2019,10 @@ class TelegramSessionMonitor {
     replyMarkup: TelegramInlineKeyboard,
   ) {
     if (this.abortController.signal.aborted) return;
-    await this.telegramWithRetry("sendMessage", {
+    await this.telegramWithRetry("sendRichMessage", {
       chat_id: this.config.chatId,
-      text: this.limitMessage(text),
+      rich_message: { html: this.limitMessage(text) },
       reply_markup: replyMarkup,
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
     });
   }
 
@@ -2522,14 +2546,28 @@ class TelegramSessionMonitor {
   }
 
   /**
-   * Render one aligned field line for HTML parse mode: a bold label in a
-   * monospace <code> span padded to LABEL_WIDTH (colon dropped, a single space
-   * separates it from the value), then the HTML-escaped value. The label runs
-   * in a fixed-width font so every value starts on the same visual column even
-   * though Telegram's default message font is proportional.
+   * Build a two-column Rich-Message table out of field rows. The optional icon
+   * is rendered as a full-width first row so the glyph stays on its own line;
+   * label/value cells size themselves to the content, so long values wrap
+   * inside their own cell instead of running back to the left margin.
    */
-  private field(label: string, value: string) {
-    return `<b><code>${label.padEnd(LABEL_WIDTH)}</code></b> ${this.escapeHtml(value)}`;
+  private fieldTable(icon: string | undefined, rows: string[]) {
+    const header = icon ? `<tr><td colspan="2" align="center">${icon}</td></tr>` : "";
+    return `<table>${header}${rows.join("")}</table>`;
+  }
+
+  /**
+   * One table row: a bold label cell and an escaped value cell.
+   */
+  private fieldRow(label: string, value: string) {
+    return `<tr><th>${label}</th><td>${this.escapeHtml(value)}</td></tr>`;
+  }
+
+  /**
+   * Wrap a plain-text line into an HTML paragraph for Rich Messages.
+   */
+  private paragraph(text: string) {
+    return `<p>${this.escapeHtml(text)}</p>`;
   }
 
   private summarizeError(value: unknown): ErrorSummary {
@@ -2691,22 +2729,34 @@ class TelegramSessionMonitor {
 
   private limitMessage(text: string) {
     if (text.length <= TELEGRAM_MESSAGE_LIMIT) return text;
-    // Reserve room for closing any tags that remain open at the cut point
-    // (worst case "</code></b>" = 14 chars), so the result stays within limit.
-    const RESERVED = "</code></b>".length;
-    let truncated =
-      `${text.slice(0, TELEGRAM_MESSAGE_LIMIT - 16 - RESERVED)}\n... truncated`;
-    // Ensure any <code>/<b> tags opened before the cut are closed so Telegram's
-    // HTML parser does not reject the message. <code> nests inside <b>, so close
-    // it first when both are still open.
-    const codeOpens = (truncated.match(/<code>/g) ?? []).length;
-    const codeCloses = (truncated.match(/<\/code>/g) ?? []).length;
-    const bOpens = (truncated.match(/<b>/g) ?? []).length;
-    const bCloses = (truncated.match(/<\/b>/g) ?? []).length;
-    const codeOpen = codeOpens - codeCloses;
-    const bOpen = bOpens - bCloses;
-    if (codeOpen > 0) truncated += "</code>".repeat(codeOpen);
-    if (bOpen > 0) truncated += "</b>".repeat(bOpen);
+    // Reserve room for the truncation marker.
+    const RESERVED = "\n... truncated".length;
+    const cut = TELEGRAM_MESSAGE_LIMIT - RESERVED;
+    let truncated = text.slice(0, cut);
+    // Back up to the previous tag boundary if we sliced mid-tag so we never
+    // leave a half-written <table>/<tr>/<td>/<b>... that would break parsing.
+    const lt = truncated.lastIndexOf("<");
+    const gt = truncated.lastIndexOf(">");
+    if (lt > gt) truncated = truncated.slice(0, lt);
+    truncated += "\n... truncated";
+    // Close any block/formatting tags left open by the cut so the rich HTML
+    // parser does not reject the message.
+    const openClose: Array<[RegExp, string, string]> = [
+      [/<table>/g, /<\/table>/g, "</table>"],
+      [/<tr>/g, /<\/tr>/g, "</tr>"],
+      [/<td>/g, /<\/td>/g, "</td>"],
+      [/<th>/g, /<\/th>/g, "</th>"],
+      [/<ul>/g, /<\/ul>/g, "</ul>"],
+      [/<li>/g, /<\/li>/g, "</li>"],
+      [/<p>/g, /<\/p>/g, "</p>"],
+      [/<code>/g, /<\/code>/g, "</code>"],
+      [/<b>/g, /<\/b>/g, "</b>"],
+    ];
+    for (const [openRe, closeRe, closeTag] of openClose) {
+      const opens = (truncated.match(openRe) ?? []).length;
+      const closes = (truncated.match(closeRe) ?? []).length;
+      if (opens > closes) truncated += closeTag.repeat(opens - closes);
+    }
     return truncated;
   }
 
