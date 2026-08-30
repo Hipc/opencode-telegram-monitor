@@ -11,7 +11,7 @@ on:
         required: true
         type: string
 
-# Serialize runs so two rapid tag pushes cannot race on set-version/commit.
+# Serialize runs so two rapid tag pushes cannot race on publish.
 concurrency:
   group: npm-publish
   cancel-in-progress: false
@@ -20,7 +20,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       # Trusted Publishing (OIDC): lets `npm publish` authenticate with a
       # short-lived token minted from this workflow's identity instead of a
       # long-lived NPM_TOKEN secret. The npm side must have Trusted Publishing
@@ -63,30 +63,15 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      # Replace the version everywhere (monitor.ts / package.json / README.md)
-      # with the tag version so the published tarball is self-consistent.
-      - name: Set version strings
-        run: node scripts/set-version.mjs "${{ steps.version.outputs.version }}"
-
-      - name: Verify replaced version
-        run: |
-          grep -q "const PLUGIN_VERSION = \"${{ steps.version.outputs.version }}\";" monitor.ts
-          echo "monitor.ts reports ${{ steps.version.outputs.version }}"
+      # The tag must already be in sync with the code: the release flow is
+      # `node scripts/check-version.mjs vX.Y.Z` then `git tag vX.Y.Z`, so the
+      # checked-out monitor.ts / package.json / README.md all report the tag
+      # version. This step is a guard for tags created without that check.
+      - name: Verify version matches tag
+        run: node scripts/check-version.mjs "${{ steps.version.outputs.version }}"
 
       - name: Check plugin compiles
         run: bun build --no-bundle --target node --external "*" monitor.ts
-
-      - name: Commit version bump back to main
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add monitor.ts package.json README.md
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(monitor): set version ${{ steps.version.outputs.version }} [skip ci]"
-            git push origin HEAD:main
-          else
-            echo "no version changes to commit"
-          fi
 
       # Trusted Publishing: no secrets, no config set. npm fetches an OIDC
       # token from the workflow's id-token permission and exchanges it for a

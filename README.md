@@ -68,6 +68,37 @@ When installed from npm, the plugin checks for a newer release on the npm regist
 
 Any failure along the way — including being **offline** — leaves the previously installed version completely untouched, so opencode always loads a working plugin. A local-file installation (see above) is never auto-updated.
 
+## Publishing a new release
+
+Releases are tag-driven: pushing a `v*` tag triggers the publish workflow, which verifies the version and publishes to npm with Trusted Publishing (OIDC) — no token, no git write-back.
+
+The workflow **refuses to publish** if the tag version does not match the version reported in the code, so keep all three in sync before tagging:
+
+| Place | Field |
+| ----- | ----- |
+| `monitor.ts` | `const PLUGIN_VERSION = "x.y.z"` (source of truth) |
+| `package.json` | `"version": "x.y.z"` |
+| `README.md` | npm install pin `opencode-telegram-monitor@x.y.z` |
+
+For a **bugfix** (patch) release, bump only the lowest number — never the middle one (`0.5.0 → 0.5.1`, not `0.6.0`):
+
+```bash
+# 1. set the new version everywhere (monitor.ts / package.json / README.md)
+node scripts/set-version.mjs v0.5.1
+
+# 2. verify the tag you are about to create matches the code (exits non-zero on mismatch)
+node scripts/check-version.mjs v0.5.1
+
+# 3. commit, tag, push — the workflow verifies again and publishes
+git add monitor.ts package.json README.md
+git commit -m "feat(monitor): ..."
+git tag v0.5.1
+git push origin main
+git push origin v0.5.1
+```
+
+Release types: bump the **third** number for bugfixes, the **second** for new features, the **first** for breaking changes.
+
 ## Configuration
 
 The plugin reads its configuration from `~/.otg/telegram.json`:
