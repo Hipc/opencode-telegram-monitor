@@ -215,6 +215,11 @@ const ICON_SESSIONS = "🗂️";
 const ICON_READY = "🟢";
 const ICON_STATUS = "📊";
 
+// Fixed width used to left-align field labels so every value starts on the
+// same column. Chosen to fit the longest label ("Total tokens" / "Current
+// tool" are 12 chars) with headroom; labels shorter than this are padded.
+const LABEL_WIDTH = 14;
+
 dline("MODULE LOADED");
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -901,15 +906,18 @@ class TelegramSessionMonitor {
       : undefined;
     const lines = [
       this.iconForWaitingType(waiting.type),
-      `Project: ${this.projectLabel}`,
-      `Session: ${this.sessionLabel(root)}`,
-      `Type: ${waiting.type}`,
+      this.field("Project", this.projectLabel),
+      this.field("Session", this.sessionLabel(root)),
+      this.field("Type", waiting.type),
     ];
     if (source.sessionID !== root.sessionID) {
-      lines.push(`Subtask: ${this.sessionTitle(source)}`);
+      lines.push(this.field("Subtask", this.sessionTitle(source)));
     }
-    if (tool) lines.push(`Tool: ${this.safeText(tool, 80)}`);
-    lines.push(`Request: ${waiting.summary}`, "Action required in OpenCode.");
+    if (tool) lines.push(this.field("Tool", this.safeText(tool, 80)));
+    lines.push(
+      this.field("Request", waiting.summary),
+      "Action required in OpenCode.",
+    );
     this.enqueueMessage(lines.join("\n"));
   }
 
@@ -1429,7 +1437,7 @@ class TelegramSessionMonitor {
         return;
       default:
         this.enqueueMessage(
-          `Unknown command: /${command}\n\n${this.helpText()}`,
+          `Unknown command: /${this.escapeHtml(command)}\n\n${this.helpText()}`,
         );
     }
   }
@@ -1445,11 +1453,14 @@ class TelegramSessionMonitor {
     this.enqueueMessage(
       [
         ICON_READY,
-        `Project: ${this.projectLabel}`,
-        `OpenCode target: ${TARGET_OPENCODE_VERSION}`,
-        `OpenCode connection: ${connected ? "available" : "unavailable"}`,
-        "Authorization: verified",
-        "Mode: read-only",
+        this.field("Project", this.projectLabel),
+        this.field("OpenCode target", TARGET_OPENCODE_VERSION),
+        this.field(
+          "OpenCode connection",
+          connected ? "available" : "unavailable",
+        ),
+        this.field("Authorization", "verified"),
+        this.field("Mode", "read-only"),
         "",
         "Use /sessions to list active sessions.",
       ].join("\n"),
@@ -1463,7 +1474,7 @@ class TelegramSessionMonitor {
       `commandSessions: total tracked=${this.sessions.size}, activePrimary=${active.length}`,
     );
     if (active.length === 0) {
-      const lines = [ICON_SESSIONS, `Project: ${this.projectLabel}`, ""];
+      const lines = [ICON_SESSIONS, this.field("Project", this.projectLabel), ""];
       lines.push("No active sessions.");
       const last = this.lastCompletedSessionID
         ? this.sessions.get(this.lastCompletedSessionID)
@@ -1473,20 +1484,20 @@ class TelegramSessionMonitor {
       return;
     }
 
-    const lines = [ICON_SESSIONS, `Project: ${this.projectLabel}`, ""];
+    const lines = [ICON_SESSIONS, this.field("Project", this.projectLabel), ""];
     for (const session of active) {
       const marker = session.sessionID === this.selectedSessionID ? "*" : "-";
       lines.push(
-        `${marker} ${this.shortID(session.sessionID)} | ${this.displayState(session)} | ${this.sessionTitle(session)}`,
+        `${marker} ${this.shortID(session.sessionID)} | ${this.displayState(session)} | ${this.escapeHtml(this.sessionTitle(session))}`,
       );
     }
-    lines.push("", "Select one with /use <short-id>.");
+    lines.push("", "Select one with /use &lt;short-id&gt;.");
     this.enqueueMessage(lines.join("\n"));
   }
 
   private async commandUse(argument?: string) {
     if (!argument) {
-      this.enqueueMessage("Usage: /use <short-id>");
+      this.enqueueMessage("Usage: /use &lt;short-id&gt;");
       return;
     }
 
@@ -1497,7 +1508,7 @@ class TelegramSessionMonitor {
 
     if (matches.length === 0) {
       this.enqueueMessage(
-        `No observed session matches: ${this.safeText(argument, 40)}`,
+        `No observed session matches: ${this.escapeHtml(this.safeText(argument, 40))}`,
       );
       return;
     }
@@ -1509,7 +1520,7 @@ class TelegramSessionMonitor {
             .slice(0, 10)
             .map(
               (session) =>
-                `- ${this.shortID(session.sessionID)} | ${this.sessionTitle(session)}`,
+                `- ${this.shortID(session.sessionID)} | ${this.escapeHtml(this.sessionTitle(session))}`,
             ),
         ].join("\n"),
       );
@@ -1519,7 +1530,7 @@ class TelegramSessionMonitor {
     const session = matches[0]!;
     this.selectedSessionID = session.sessionID;
     await this.reconcileSession(session.sessionID);
-    this.enqueueMessage(`Selected: ${this.sessionLabel(session)}`);
+    this.enqueueMessage(`Selected: ${this.escapeHtml(this.sessionLabel(session))}`);
   }
 
   private async commandStatus() {
@@ -1536,10 +1547,10 @@ class TelegramSessionMonitor {
               .slice(0, 10)
               .map(
                 (item) =>
-                  `- ${this.shortID(item.sessionID)} | ${this.displayState(item)} | ${this.sessionTitle(item)}`,
+                  `- ${this.shortID(item.sessionID)} | ${this.displayState(item)} | ${this.escapeHtml(this.sessionTitle(item))}`,
               ),
             "",
-            "Select one with /use <short-id>.",
+            "Select one with /use &lt;short-id&gt;.",
           ].join("\n"),
         );
         return;
@@ -1564,7 +1575,7 @@ class TelegramSessionMonitor {
     const session = this.selectedSession();
     if (!session) {
       this.enqueueMessage(
-        "No session selected. Use /sessions and /use <short-id> first.",
+        "No session selected. Use /sessions and /use &lt;short-id&gt; first.",
       );
       return;
     }
@@ -1576,7 +1587,7 @@ class TelegramSessionMonitor {
     const session = this.selectedSession();
     if (!session) {
       this.enqueueMessage(
-        "No session selected. Use /sessions and /use <short-id> first.",
+        "No session selected. Use /sessions and /use &lt;short-id&gt; first.",
       );
       return;
     }
@@ -1603,7 +1614,9 @@ class TelegramSessionMonitor {
         i += 1
       ) {
         const entry = registry.projects[i]!;
-        lines.push(`${entry.enabled ? "✅" : "⚪"} ${basename(entry.path)}`);
+        lines.push(
+          `${entry.enabled ? "✅" : "⚪"} ${this.escapeHtml(basename(entry.path))}`,
+        );
       }
       if (registry.projects.length > MENU_MAX_PROJECTS) {
         lines.push(
@@ -1756,21 +1769,24 @@ class TelegramSessionMonitor {
     const todo = this.todoCounts(session.todos);
     const lines = [
       this.iconForState(this.displayState(session)),
-      `Project: ${this.projectLabel}`,
-      `Session: ${this.sessionLabel(session)}`,
+      this.field("Project", this.projectLabel),
+      this.field("Session", this.sessionLabel(session)),
     ];
 
-    if (session.agent) lines.push(`Agent: ${session.agent}`);
+    if (session.agent) lines.push(this.field("Agent", session.agent));
     if (currentTool) {
-      lines.push(`Current tool: ${this.safeText(currentTool.tool, 80)}`);
-      if (currentTool.target) lines.push(`Target: ${currentTool.target}`);
-      lines.push(`Tool state: ${currentTool.state}`);
-      if (currentTool.progress) lines.push(`Progress: ${currentTool.progress}`);
+      lines.push(this.field("Current tool", this.safeText(currentTool.tool, 80)));
+      if (currentTool.target) lines.push(this.field("Target", currentTool.target));
+      lines.push(this.field("Tool state", currentTool.state));
+      if (currentTool.progress) lines.push(this.field("Progress", currentTool.progress));
     }
-    lines.push(`Todo: ${this.todoSummary(todo)}`);
+    lines.push(this.field("Todo", this.todoSummary(todo)));
     if (session.turnStartedAt && session.status !== "idle") {
       lines.push(
-        `Elapsed: ${this.formatDuration(Date.now() - session.turnStartedAt)}`,
+        this.field(
+          "Elapsed",
+          this.formatDuration(Date.now() - session.turnStartedAt),
+        ),
       );
     }
 
@@ -1787,7 +1803,7 @@ class TelegramSessionMonitor {
           )
           .sort((left, right) => right.updatedAt - left.updatedAt)[0];
         lines.push(
-          `- ${this.sessionTitle(child)} | ${this.displayState(child)}${tool ? ` | ${tool.tool}` : ""}`,
+          `- ${this.escapeHtml(this.sessionTitle(child))} | ${this.displayState(child)}${tool ? ` | ${this.escapeHtml(tool.tool)}` : ""}`,
         );
       }
       if (activeChildren.length > 5) {
@@ -1806,20 +1822,26 @@ class TelegramSessionMonitor {
     const todo = this.todoCounts(session.todos);
     const lines = [
       this.iconForOutcome(outcome),
-      `Project: ${this.projectLabel}`,
-      `Session: ${this.sessionLabel(session)}`,
+      this.field("Project", this.projectLabel),
+      this.field("Session", this.sessionLabel(session)),
     ];
     if (session.turnStartedAt) {
       lines.push(
-        `Duration: ${this.formatDuration(Date.now() - session.turnStartedAt)}`,
+        this.field(
+          "Duration",
+          this.formatDuration(Date.now() - session.turnStartedAt),
+        ),
       );
     }
     if (error && outcome === "failed") {
       lines.push(
-        `Error: ${error.message ? `${error.name}: ${error.message}` : error.name}`,
+        this.field(
+          "Error",
+          error.message ? `${error.name}: ${error.message}` : error.name,
+        ),
       );
     }
-    lines.push(`Todo: ${this.todoSummary(todo)}`);
+    lines.push(this.field("Todo", this.todoSummary(todo)));
 
     const children = this.childSessions(session.sessionID);
     if (children.length > 0) {
@@ -1836,18 +1858,24 @@ class TelegramSessionMonitor {
         (child) => child.status !== "idle" || child.observedRunning,
       ).length;
       lines.push(
-        `Subtasks: ${completed} completed, ${failed} failed, ${cancelled} cancelled, ${active} active`,
+        this.field(
+          "Subtasks",
+          `${completed} completed, ${failed} failed, ${cancelled} cancelled, ${active} active`,
+        ),
       );
     }
 
     const tokens = this.aggregateTokens(session);
-    lines.push(`Tokens: ${this.formatNumber(this.totalTokens(tokens))}`);
-    lines.push(`Input: ${this.formatNumber(tokens.input)}`);
-    lines.push(`Output: ${this.formatNumber(tokens.output)}`);
+    lines.push(this.field("Tokens", this.formatNumber(this.totalTokens(tokens))));
+    lines.push(this.field("Input", this.formatNumber(tokens.input)));
+    lines.push(this.field("Output", this.formatNumber(tokens.output)));
     lines.push(
-      `Cache: ${this.formatNumber(tokens.cacheRead + tokens.cacheWrite)}`,
+      this.field(
+        "Cache",
+        this.formatNumber(tokens.cacheRead + tokens.cacheWrite),
+      ),
     );
-    lines.push(`Cost: ${this.formatCost(tokens)}`);
+    lines.push(this.field("Cost", this.formatCost(tokens)));
     return this.limitMessage(lines.join("\n"));
   }
 
@@ -1866,8 +1894,8 @@ class TelegramSessionMonitor {
     };
     const lines = [
       ICON_TODO,
-      `Project: ${this.projectLabel}`,
-      `Session: ${this.sessionLabel(session)}`,
+      this.field("Project", this.projectLabel),
+      this.field("Session", this.sessionLabel(session)),
     ];
 
     if (session.todos.length === 0) {
@@ -1879,9 +1907,9 @@ class TelegramSessionMonitor {
     for (const group of groups) {
       const todos = session.todos.filter((todo) => todo.status === group);
       if (todos.length === 0) continue;
-      lines.push("", labels[group]);
+      lines.push("", this.escapeHtml(labels[group]));
       for (const todo of todos) {
-        const line = `- ${this.safeText(todo.content, 180)}`;
+        const line = `- ${this.escapeHtml(this.safeText(todo.content, 180))}`;
         if (
           lines.join("\n").length + line.length >
           TELEGRAM_MESSAGE_LIMIT - 100
@@ -1902,15 +1930,15 @@ class TelegramSessionMonitor {
     const tokens = this.aggregateTokens(session);
     return [
       ICON_USAGE,
-      `Project: ${this.projectLabel}`,
-      `Session: ${this.sessionLabel(session)}`,
-      `Total tokens: ${this.formatNumber(this.totalTokens(tokens))}`,
-      `Input: ${this.formatNumber(tokens.input)}`,
-      `Output: ${this.formatNumber(tokens.output)}`,
-      `Reasoning: ${this.formatNumber(tokens.reasoning)}`,
-      `Cache read: ${this.formatNumber(tokens.cacheRead)}`,
-      `Cache write: ${this.formatNumber(tokens.cacheWrite)}`,
-      `Cost: ${this.formatCost(tokens)}`,
+      this.field("Project", this.projectLabel),
+      this.field("Session", this.sessionLabel(session)),
+      this.field("Total tokens", this.formatNumber(this.totalTokens(tokens))),
+      this.field("Input", this.formatNumber(tokens.input)),
+      this.field("Output", this.formatNumber(tokens.output)),
+      this.field("Reasoning", this.formatNumber(tokens.reasoning)),
+      this.field("Cache read", this.formatNumber(tokens.cacheRead)),
+      this.field("Cache write", this.formatNumber(tokens.cacheWrite)),
+      this.field("Cost", this.formatCost(tokens)),
     ].join("\n");
   }
 
@@ -1920,7 +1948,7 @@ class TelegramSessionMonitor {
       "Commands:",
       "/start - Check the plugin connection",
       "/sessions - List active sessions",
-      "/use <short-id> - Select a session",
+      "/use &lt;short-id&gt; - Select a session",
       "/status - Show selected session status",
       "/todo - Show selected session todos",
       "/usage - Show selected session token usage and cost",
@@ -1955,6 +1983,7 @@ class TelegramSessionMonitor {
     await this.telegramWithRetry("sendMessage", {
       chat_id: this.config.chatId,
       text: this.limitMessage(text),
+      parse_mode: "HTML",
       disable_web_page_preview: true,
     });
   }
@@ -1968,6 +1997,7 @@ class TelegramSessionMonitor {
       chat_id: this.config.chatId,
       text: this.limitMessage(text),
       reply_markup: replyMarkup,
+      parse_mode: "HTML",
       disable_web_page_preview: true,
     });
   }
@@ -2484,6 +2514,22 @@ class TelegramSessionMonitor {
       : `${redacted.slice(0, limit - 3)}...`;
   }
 
+  private escapeHtml(value: string) {
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  /**
+   * Render one aligned field line for HTML parse mode: a bold label padded to
+   * LABEL_WIDTH (colon dropped, a single space separates it from the value),
+   * then the HTML-escaped value so every value starts on the same column.
+   */
+  private field(label: string, value: string) {
+    return `<b>${label.padEnd(LABEL_WIDTH)}</b> ${this.escapeHtml(value)}`;
+  }
+
   private summarizeError(value: unknown): ErrorSummary {
     const error = this.record(value);
     const data = this.record(error?.data);
@@ -2643,7 +2689,13 @@ class TelegramSessionMonitor {
 
   private limitMessage(text: string) {
     if (text.length <= TELEGRAM_MESSAGE_LIMIT) return text;
-    return `${text.slice(0, TELEGRAM_MESSAGE_LIMIT - 16)}\n... truncated`;
+    let truncated = `${text.slice(0, TELEGRAM_MESSAGE_LIMIT - 16)}\n... truncated`;
+    // Ensure any <b> tag opened before the cut is closed so Telegram's HTML
+    // parser does not reject the message.
+    const opens = (truncated.match(/<b>/g) ?? []).length;
+    const closes = (truncated.match(/<\/b>/g) ?? []).length;
+    if (opens > closes) truncated += "</b>".repeat(opens - closes);
+    return truncated;
   }
 
   private status(value: unknown): SessionStatus | undefined {
