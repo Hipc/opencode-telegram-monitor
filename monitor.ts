@@ -909,10 +909,8 @@ class TelegramSessionMonitor {
     if (tool) rows.push(this.fieldRow("Tool", this.safeText(tool, 80)));
     rows.push(this.fieldRow("Request", waiting.summary));
     const parts = [
-      this.fieldTable(
-        `${this.iconForWaitingType(waiting.type)} ${this.projectLabel}`,
-        rows,
-      ),
+      this.titleLine(this.iconForWaitingType(waiting.type)),
+      this.fieldTable(rows),
     ];
     parts.push("<p>Action required in OpenCode.</p>");
     this.enqueueMessage(parts.join("\n"));
@@ -1458,7 +1456,8 @@ class TelegramSessionMonitor {
     ];
     this.enqueueMessage(
       [
-        this.fieldTable(`${ICON_READY} ${this.projectLabel}`, rows),
+        this.titleLine(ICON_READY),
+        this.fieldTable(rows),
         "<p>Use /sessions to list active sessions.</p>",
       ].join("\n"),
     );
@@ -1810,10 +1809,8 @@ class TelegramSessionMonitor {
     }
 
     const parts = [
-      this.fieldTable(
-        `${this.iconForState(this.displayState(session))} ${this.projectLabel}`,
-        rows,
-      ),
+      this.titleLine(this.iconForState(this.displayState(session))),
+      this.fieldTable(rows),
     ];
 
     const children = this.childSessions(session.sessionID);
@@ -1903,7 +1900,10 @@ class TelegramSessionMonitor {
     );
     rows.push(this.fieldRow("Cost", this.formatCost(tokens)));
     return this.limitMessage(
-      this.fieldTable(`${this.iconForOutcome(outcome)} ${this.projectLabel}`, rows),
+      [
+        this.titleLine(this.iconForOutcome(outcome)),
+        this.fieldTable(rows),
+      ].join("\n"),
     );
   }
 
@@ -1920,15 +1920,18 @@ class TelegramSessionMonitor {
       completed: "COMPLETED",
       cancelled: "CANCELLED",
     };
-    const table = this.fieldTable(`${ICON_TODO} ${this.projectLabel}`, [
+    const table = this.fieldTable([
       this.fieldRow("Session", this.sessionLabel(session)),
     ]);
+    const title = this.titleLine(ICON_TODO);
 
     if (session.todos.length === 0) {
-      return this.limitMessage([table, this.paragraph("No todos reported.")].join("\n"));
+      return this.limitMessage(
+        [title, table, this.paragraph("No todos reported.")].join("\n"),
+      );
     }
 
-    const parts = [table];
+    const parts = [title, table];
     let shown = 0;
     for (const group of groups) {
       const todos = session.todos.filter((todo) => todo.status === group);
@@ -1956,16 +1959,19 @@ class TelegramSessionMonitor {
 
   private formatUsage(session: SessionProjection) {
     const tokens = this.aggregateTokens(session);
-    return this.fieldTable(`${ICON_USAGE} ${this.projectLabel}`, [
-      this.fieldRow("Session", this.sessionLabel(session)),
-      this.fieldRow("Total tokens", this.formatNumber(this.totalTokens(tokens))),
-      this.fieldRow("Input", this.formatNumber(tokens.input)),
-      this.fieldRow("Output", this.formatNumber(tokens.output)),
-      this.fieldRow("Reasoning", this.formatNumber(tokens.reasoning)),
-      this.fieldRow("Cache read", this.formatNumber(tokens.cacheRead)),
-      this.fieldRow("Cache write", this.formatNumber(tokens.cacheWrite)),
-      this.fieldRow("Cost", this.formatCost(tokens)),
-    ]);
+    return [
+      this.titleLine(ICON_USAGE),
+      this.fieldTable([
+        this.fieldRow("Session", this.sessionLabel(session)),
+        this.fieldRow("Total tokens", this.formatNumber(this.totalTokens(tokens))),
+        this.fieldRow("Input", this.formatNumber(tokens.input)),
+        this.fieldRow("Output", this.formatNumber(tokens.output)),
+        this.fieldRow("Reasoning", this.formatNumber(tokens.reasoning)),
+        this.fieldRow("Cache read", this.formatNumber(tokens.cacheRead)),
+        this.fieldRow("Cache write", this.formatNumber(tokens.cacheWrite)),
+        this.fieldRow("Cost", this.formatCost(tokens)),
+      ]),
+    ].join("\n");
   }
 
   private helpText() {
@@ -2548,17 +2554,12 @@ class TelegramSessionMonitor {
   }
 
   /**
-   * Build a two-column Rich-Message table out of field rows. The optional
-   * header (e.g. "✅ <project>") is rendered as a full-width first row so the
-   * icon and project name sit on their own line; label/value cells size
-   * themselves to the content, so long values wrap inside their own cell
+   * Build a two-column Rich-Message table out of field rows. Label/value cells
+   * size themselves to the content, so long values wrap inside their own cell
    * instead of running back to the left margin.
    */
-  private fieldTable(header: string | undefined, rows: string[]) {
-    const head = header
-      ? `<tr><td colspan="2" align="center">${this.escapeHtml(header)}</td></tr>`
-      : "";
-    return `<table>${head}${rows.join("")}</table>`;
+  private fieldTable(rows: string[]) {
+    return `<table>${rows.join("")}</table>`;
   }
 
   /**
@@ -2566,6 +2567,15 @@ class TelegramSessionMonitor {
    */
   private fieldRow(label: string, value: string) {
     return `<tr><th>${label}</th><td>${this.escapeHtml(value)}</td></tr>`;
+  }
+
+  /**
+   * Title line shown above a notification table: the icon followed by the
+   * project name. Kept as a plain paragraph (not a table cell) so Telegram's
+   * notification preview picks up its text.
+   */
+  private titleLine(icon: string) {
+    return this.paragraph(`${icon} ${this.projectLabel}`);
   }
 
   /**
