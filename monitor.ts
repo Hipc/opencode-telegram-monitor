@@ -196,6 +196,25 @@ const POLLER_ACQUIRE_INTERVAL_MS = 20_000;
 const POLLER_LOCK_TTL_MS = 60_000;
 const REGISTER_INTERVAL_MS = 5 * 60_000;
 
+// Icon glyphs used in place of plain-text message type labels. Emoji carry
+// their own color (green check, red cross, warning sign, ...) so no Telegram
+// markdown parsing is required.
+const ICON_COMPLETED = "✅";
+const ICON_FAILED = "❌";
+const ICON_CANCELLED = "❎";
+const ICON_PERMISSION = "⚠️";
+const ICON_QUESTION = "❓";
+const ICON_RUNNING = "🟢";
+const ICON_RETRYING = "🔁";
+const ICON_IDLE = "💤";
+const ICON_WAITING = "⏳";
+const ICON_USAGE = "📊";
+const ICON_TODO = "📋";
+const ICON_HELP = "💁";
+const ICON_SESSIONS = "🗂️";
+const ICON_READY = "🟢";
+const ICON_STATUS = "📊";
+
 dline("MODULE LOADED");
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -881,9 +900,7 @@ class TelegramSessionMonitor {
       ? source.toolsByCallID.get(waiting.toolCallID)?.tool
       : undefined;
     const lines = [
-      "[WAITING]",
-      "",
-      `Project: ${this.projectLabel}`,
+      `${this.iconForWaitingType(waiting.type)} Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(root)}`,
       `Type: ${waiting.type}`,
     ];
@@ -1426,9 +1443,7 @@ class TelegramSessionMonitor {
 
     this.enqueueMessage(
       [
-        "[READY]",
-        "",
-        `Project: ${this.projectLabel}`,
+        `${ICON_READY} Project: ${this.projectLabel}`,
         `OpenCode target: ${TARGET_OPENCODE_VERSION}`,
         `OpenCode connection: ${connected ? "available" : "unavailable"}`,
         "Authorization: verified",
@@ -1446,7 +1461,8 @@ class TelegramSessionMonitor {
       `commandSessions: total tracked=${this.sessions.size}, activePrimary=${active.length}`,
     );
     if (active.length === 0) {
-      const lines = ["[SESSIONS]", "", "No active sessions."];
+      const lines = [`${ICON_SESSIONS} Project: ${this.projectLabel}`, ""];
+      lines.push("No active sessions.");
       const last = this.lastCompletedSessionID
         ? this.sessions.get(this.lastCompletedSessionID)
         : undefined;
@@ -1455,7 +1471,7 @@ class TelegramSessionMonitor {
       return;
     }
 
-    const lines = ["[SESSIONS]", ""];
+    const lines = [`${ICON_SESSIONS} Project: ${this.projectLabel}`, ""];
     for (const session of active) {
       const marker = session.sessionID === this.selectedSessionID ? "*" : "-";
       lines.push(
@@ -1512,9 +1528,7 @@ class TelegramSessionMonitor {
       if (active.length > 0) {
         this.enqueueMessage(
           [
-            "[STATUS]",
-            "",
-            "No session selected.",
+            `${ICON_STATUS} No session selected.`,
             ...active
               .slice(0, 10)
               .map(
@@ -1533,8 +1547,8 @@ class TelegramSessionMonitor {
         : undefined;
       this.enqueueMessage(
         last
-          ? `[STATUS]\n\nNo active sessions.\nLast completed: ${this.sessionLabel(last)}`
-          : "[STATUS]\n\nNo active sessions.",
+          ? `${ICON_STATUS} No active sessions.\nLast completed: ${this.sessionLabel(last)}`
+          : `${ICON_STATUS} No active sessions.`,
       );
       return;
     }
@@ -1738,9 +1752,7 @@ class TelegramSessionMonitor {
       .sort((left, right) => right.updatedAt - left.updatedAt)[0];
     const todo = this.todoCounts(session.todos);
     const lines = [
-      `[${this.displayState(session).toUpperCase()}]`,
-      "",
-      `Project: ${this.projectLabel}`,
+      `${this.iconForState(this.displayState(session))} Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
     ];
 
@@ -1779,9 +1791,6 @@ class TelegramSessionMonitor {
       }
     }
 
-    const tokens = this.aggregateTokens(session);
-    lines.push("", `Tokens: ${this.formatNumber(this.totalTokens(tokens))}`);
-    lines.push(`Cost: ${this.formatCost(tokens)}`);
     return this.limitMessage(lines.join("\n"));
   }
 
@@ -1792,9 +1801,7 @@ class TelegramSessionMonitor {
   ) {
     const todo = this.todoCounts(session.todos);
     const lines = [
-      `[${outcome.toUpperCase()}]`,
-      "",
-      `Project: ${this.projectLabel}`,
+      `${this.iconForOutcome(outcome)} Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
     ];
     if (session.turnStartedAt) {
@@ -1852,7 +1859,10 @@ class TelegramSessionMonitor {
       completed: "COMPLETED",
       cancelled: "CANCELLED",
     };
-    const lines = ["[TODO]", "", `Session: ${this.sessionLabel(session)}`];
+    const lines = [
+      `${ICON_TODO} Project: ${this.projectLabel}`,
+      `Session: ${this.sessionLabel(session)}`,
+    ];
 
     if (session.todos.length === 0) {
       lines.push("", "No todos reported.");
@@ -1885,9 +1895,7 @@ class TelegramSessionMonitor {
   private formatUsage(session: SessionProjection) {
     const tokens = this.aggregateTokens(session);
     return [
-      "[USAGE]",
-      "",
-      `Project: ${this.projectLabel}`,
+      `${ICON_USAGE} Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
       `Total tokens: ${this.formatNumber(this.totalTokens(tokens))}`,
       `Input: ${this.formatNumber(tokens.input)}`,
@@ -1901,8 +1909,7 @@ class TelegramSessionMonitor {
 
   private helpText() {
     return [
-      "[HELP]",
-      "",
+      `${ICON_HELP} Commands:`,
       "/start - Check the plugin connection",
       "/sessions - List active sessions",
       "/use <short-id> - Select a session",
@@ -2508,6 +2515,40 @@ class TelegramSessionMonitor {
     if (session.status === "busy") return "running";
     if (session.status === "retry") return "retrying";
     return session.outcome ?? "idle";
+  }
+
+  private iconForOutcome(outcome: SessionOutcome) {
+    switch (outcome) {
+      case "completed":
+        return ICON_COMPLETED;
+      case "failed":
+        return ICON_FAILED;
+      case "cancelled":
+        return ICON_CANCELLED;
+    }
+  }
+
+  private iconForState(state: ReturnType<TelegramSessionMonitor["displayState"]>) {
+    switch (state) {
+      case "running":
+        return ICON_RUNNING;
+      case "retrying":
+        return ICON_RETRYING;
+      case "waiting":
+        return ICON_WAITING;
+      case "completed":
+        return ICON_COMPLETED;
+      case "failed":
+        return ICON_FAILED;
+      case "cancelled":
+        return ICON_CANCELLED;
+      case "idle":
+        return ICON_IDLE;
+    }
+  }
+
+  private iconForWaitingType(type: WaitingType) {
+    return type === "permission" ? ICON_PERMISSION : ICON_QUESTION;
   }
 
   private todoCounts(todos: Todo[]) {
