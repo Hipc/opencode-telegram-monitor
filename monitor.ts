@@ -188,7 +188,7 @@ const TARGET_OPENCODE_VERSION = "1.18.23";
 // Single source of truth for the npm package version. The publish script
 // (scripts/publish-version.mjs) reads this constant and writes it into
 // package.json before `npm publish`, so the two never drift apart.
-const PLUGIN_VERSION = "0.4.0";
+const PLUGIN_VERSION = "0.5.0";
 
 // Self-update: the npm package name and registry endpoints used to check for
 // and download newer releases. The update is atomic (staging dir + backup +

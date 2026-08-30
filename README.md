@@ -32,7 +32,7 @@ The plugin is published as [`opencode-telegram-monitor`](https://www.npmjs.com/p
    ```json
    {
      "$schema": "https://opencode.ai/config.json",
-     "plugin": ["opencode-telegram-monitor@0.4.0"]
+     "plugin": ["opencode-telegram-monitor@0.5.0"]
    }
    ```
 
