@@ -33,9 +33,16 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
+          # IMPORTANT: do NOT set registry-url here. setup-node would write a
+          # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` line into
+          # .npmrc which expands to an empty value when NODE_AUTH_TOKEN is
+          # unset (the expected state for Trusted Publishing). npm then sees
+          # "auth configured" in .npmrc and never starts the OIDC exchange,
+          # failing with ENEEDAUTH (see npm/documentation#1960). Node 24 also
+          # guarantees npm >= 11.5.1 which Trusted Publishing requires.
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -84,6 +91,14 @@ jobs:
       # Trusted Publishing: no secrets, no config set. npm fetches an OIDC
       # token from the workflow's id-token permission and exchanges it for a
       # temporary npm token. --provenance attaches build provenance to the
-      # published attestations.
+      # published attestations. The strip step below guards against a leftover
+      # empty _authToken line that would short-circuit the OIDC flow.
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+        run: |
+          npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          if [ -f "$npmrc" ]; then
+            sed -i '/_authToken/d' "$npmrc"
+          fi
+          npm publish --provenance --access public
