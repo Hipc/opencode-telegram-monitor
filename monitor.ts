@@ -900,7 +900,6 @@ class TelegramSessionMonitor {
       ? source.toolsByCallID.get(waiting.toolCallID)?.tool
       : undefined;
     const rows = [
-      this.fieldRow("Project", this.projectLabel),
       this.fieldRow("Session", this.sessionLabel(root)),
       this.fieldRow("Type", waiting.type),
     ];
@@ -909,7 +908,12 @@ class TelegramSessionMonitor {
     }
     if (tool) rows.push(this.fieldRow("Tool", this.safeText(tool, 80)));
     rows.push(this.fieldRow("Request", waiting.summary));
-    const parts = [this.fieldTable(this.iconForWaitingType(waiting.type), rows)];
+    const parts = [
+      this.fieldTable(
+        `${this.iconForWaitingType(waiting.type)} ${this.projectLabel}`,
+        rows,
+      ),
+    ];
     parts.push("<p>Action required in OpenCode.</p>");
     this.enqueueMessage(parts.join("\n"));
   }
@@ -1444,7 +1448,6 @@ class TelegramSessionMonitor {
     }
 
     const rows = [
-      this.fieldRow("Project", this.projectLabel),
       this.fieldRow("OpenCode target", TARGET_OPENCODE_VERSION),
       this.fieldRow(
         "OpenCode connection",
@@ -1455,7 +1458,7 @@ class TelegramSessionMonitor {
     ];
     this.enqueueMessage(
       [
-        this.fieldTable(ICON_READY, rows),
+        this.fieldTable(`${ICON_READY} ${this.projectLabel}`, rows),
         "<p>Use /sessions to list active sessions.</p>",
       ].join("\n"),
     );
@@ -1469,10 +1472,8 @@ class TelegramSessionMonitor {
     );
     if (active.length === 0) {
       const parts = [
-        this.fieldTable(ICON_SESSIONS, [
-          this.fieldRow("Project", this.projectLabel),
-        ]),
-        "<p>No active sessions.</p>",
+        this.paragraph(`${ICON_SESSIONS} ${this.projectLabel}`),
+        this.paragraph("No active sessions."),
       ];
       const last = this.lastCompletedSessionID
         ? this.sessions.get(this.lastCompletedSessionID)
@@ -1494,9 +1495,7 @@ class TelegramSessionMonitor {
       .join("");
     this.enqueueMessage(
       [
-        this.fieldTable(ICON_SESSIONS, [
-          this.fieldRow("Project", this.projectLabel),
-        ]),
+        this.paragraph(`${ICON_SESSIONS} ${this.projectLabel}`),
         `<ul>${listItems}</ul>`,
         "<p>Select one with /use &lt;short-id&gt;.</p>",
       ].join("\n"),
@@ -1790,7 +1789,6 @@ class TelegramSessionMonitor {
       .sort((left, right) => right.updatedAt - left.updatedAt)[0];
     const todo = this.todoCounts(session.todos);
     const rows = [
-      this.fieldRow("Project", this.projectLabel),
       this.fieldRow("Session", this.sessionLabel(session)),
     ];
 
@@ -1811,7 +1809,12 @@ class TelegramSessionMonitor {
       );
     }
 
-    const parts = [this.fieldTable(this.iconForState(this.displayState(session)), rows)];
+    const parts = [
+      this.fieldTable(
+        `${this.iconForState(this.displayState(session))} ${this.projectLabel}`,
+        rows,
+      ),
+    ];
 
     const children = this.childSessions(session.sessionID);
     const activeChildren = children.filter(
@@ -1846,7 +1849,6 @@ class TelegramSessionMonitor {
   ) {
     const todo = this.todoCounts(session.todos);
     const rows = [
-      this.fieldRow("Project", this.projectLabel),
       this.fieldRow("Session", this.sessionLabel(session)),
     ];
     if (session.turnStartedAt) {
@@ -1900,7 +1902,9 @@ class TelegramSessionMonitor {
       ),
     );
     rows.push(this.fieldRow("Cost", this.formatCost(tokens)));
-    return this.limitMessage(this.fieldTable(this.iconForOutcome(outcome), rows));
+    return this.limitMessage(
+      this.fieldTable(`${this.iconForOutcome(outcome)} ${this.projectLabel}`, rows),
+    );
   }
 
   private formatTodos(session: SessionProjection) {
@@ -1916,8 +1920,7 @@ class TelegramSessionMonitor {
       completed: "COMPLETED",
       cancelled: "CANCELLED",
     };
-    const table = this.fieldTable(ICON_TODO, [
-      this.fieldRow("Project", this.projectLabel),
+    const table = this.fieldTable(`${ICON_TODO} ${this.projectLabel}`, [
       this.fieldRow("Session", this.sessionLabel(session)),
     ]);
 
@@ -1953,8 +1956,7 @@ class TelegramSessionMonitor {
 
   private formatUsage(session: SessionProjection) {
     const tokens = this.aggregateTokens(session);
-    return this.fieldTable(ICON_USAGE, [
-      this.fieldRow("Project", this.projectLabel),
+    return this.fieldTable(`${ICON_USAGE} ${this.projectLabel}`, [
       this.fieldRow("Session", this.sessionLabel(session)),
       this.fieldRow("Total tokens", this.formatNumber(this.totalTokens(tokens))),
       this.fieldRow("Input", this.formatNumber(tokens.input)),
@@ -2546,14 +2548,17 @@ class TelegramSessionMonitor {
   }
 
   /**
-   * Build a two-column Rich-Message table out of field rows. The optional icon
-   * is rendered as a full-width first row so the glyph stays on its own line;
-   * label/value cells size themselves to the content, so long values wrap
-   * inside their own cell instead of running back to the left margin.
+   * Build a two-column Rich-Message table out of field rows. The optional
+   * header (e.g. "✅ <project>") is rendered as a full-width first row so the
+   * icon and project name sit on their own line; label/value cells size
+   * themselves to the content, so long values wrap inside their own cell
+   * instead of running back to the left margin.
    */
-  private fieldTable(icon: string | undefined, rows: string[]) {
-    const header = icon ? `<tr><td colspan="2" align="center">${icon}</td></tr>` : "";
-    return `<table>${header}${rows.join("")}</table>`;
+  private fieldTable(header: string | undefined, rows: string[]) {
+    const head = header
+      ? `<tr><td colspan="2" align="center">${this.escapeHtml(header)}</td></tr>`
+      : "";
+    return `<table>${head}${rows.join("")}</table>`;
   }
 
   /**
