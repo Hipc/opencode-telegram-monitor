@@ -23,6 +23,10 @@
     "monitor"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hipc/opencode-telegram-monitor.git"
+  },
   "engines": {
     "node": ">=18"
   },
