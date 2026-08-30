@@ -912,7 +912,6 @@ class TelegramSessionMonitor {
       this.titleLine(this.iconForWaitingType(waiting.type)),
       this.fieldTable(rows),
     ];
-    parts.push("<p>Action required in OpenCode.</p>");
     this.enqueueMessage(parts.join("\n"));
   }
 
@@ -2554,12 +2553,13 @@ class TelegramSessionMonitor {
   }
 
   /**
-   * Build a two-column Rich-Message table out of field rows. Label/value cells
-   * size themselves to the content, so long values wrap inside their own cell
-   * instead of running back to the left margin.
+   * Build a compact two-column Rich-Message table out of field rows. The
+   * `compact` attribute keeps cell indents small so rows do not waste height;
+   * label/value cells size themselves to the content, so long values wrap
+   * inside their own cell instead of running back to the left margin.
    */
   private fieldTable(rows: string[]) {
-    return `<table>${rows.join("")}</table>`;
+    return `<table compact>${rows.join("")}</table>`;
   }
 
   /**
