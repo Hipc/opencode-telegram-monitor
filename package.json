@@ -11,7 +11,7 @@
     "README.md"
   ],
   "scripts": {
-    "publish:version": "node scripts/publish-version.mjs",
+    "set:version": "node scripts/set-version.mjs",
     "check": "bun build --no-bundle --target node --external \"*\" monitor.ts",
     "prepublishOnly": "bun build --no-bundle --target node --external \"*\" monitor.ts"
   },

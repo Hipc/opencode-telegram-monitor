@@ -2,11 +2,16 @@ name: Publish to npm
 
 on:
   push:
-    branches: [main]
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 1.2.3 or v1.2.3) - for manual runs"
+        required: true
+        type: string
 
-# Serialize runs so two rapid pushes cannot race on the same PLUGIN_VERSION
-# bump (both would read the same version and try to publish the same one).
+# Serialize runs so two rapid tag pushes cannot race on set-version/commit.
 concurrency:
   group: npm-publish
   cancel-in-progress: false
@@ -31,41 +36,46 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
+      # Version comes from the git tag (refs/tags/v1.2.3 -> 1.2.3). For a
+      # manual workflow_dispatch run, use the user-provided version instead.
+      - name: Resolve release version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "invalid version: $VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Replace the version everywhere (monitor.ts / package.json / README.md)
+      # with the tag version so the published tarball is self-consistent.
+      - name: Set version strings
+        run: node scripts/set-version.mjs "${{ steps.version.outputs.version }}"
+
+      - name: Verify replaced version
+        run: |
+          grep -q "const PLUGIN_VERSION = \"${{ steps.version.outputs.version }}\";" monitor.ts
+          echo "monitor.ts reports ${{ steps.version.outputs.version }}"
+
       - name: Check plugin compiles
         run: bun build --no-bundle --target node --external "*" monitor.ts
 
-      - name: Resolve publish version
-        id: version
-        run: |
-          CURRENT="$(node -e "const s=require('fs').readFileSync('monitor.ts','utf8');const m=s.match(/const PLUGIN_VERSION = \"([^\"]+)\"/);console.log(m?m[1]:'')")"
-          PUBLISHED="$(npm view opencode-telegram-monitor version 2>/dev/null || echo '')"
-          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
-
-      - name: Bump patch version if already published
-        if: steps.version.outputs.current == steps.version.outputs.published && steps.version.outputs.current != ''
-        run: |
-          node -e "
-            const fs=require('fs');
-            const path='monitor.ts';
-            let s=fs.readFileSync(path,'utf8');
-            const re=/const PLUGIN_VERSION = \"(\d+)\.(\d+)\.(\d+)\"/;
-            const m=s.match(re);
-            const next=\`\${m[1]}.\${m[2]}.\${Number(m[3])+1}\`;
-            s=s.replace(re, \`const PLUGIN_VERSION = \"\${next}\"\`);
-            fs.writeFileSync(path,s);
-            console.log('bumped to '+next);
-          "
-          node scripts/publish-version.mjs
-
-      - name: Commit version bump
-        if: steps.version.outputs.current == steps.version.outputs.published && steps.version.outputs.current != ''
+      - name: Commit version bump back to main
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add monitor.ts package.json
-          git commit -m "chore(monitor): bump plugin version [skip ci]"
-          git push
+          git add monitor.ts package.json README.md
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(monitor): set version ${{ steps.version.outputs.version }} [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "no version changes to commit"
+          fi
 
       - name: Publish to npm
         env:
