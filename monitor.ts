@@ -901,6 +901,7 @@ class TelegramSessionMonitor {
       : undefined;
     const lines = [
       this.iconForWaitingType(waiting.type),
+      "",
       `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(root)}`,
       `Type: ${waiting.type}`,
@@ -1445,6 +1446,7 @@ class TelegramSessionMonitor {
     this.enqueueMessage(
       [
         ICON_READY,
+        "",
         `Project: ${this.projectLabel}`,
         `OpenCode target: ${TARGET_OPENCODE_VERSION}`,
         `OpenCode connection: ${connected ? "available" : "unavailable"}`,
@@ -1463,7 +1465,7 @@ class TelegramSessionMonitor {
       `commandSessions: total tracked=${this.sessions.size}, activePrimary=${active.length}`,
     );
     if (active.length === 0) {
-      const lines = [ICON_SESSIONS, `Project: ${this.projectLabel}`, ""];
+      const lines = [ICON_SESSIONS, "", `Project: ${this.projectLabel}`];
       lines.push("No active sessions.");
       const last = this.lastCompletedSessionID
         ? this.sessions.get(this.lastCompletedSessionID)
@@ -1473,7 +1475,7 @@ class TelegramSessionMonitor {
       return;
     }
 
-    const lines = [ICON_SESSIONS, `Project: ${this.projectLabel}`, ""];
+    const lines = [ICON_SESSIONS, "", `Project: ${this.projectLabel}`];
     for (const session of active) {
       const marker = session.sessionID === this.selectedSessionID ? "*" : "-";
       lines.push(
@@ -1531,6 +1533,7 @@ class TelegramSessionMonitor {
         this.enqueueMessage(
           [
             ICON_STATUS,
+            "",
             "No session selected.",
             ...active
               .slice(0, 10)
@@ -1550,8 +1553,8 @@ class TelegramSessionMonitor {
         : undefined;
       this.enqueueMessage(
         last
-          ? `${ICON_STATUS}\nNo active sessions.\nLast completed: ${this.sessionLabel(last)}`
-          : `${ICON_STATUS}\nNo active sessions.`,
+          ? `${ICON_STATUS}\n\nNo active sessions.\nLast completed: ${this.sessionLabel(last)}`
+          : `${ICON_STATUS}\n\nNo active sessions.`,
       );
       return;
     }
@@ -1756,6 +1759,7 @@ class TelegramSessionMonitor {
     const todo = this.todoCounts(session.todos);
     const lines = [
       this.iconForState(this.displayState(session)),
+      "",
       `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
     ];
@@ -1806,6 +1810,7 @@ class TelegramSessionMonitor {
     const todo = this.todoCounts(session.todos);
     const lines = [
       this.iconForOutcome(outcome),
+      "",
       `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
     ];
@@ -1866,6 +1871,7 @@ class TelegramSessionMonitor {
     };
     const lines = [
       ICON_TODO,
+      "",
       `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
     ];
@@ -1902,6 +1908,7 @@ class TelegramSessionMonitor {
     const tokens = this.aggregateTokens(session);
     return [
       ICON_USAGE,
+      "",
       `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
       `Total tokens: ${this.formatNumber(this.totalTokens(tokens))}`,
@@ -1917,6 +1924,7 @@ class TelegramSessionMonitor {
   private helpText() {
     return [
       ICON_HELP,
+      "",
       "Commands:",
       "/start - Check the plugin connection",
       "/sessions - List active sessions",
