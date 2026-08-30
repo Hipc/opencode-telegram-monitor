@@ -48,14 +48,17 @@ const pkg = JSON.parse(readFileSync(packagePath, "utf8"));
 pkg.version = version;
 writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
 
-// 3) README.md: npm install pin "opencode-telegram-monitor@<version>"
+// 3) README.md: the npm install pin inside the opencode.json example.
+// Match ONLY a `"opencode-telegram-monitor@x.y.z"` literal inside the plugin
+// array (an exact semver followed by a closing quote), so the generic
+// `x.y.z` placeholders in the release-script examples are never rewritten.
 const readme = readFileSync(readmePath, "utf8");
-if (!/opencode-telegram-monitor@[^"]+"/.test(readme)) {
-  fail("npm install pin not found in README.md");
+if (!/"opencode-telegram-monitor@\d+\.\d+\.\d+"/.test(readme)) {
+  fail('npm install pin ("opencode-telegram-monitor@x.y.z") not found in README.md');
 }
 writeFileSync(
   readmePath,
-  readme.replace(/opencode-telegram-monitor@[^"]+"/g, `opencode-telegram-monitor@${version}"`),
+  readme.replace(/"opencode-telegram-monitor@\d+\.\d+\.\d+"/g, `"opencode-telegram-monitor@${version}"`),
   "utf8",
 );
 
