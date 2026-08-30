@@ -900,7 +900,8 @@ class TelegramSessionMonitor {
       ? source.toolsByCallID.get(waiting.toolCallID)?.tool
       : undefined;
     const lines = [
-      `${this.iconForWaitingType(waiting.type)} Project: ${this.projectLabel}`,
+      this.iconForWaitingType(waiting.type),
+      `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(root)}`,
       `Type: ${waiting.type}`,
     ];
@@ -1443,7 +1444,8 @@ class TelegramSessionMonitor {
 
     this.enqueueMessage(
       [
-        `${ICON_READY} Project: ${this.projectLabel}`,
+        ICON_READY,
+        `Project: ${this.projectLabel}`,
         `OpenCode target: ${TARGET_OPENCODE_VERSION}`,
         `OpenCode connection: ${connected ? "available" : "unavailable"}`,
         "Authorization: verified",
@@ -1461,7 +1463,7 @@ class TelegramSessionMonitor {
       `commandSessions: total tracked=${this.sessions.size}, activePrimary=${active.length}`,
     );
     if (active.length === 0) {
-      const lines = [`${ICON_SESSIONS} Project: ${this.projectLabel}`, ""];
+      const lines = [ICON_SESSIONS, `Project: ${this.projectLabel}`, ""];
       lines.push("No active sessions.");
       const last = this.lastCompletedSessionID
         ? this.sessions.get(this.lastCompletedSessionID)
@@ -1471,7 +1473,7 @@ class TelegramSessionMonitor {
       return;
     }
 
-    const lines = [`${ICON_SESSIONS} Project: ${this.projectLabel}`, ""];
+    const lines = [ICON_SESSIONS, `Project: ${this.projectLabel}`, ""];
     for (const session of active) {
       const marker = session.sessionID === this.selectedSessionID ? "*" : "-";
       lines.push(
@@ -1528,7 +1530,8 @@ class TelegramSessionMonitor {
       if (active.length > 0) {
         this.enqueueMessage(
           [
-            `${ICON_STATUS} No session selected.`,
+            ICON_STATUS,
+            "No session selected.",
             ...active
               .slice(0, 10)
               .map(
@@ -1547,8 +1550,8 @@ class TelegramSessionMonitor {
         : undefined;
       this.enqueueMessage(
         last
-          ? `${ICON_STATUS} No active sessions.\nLast completed: ${this.sessionLabel(last)}`
-          : `${ICON_STATUS} No active sessions.`,
+          ? `${ICON_STATUS}\nNo active sessions.\nLast completed: ${this.sessionLabel(last)}`
+          : `${ICON_STATUS}\nNo active sessions.`,
       );
       return;
     }
@@ -1752,7 +1755,8 @@ class TelegramSessionMonitor {
       .sort((left, right) => right.updatedAt - left.updatedAt)[0];
     const todo = this.todoCounts(session.todos);
     const lines = [
-      `${this.iconForState(this.displayState(session))} Project: ${this.projectLabel}`,
+      this.iconForState(this.displayState(session)),
+      `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
     ];
 
@@ -1801,7 +1805,8 @@ class TelegramSessionMonitor {
   ) {
     const todo = this.todoCounts(session.todos);
     const lines = [
-      `${this.iconForOutcome(outcome)} Project: ${this.projectLabel}`,
+      this.iconForOutcome(outcome),
+      `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
     ];
     if (session.turnStartedAt) {
@@ -1860,7 +1865,8 @@ class TelegramSessionMonitor {
       cancelled: "CANCELLED",
     };
     const lines = [
-      `${ICON_TODO} Project: ${this.projectLabel}`,
+      ICON_TODO,
+      `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
     ];
 
@@ -1895,7 +1901,8 @@ class TelegramSessionMonitor {
   private formatUsage(session: SessionProjection) {
     const tokens = this.aggregateTokens(session);
     return [
-      `${ICON_USAGE} Project: ${this.projectLabel}`,
+      ICON_USAGE,
+      `Project: ${this.projectLabel}`,
       `Session: ${this.sessionLabel(session)}`,
       `Total tokens: ${this.formatNumber(this.totalTokens(tokens))}`,
       `Input: ${this.formatNumber(tokens.input)}`,
@@ -1909,7 +1916,8 @@ class TelegramSessionMonitor {
 
   private helpText() {
     return [
-      `${ICON_HELP} Commands:`,
+      ICON_HELP,
+      "Commands:",
       "/start - Check the plugin connection",
       "/sessions - List active sessions",
       "/use <short-id> - Select a session",
