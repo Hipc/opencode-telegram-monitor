@@ -21,6 +21,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Trusted Publishing (OIDC): lets `npm publish` authenticate with a
+      # short-lived token minted from this workflow's identity instead of a
+      # long-lived NPM_TOKEN secret. The npm side must have Trusted Publishing
+      # enabled for this package (configured at package settings).
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,7 +36,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -77,9 +81,9 @@ jobs:
             echo "no version changes to commit"
           fi
 
+      # Trusted Publishing: no secrets, no config set. npm fetches an OIDC
+      # token from the workflow's id-token permission and exchanges it for a
+      # temporary npm token. --provenance attaches build provenance to the
+      # published attestations.
       - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          npm config set //registry.npmjs.org/:_authToken="${NODE_AUTH_TOKEN}"
-          npm publish --access public
+        run: npm publish --provenance --access public
