@@ -10,6 +10,8 @@ import {
 } from "node:path";
 import { homedir, hostname } from "node:os";
 import { connect as tlsConnect } from "node:tls";
+import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 
 import {
   copyFile,
@@ -183,6 +185,21 @@ import type {
 
 const SERVICE = "telegram-session-monitor";
 const TARGET_OPENCODE_VERSION = "1.18.23";
+// Single source of truth for the npm package version. The publish script
+// (scripts/publish-version.mjs) reads this constant and writes it into
+// package.json before `npm publish`, so the two never drift apart.
+const PLUGIN_VERSION = "0.1.0";
+
+// Self-update: the npm package name and registry endpoints used to check for
+// and download newer releases. The update is atomic (staging dir + backup +
+// verify + rollback) so an offline machine keeps running the cached version
+// and never ends up with a half-installed plugin.
+const NPM_PACKAGE_NAME = "opencode-telegram-monitor";
+const NPM_REGISTRY_BASE = "https://registry.npmjs.org";
+const SELF_UPDATE_FETCH_TIMEOUT_MS = 10_000;
+// Only touch the plugin cache under ~/.cache/opencode (npm installs). A
+// manually copied local file (~/.config/opencode/plugins/...) is left alone.
+const OPENCODE_CACHE_MARKERS = [".cache/opencode", ".cache\\opencode"];
 const IDLE_DEBOUNCE_MS = 5_000;
 const WAITING_NOTIFY_DEBOUNCE_MS = 1_000;
 const TELEGRAM_POLL_SECONDS = 25;
@@ -374,6 +391,7 @@ class TelegramSessionMonitor {
   );
   private pollerRetryTimer?: ReturnType<typeof setTimeout>;
   private registerTimer?: ReturnType<typeof setTimeout>;
+  private selfUpdateTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     private readonly client: PluginInput["client"],
@@ -395,6 +413,237 @@ class TelegramSessionMonitor {
     this.track(this.runTelegram(), "Telegram poller failed");
     void this.bootstrap();
     this.scheduleRegistration();
+    this.scheduleSelfUpdate();
+  }
+
+  /**
+   * 自更新检查（npm 安装版才生效）：
+   * - 本地文件安装（~/.config/opencode/plugins/...）不检查，避免误删用户手工副本。
+   * - 从 npm registry 拉取 latest 版本，与 PLUGIN_VERSION 对比。
+   * - 有新版 → 下载 tarball 到暂存区 → 校验 → 备份旧目录 → 原子替换 → 通知重启。
+   * - 任何一步失败（含断网）都回滚/中止，旧版本目录始终可用，绝不导致 opencode 崩溃。
+   * 全程异步、不阻塞 initialize()，任何异常都吞掉只写诊断日志。
+   */
+  private scheduleSelfUpdate() {
+    if (this.disposed) return;
+    // 延迟执行，避免与 poller 抢带宽/CPU；失败无妨，下次启动再试。
+    const timer = setTimeout(() => {
+      this.selfUpdateTimer = undefined;
+      this.track(this.runSelfUpdate(), "Self-update failed");
+    }, 5_000);
+    this.selfUpdateTimer = timer;
+  }
+
+  private async runSelfUpdate() {
+    try {
+      if (this.disposed) return;
+      const here = fileURLToPath(import.meta.url);
+      const isCacheInstall = OPENCODE_CACHE_MARKERS.some((marker) =>
+        here.includes(marker),
+      );
+      if (!isCacheInstall) {
+        dline("self-update: skipped (not an npm cache install)");
+        return;
+      }
+
+      const latest = await this.fetchNpmLatestVersion();
+      if (!latest) {
+        dline("self-update: registry unreachable, keeping current version");
+        return;
+      }
+      if (latest === PLUGIN_VERSION) {
+        dline(`self-update: already latest (${PLUGIN_VERSION})`);
+        return;
+      }
+
+      dline(`self-update: found ${PLUGIN_VERSION} -> ${latest}`);
+      await this.applyVersionUpdate(latest, here);
+    } catch (error) {
+      // 任何异常都不允许影响插件主功能，只记录诊断。
+      dline(`self-update: unexpected error: ${this.errorCategory(error)}`);
+    }
+  }
+
+  private async fetchNpmLatestVersion(): Promise<string | undefined> {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      SELF_UPDATE_FETCH_TIMEOUT_MS,
+    );
+    try {
+      const response = await fetch(
+        `${NPM_REGISTRY_BASE}/${NPM_PACKAGE_NAME}/latest`,
+        { signal: controller.signal },
+      );
+      if (!response.ok) return undefined;
+      const data = (await response.json()) as { version?: string };
+      return typeof data.version === "string" ? data.version : undefined;
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * 原子更新：下载到暂存区 → 校验 → 旧目录改名备份 → 暂存区替换 → 校验 → 删备份。
+   * 断网/下载失败发生在「暂存区」阶段，旧目录分毫未动；替换阶段失败则回滚。
+   * @param here 当前插件文件自身的绝对路径（便于测试注入）
+   * @param deps 可注入的 fs 依赖（默认用真实实现；仅测试用）
+   */
+  private async applyVersionUpdate(
+    latest: string,
+    here: string,
+    deps: {
+      mkdir?: typeof mkdir;
+      rm?: typeof rm;
+      rename?: typeof rename;
+      readFile?: typeof readFile;
+    } = {},
+  ) {
+    const fsMkdir = deps.mkdir ?? mkdir;
+    const fsRm = deps.rm ?? rm;
+    const fsRename = deps.rename ?? rename;
+    const fsReadFile = deps.readFile ?? readFile;
+    const currentDir = dirname(here);
+    const stagingRoot = join(OTG_DIR, "update-staging");
+    const stagingDir = join(stagingRoot, latest);
+    const backupDir = join(stagingRoot, `${latest}.bak`);
+
+    await fsMkdir(stagingRoot, { recursive: true });
+
+    // 1) 下载 + 解包到暂存区（断网/失败 → 直接中止，旧目录完好）
+    const downloaded = await this.downloadAndExtract(latest, stagingDir);
+    if (!downloaded) {
+      dline("self-update: download/extract failed, keeping current version");
+      await fsRm(stagingDir, { recursive: true, force: true }).catch(() => {});
+      return;
+    }
+
+    // 2) 校验暂存区内容：monitor.ts 存在且版本一致
+    const stagedMain = join(stagingDir, "package", "monitor.ts");
+    try {
+      const staged = await fsReadFile(stagedMain, "utf8");
+      if (!staged.includes(`const PLUGIN_VERSION = "${latest}"`)) {
+        throw new Error(`staged version mismatch (want ${latest})`);
+      }
+    } catch (error) {
+      dline(`self-update: staging verification failed: ${(error as Error).message}`);
+      await fsRm(stagingDir, { recursive: true, force: true }).catch(() => {});
+      return;
+    }
+
+    // 3) 原子替换：current -> backup，staged -> current
+    await fsRm(backupDir, { recursive: true, force: true }).catch(() => {});
+    await fsRename(currentDir, backupDir);
+    try {
+      await fsRename(join(stagingDir, "package"), currentDir);
+      // 4) 替换后再校验，通过才删备份
+      const fresh = await fsReadFile(join(currentDir, "monitor.ts"), "utf8");
+      if (!fresh.includes(`const PLUGIN_VERSION = "${latest}"`)) {
+        throw new Error("post-swap verification failed");
+      }
+    } catch (error) {
+      // 回滚：把备份恢复回去
+      dline(`self-update: swap failed, rolling back: ${(error as Error).message}`);
+      await fsRm(currentDir, { recursive: true, force: true }).catch(() => {});
+      await fsRename(backupDir, currentDir).catch(() => {});
+      return;
+    }
+    await fsRm(backupDir, { recursive: true, force: true }).catch(() => {});
+    await fsRm(stagingDir, { recursive: true, force: true }).catch(() => {});
+
+    dline(`self-update: applied ${PLUGIN_VERSION} -> ${latest} (restart opencode to load)`);
+    this.enqueueMessage(
+      `🔄 <b>Plugin updated</b>\n` +
+        `<code>v${PLUGIN_VERSION}</code> → <code>v${latest}</code>\n` +
+        `New version is staged in the opencode cache.\n` +
+        `<b>Restart opencode</b> to load it.`,
+    );
+  }
+
+  private async downloadAndExtract(
+    version: string,
+    destDir: string,
+  ): Promise<boolean> {
+    try {
+      await rm(destDir, { recursive: true, force: true });
+      await mkdir(destDir, { recursive: true });
+      const url = `${NPM_REGISTRY_BASE}/${NPM_PACKAGE_NAME}/-/${NPM_PACKAGE_NAME}-${version}.tgz`;
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(),
+        SELF_UPDATE_FETCH_TIMEOUT_MS,
+      );
+      let buffer: Uint8Array;
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) return false;
+        buffer = new Uint8Array(await response.arrayBuffer());
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // tgz = gzip(tar)：先 gunzip，再手工解 tar（避免依赖外部 tar 命令）。
+      const tar = gunzipSync(buffer);
+      await this.extractTar(tar, destDir);
+      return true;
+    } catch (error) {
+      dline(`self-update: download failed: ${this.errorCategory(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 极简 tar 解包（只支持 npm 包 tarball 需要的字段）：
+   * 512 字节头：name(0,100) mode(100,8) uid(108,8) gid(116,8) size(124,12)
+   * typeflag(156,1) prefix(345,155)。typeflag '0'=普通文件 '5'=目录 'L'=GNU 长文件名。
+   * 只解出普通文件（含长文件名），跳过符号链接/硬链接，防目录穿越。
+   */
+  private async extractTar(tar: Uint8Array, destDir: string) {
+    const decoder = new TextDecoder();
+    let offset = 0;
+    let longName: string | undefined;
+    while (offset + 512 <= tar.length) {
+      const header = tar.subarray(offset, offset + 512);
+      if (header.every((byte) => byte === 0)) break; // 连续 0 块 = 归档结束
+      const typeflag = String.fromCharCode(header[156] ?? 0);
+      const readStr = (start: number, len: number) =>
+        decoder
+          .decode(header.subarray(start, start + len))
+          .replace(/\0.*$/, "");
+      const size = Number.parseInt(
+        decoder.decode(header.subarray(124, 136)).replace(/\0.*$/, "").trim() ||
+          "0",
+        8,
+      );
+      const dataStart = offset + 512;
+      const dataEnd = dataStart + size;
+
+      if (typeflag === "L") {
+        // GNU 长文件名：真实名字在数据块里
+        longName = decoder
+          .decode(tar.subarray(dataStart, dataEnd))
+          .replace(/\0.*$/, "")
+          .replace(/\/$/, "");
+      } else if (typeflag === "0" || typeflag === "\0") {
+        const name = longName ?? readStr(0, 100);
+        longName = undefined;
+        const prefix = readStr(345, 155);
+        const fullName = prefix ? `${prefix}/${name}` : name;
+        const rel = fullName.replace(/^\.\//, "");
+        const target = resolve(destDir, rel);
+        // 防目录穿越：目标必须仍在 destDir 内
+        const relCheck = relative(destDir, target);
+        if (relCheck.startsWith("..") || isAbsolute(relCheck)) {
+          throw new Error(`unsafe path in tarball: ${rel}`);
+        }
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, tar.subarray(dataStart, dataEnd));
+      }
+      // 其他类型（目录/链接/PAX 头）跳过数据块即可
+      offset = dataEnd + ((512 - (size % 512)) % 512);
+    }
   }
 
   accept(event: unknown) {
@@ -424,6 +673,11 @@ class TelegramSessionMonitor {
     if (this.registerTimer) {
       clearTimeout(this.registerTimer);
       this.registerTimer = undefined;
+    }
+
+    if (this.selfUpdateTimer) {
+      clearTimeout(this.selfUpdateTimer);
+      this.selfUpdateTimer = undefined;
     }
 
     await Promise.allSettled([...this.tasks, this.sendTail]);

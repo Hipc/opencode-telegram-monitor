@@ -23,6 +23,31 @@ It watches opencode sessions in real time and reports their lifecycle — starte
 
 ## Installation
 
+### From npm (recommended)
+
+The plugin is published as [`opencode-telegram-monitor`](https://www.npmjs.com/package/opencode-telegram-monitor) and can be loaded straight from the opencode config:
+
+1. Add the plugin to `~/.config/opencode/opencode.json`. **Pin a concrete version** (not `@latest`) — a pinned version makes opencode load the cached copy directly, so the plugin's own self-update is the only thing that ever replaces the files:
+
+   ```json
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "plugin": ["opencode-telegram-monitor@0.1.0"]
+   }
+   ```
+
+2. Restart opencode. The plugin is installed automatically into the opencode cache (`~/.cache/opencode/`) on first start.
+
+3. If you previously installed a local copy, **remove it** to avoid double-loading the plugin (npm and local copies with the same name load side by side, which would run two pollers):
+
+   ```bash
+   rm -f ~/.config/opencode/plugins/telegram-session-monitor.ts
+   ```
+
+   The version in the config never needs manual bumping — see [Automatic updates](#automatic-updates) below.
+
+### From source (local file)
+
 1. Copy `monitor.ts` into your opencode plugins directory:
 
    ```bash
@@ -31,6 +56,17 @@ It watches opencode sessions in real time and reports their lifecycle — starte
    ```
 
 2. Restart opencode. The plugin loads automatically from the plugins directory.
+
+## Automatic updates
+
+When installed from npm, the plugin checks for a newer release on the npm registry **once per opencode start** (5 seconds after startup, non-blocking). If a newer version is found, it:
+
+1. Downloads the new tarball into a **staging directory** (`~/.otg/update-staging/`).
+2. Verifies the staged `monitor.ts` reports the expected version.
+3. Atomically swaps the cached plugin directory (old directory is renamed as a backup, then replaced), re-verifies, and only then removes the backup.
+4. Sends a Telegram notification; **restart opencode** to load the new version.
+
+Any failure along the way — including being **offline** — leaves the previously installed version completely untouched, so opencode always loads a working plugin. A local-file installation (see above) is never auto-updated.
 
 ## Configuration
 

@@ -1,0 +1,41 @@
+{
+  "name": "opencode-telegram-monitor",
+  "version": "0.1.0",
+  "description": "Read-only opencode plugin that reports session lifecycle, token usage, todos and waiting permissions/questions to a Telegram bot.",
+  "type": "module",
+  "main": "monitor.ts",
+  "types": "monitor.ts",
+  "files": [
+    "monitor.ts",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "publish:version": "node scripts/publish-version.mjs",
+    "check": "bun build --no-bundle --target node --external \"*\" monitor.ts",
+    "prepublishOnly": "bun build --no-bundle --target node --external \"*\" monitor.ts"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "telegram",
+    "notifications",
+    "monitor"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*",
+    "@opencode-ai/sdk": "*"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    },
+    "@opencode-ai/sdk": {
+      "optional": true
+    }
+  }
+}

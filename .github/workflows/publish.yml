@@ -1,0 +1,75 @@
+name: Publish to npm
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Serialize runs so two rapid pushes cannot race on the same PLUGIN_VERSION
+# bump (both would read the same version and try to publish the same one).
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Check plugin compiles
+        run: bun build --no-bundle --target node --external "*" monitor.ts
+
+      - name: Resolve publish version
+        id: version
+        run: |
+          CURRENT="$(node -e "const s=require('fs').readFileSync('monitor.ts','utf8');const m=s.match(/const PLUGIN_VERSION = \"([^\"]+)\"/);console.log(m?m[1]:'')")"
+          PUBLISHED="$(npm view opencode-telegram-monitor version 2>/dev/null || echo '')"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
+
+      - name: Bump patch version if already published
+        if: steps.version.outputs.current == steps.version.outputs.published && steps.version.outputs.current != ''
+        run: |
+          node -e "
+            const fs=require('fs');
+            const path='monitor.ts';
+            let s=fs.readFileSync(path,'utf8');
+            const re=/const PLUGIN_VERSION = \"(\d+)\.(\d+)\.(\d+)\"/;
+            const m=s.match(re);
+            const next=\`\${m[1]}.\${m[2]}.\${Number(m[3])+1}\`;
+            s=s.replace(re, \`const PLUGIN_VERSION = \"\${next}\"\`);
+            fs.writeFileSync(path,s);
+            console.log('bumped to '+next);
+          "
+          node scripts/publish-version.mjs
+
+      - name: Commit version bump
+        if: steps.version.outputs.current == steps.version.outputs.published && steps.version.outputs.current != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add monitor.ts package.json
+          git commit -m "chore(monitor): bump plugin version [skip ci]"
+          git push
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm config set //registry.npmjs.org/:_authToken="${NODE_AUTH_TOKEN}"
+          npm publish --access public
