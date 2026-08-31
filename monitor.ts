@@ -212,6 +212,16 @@ const MENU_MAX_PROJECTS = 20;
 const POLLER_ACQUIRE_INTERVAL_MS = 20_000;
 const POLLER_LOCK_TTL_MS = 60_000;
 const REGISTER_INTERVAL_MS = 5 * 60_000;
+// 暂时停用的命令（计划中，尚未开放）。路由收到这些命令时回复计划中提示；
+// 对应实现方法保留，将来恢复只需从这里删除命令名并恢复 setMyCommands/helpText。
+const PLANNED_COMMANDS = new Set([
+  "start",
+  "sessions",
+  "use",
+  "status",
+  "todo",
+  "usage",
+]);
 
 // Icon glyphs used in place of plain-text message type labels. Emoji carry
 // their own color (green check, red cross, warning sign, ...) so no Telegram
@@ -1561,12 +1571,6 @@ class TelegramSessionMonitor {
         dline("setMyCommands: calling");
         await this.telegramWithRetry("setMyCommands", {
           commands: [
-            { command: "start", description: "Check the plugin connection" },
-            { command: "sessions", description: "List active sessions" },
-            { command: "use", description: "Select a session by short ID" },
-            { command: "status", description: "Show selected session status" },
-            { command: "todo", description: "Show selected session todos" },
-            { command: "usage", description: "Show selected session usage" },
             { command: "menu", description: "Manage monitored projects" },
             { command: "help", description: "Show available commands" },
           ],
@@ -1658,25 +1662,14 @@ class TelegramSessionMonitor {
     const command = match[1]?.toLowerCase();
     const argument = match[2]?.trim();
 
+    if (PLANNED_COMMANDS.has(command)) {
+      this.enqueueMessage(
+        this.paragraph(`/${command} is planned but not available yet (计划中).`),
+      );
+      return;
+    }
+
     switch (command) {
-      case "start":
-        await this.commandStart();
-        return;
-      case "sessions":
-        await this.commandSessions();
-        return;
-      case "use":
-        await this.commandUse(argument);
-        return;
-      case "status":
-        await this.commandStatus();
-        return;
-      case "todo":
-        await this.commandTodo();
-        return;
-      case "usage":
-        await this.commandUsage();
-        return;
       case "menu":
         await this.commandMenu();
         return;
@@ -2229,21 +2222,28 @@ class TelegramSessionMonitor {
 
   private helpText() {
     const commands = [
+      "/menu - Manage monitored projects",
+      "/help - Show this help",
+    ];
+    const planned = [
       "/start - Check the plugin connection",
       "/sessions - List active sessions",
       "/use <short-id> - Select a session",
       "/status - Show selected session status",
       "/todo - Show selected session todos",
       "/usage - Show selected session token usage and cost",
-      "/menu - Manage monitored projects",
-      "/help - Show this help",
     ];
     const listItems = commands
+      .map((command) => `<li>${this.escapeHtml(command)}</li>`)
+      .join("");
+    const plannedItems = planned
       .map((command) => `<li>${this.escapeHtml(command)}</li>`)
       .join("");
     return [
       `<p>${ICON_HELP} Commands:</p>`,
       `<ul>${listItems}</ul>`,
+      "<p>Planned (not available yet):</p>",
+      `<ul>${plannedItems}</ul>`,
       "<p>This bot is read-only. Approvals and answers must be handled in OpenCode.</p>",
     ].join("\n");
   }

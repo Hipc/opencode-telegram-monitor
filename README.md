@@ -121,16 +121,23 @@ The plugin reads its configuration from `~/.otg/telegram.json`:
 
 ## Telegram commands
 
-| Command              | Description                                        |
-| -------------------- | -------------------------------------------------- |
-| `/start`             | Check the plugin connection and bot health.        |
-| `/sessions`          | List active sessions.                              |
-| `/use <short-id>`    | Select a session to inspect.                       |
-| `/status`            | Show the selected session's status.                |
-| `/todo`              | Show the selected session's todo list.             |
-| `/usage`             | Show the selected session's token usage and cost.  |
-| `/menu`              | Manage monitored projects (inline keyboard).       |
-| `/help`              | Show this help.                                    |
+### Available
+
+| Command | Description                                  |
+| ------- | -------------------------------------------- |
+| `/menu` | Manage monitored projects (inline keyboard). |
+| `/help` | Show this help.                              |
+
+### Planned (not available yet)
+
+| Command           | Description                                        |
+| ----------------- | -------------------------------------------------- |
+| `/start`          | Check the plugin connection and bot health.        |
+| `/sessions`       | List active sessions.                              |
+| `/use <short-id>` | Select a session to inspect.                       |
+| `/status`         | Show the selected session's status.                |
+| `/todo`           | Show the selected session's todo list.             |
+| `/usage`          | Show the selected session's token usage and cost.  |
 
 ## How it works
 
