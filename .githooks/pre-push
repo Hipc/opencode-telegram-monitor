@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# pre-push hook: every tag being pushed must pass the version-consistency check
+# (node scripts/check-version.mjs <tag>) before the push is allowed. This moves
+# the "version matches the tag" guard from CI back to the local push step.
+#
+# Install (once per clone):
+#   git config core.hooksPath .githooks
+#
+# Non-tag refs (branches) pass through untouched.
+set -u
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 1
+check="$repo_root/scripts/check-version.mjs"
+
+# stdin carries one line per pushed ref:
+#   <local ref> <local sha1> <remote ref> <remote sha1>
+tags=""
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  case "$remote_ref" in
+    refs/tags/*)
+      tag="${remote_ref#refs/tags/}"
+      [ -z "$tags" ] || tags="$tags "
+      tags="$tags$tag"
+      ;;
+  esac
+done
+
+if [ -z "$tags" ]; then
+  exit 0 # no tags being pushed, nothing to verify
+fi
+
+if [ ! -f "$check" ]; then
+  echo "pre-push: $check not found; refusing to push tag(s)" >&2
+  exit 1
+fi
+
+status=0
+for tag in $tags; do
+  if ! node "$check" "$tag"; then
+    echo "pre-push: version check FAILED for tag $tag" >&2
+    status=1
+  fi
+done
+exit "$status"

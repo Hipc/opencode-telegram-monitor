@@ -97,6 +97,17 @@ git push origin main
 git push origin v0.5.1
 ```
 
+### Local tag guard (pre-push hook)
+
+A `pre-push` hook ships in `.githooks/pre-push`: pushing any `refs/tags/*` runs
+`node scripts/check-version.mjs <tag>` locally and **refuses the push** on a
+mismatch (branches pass through). This catches a bad tag before it reaches CI.
+Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 Release types: bump the **third** number for bugfixes, the **second** for new features, the **first** for breaking changes.
 
 ## Configuration
