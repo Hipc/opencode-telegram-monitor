@@ -30,6 +30,7 @@ import {
   POLLER_ACQUIRE_INTERVAL_MS,
   POLLER_LOCK_TTL_MS,
   REGISTER_INTERVAL_MS,
+  SESSIONS_SCAN_INTERVAL_MS,
   TELEGRAM_POLL_SECONDS,
   TELEGRAM_POLL_TIMEOUT_MS,
   WAITING_NOTIFY_DEBOUNCE_MS,
@@ -81,10 +82,12 @@ import { PollerLock } from "./infra/poller-lock";
 import {
   deleteProjectByPath,
   findEntryByToken,
+  markSessionSent,
   registerProject,
   setProjectEnabled,
   type ProjectRegistry,
   type ProjectRegistryStore,
+  type SessionRecord,
 } from "./registry";
 import {
   TelegramApiError,
@@ -134,6 +137,10 @@ export class TelegramSessionMonitor {
   private pollerRetryTimer?: ReturnType<typeof setTimeout>;
   private registerTimer?: ReturnType<typeof setTimeout>;
   private selfUpdateTimer?: ReturnType<typeof setTimeout>;
+  // sessions 扫描 ticker（契约 sessions-relay.md §6.2）：与 poller.lock
+  // 同生共死，仅锁持有者运行；sessionsScanInFlight 防止上一轮未跑完时重叠。
+  private sessionsScanTimer?: ReturnType<typeof setInterval>;
+  private sessionsScanInFlight = false;
 
   constructor(
     private readonly client: PluginInput["client"],
@@ -1300,6 +1307,10 @@ export class TelegramSessionMonitor {
       return;
     }
     dline("poller lock acquired");
+    // 只有锁持有者每秒扫描 projects.json 中的待发送 sessions 记录
+    // （契约 sessions-relay.md §6.2）；ticker 生命周期与锁严格同生共死，
+    // 任何退出路径（401、异常、abort/dispose）都经 finally 清理。
+    this.startSessionsScan();
 
     try {
       try {
@@ -1376,8 +1387,123 @@ export class TelegramSessionMonitor {
         }
       }
     } finally {
+      this.stopSessionsScan();
       await this.pollerLock.release();
     }
+  }
+
+  /**
+   * 启动 sessions 扫描 ticker（仅由 runTelegram 持锁成功后调用）。
+   * 每秒触发一轮 scanSessionQueue；上一轮未跑完时跳过本轮（in-flight 守卫，
+   * 防止发送/置位重叠）。ticker 不负责任何决策，只做周期调用。
+   */
+  private startSessionsScan() {
+    if (this.sessionsScanTimer) return;
+    dline("sessions scan: starting 1s ticker");
+    this.sessionsScanTimer = setInterval(() => {
+      if (this.sessionsScanInFlight) return;
+      this.sessionsScanInFlight = true;
+      this.track(
+        (async () => {
+          try {
+            await this.scanSessionQueue();
+          } finally {
+            this.sessionsScanInFlight = false;
+          }
+        })(),
+        "Session queue scan failed",
+      );
+    }, SESSIONS_SCAN_INTERVAL_MS);
+  }
+
+  /** 停止并清理 sessions 扫描 ticker（与锁释放成对出现，幂等）。 */
+  private stopSessionsScan() {
+    if (this.sessionsScanTimer) {
+      clearInterval(this.sessionsScanTimer);
+      this.sessionsScanTimer = undefined;
+    }
+  }
+
+  /**
+   * 扫描一轮 sessions 队列（可测试入口，契约 sessions-relay.md §6.3；
+   * setInterval 只负责周期调用本方法，测试直接调用即可驱动）：
+   * registry.read()（不加锁，最终一致）→ 遍历全部条目的 sessions →
+   * 筛选 send === false && resolved === false → 逐条串行经 sendMessage 发送
+   * → 成功置 send=true（markSessionSent）；失败保留 send=false 下轮重试；
+   * resolved=true 为终态不补发（决策 #6）。返回本轮处理条数。
+   */
+  private async scanSessionQueue(): Promise<number> {
+    if (this.disposed) return 0;
+    const registry = await this.registry.read();
+    let handled = 0;
+    for (const entry of registry.projects) {
+      const sessions = entry.sessions;
+      if (!sessions) continue;
+      const projectLabel = basename(entry.path) || this.projectLabel;
+      for (const record of sessions) {
+        if (record.send || record.resolved) continue;
+        try {
+          await this.sendMessage(
+            this.formatSessionRecordMessage(record, projectLabel),
+          );
+        } catch (error) {
+          // 发送失败：不置位、记录日志（token 脱敏），下轮 ticker 自然重试。
+          await this.log(
+            "warn",
+            "Session record send failed; will retry on next scan",
+            {
+              requestId: record.request_id,
+              error: errorCategory(error, {
+                root: this.root,
+                botToken: this.config.botToken,
+              }),
+            },
+          );
+          continue;
+        }
+        const next = await this.registry.mutate((reg) =>
+          markSessionSent(reg, record.request_id),
+        );
+        if (next === undefined) {
+          // 抢锁超时或记录已被删除：send 未置位属安全重试态，静默容忍。
+          await this.log(
+            "warn",
+            "markSessionSent skipped (no match or lock timeout); will retry on next scan",
+            { requestId: record.request_id },
+          );
+        }
+        handled += 1;
+      }
+    }
+    return handled;
+  }
+
+  /**
+   * 把一条待发送 SessionRecord 组装为 TG 通知文本（复用等待通知样式，
+   * 契约 sessions-relay.md §6.2）：titleLine(iconForWaitingType) +
+   * fieldTable(Type / Session 字段) + message 节选；整体经 limitMessage 截断。
+   * HTML 转义由 fieldRow/paragraph 内部的 escapeHtml 完成，文本先经
+   * safeText 去敏（botToken/密钥/路径）再展示。
+   */
+  private formatSessionRecordMessage(
+    record: SessionRecord,
+    projectLabel: string,
+  ): string {
+    const ctx = { root: this.root, botToken: this.config.botToken };
+    const rows = [
+      fieldRow("Type", record.type),
+      fieldRow(
+        "Session",
+        safeText(record.session_name || shortID(record.session_id), 100, ctx),
+      ),
+    ];
+    const excerpt = paragraph(safeText(record.message, 300, ctx));
+    const parts = [
+      titleLine(iconForWaitingType(record.type), projectLabel),
+      fieldTable(rows),
+      excerpt,
+    ];
+    return limitMessage(parts.join("\n"));
   }
 
   private async handleTelegramUpdate(update: TelegramUpdate) {
