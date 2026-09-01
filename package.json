@@ -12,8 +12,8 @@
   ],
   "scripts": {
     "set:version": "node scripts/set-version.mjs",
-    "check": "bun build --no-bundle --target node --external \"*\" monitor.ts",
-    "prepublishOnly": "bun build --no-bundle --target node --external \"*\" monitor.ts"
+    "check": "node scripts/build.mjs",
+    "prepublishOnly": "node scripts/build.mjs"
   },
   "keywords": [
     "opencode",

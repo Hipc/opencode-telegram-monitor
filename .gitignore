@@ -7,6 +7,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Build artifact produced by scripts/build.mjs (source of truth lives in src/)
+/monitor.ts
+
 # Editor / OS
 .DS_Store
 *.swp

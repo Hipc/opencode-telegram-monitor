@@ -65,13 +65,16 @@ jobs:
 
       # The tag must already be in sync with the code: the release flow is
       # `node scripts/check-version.mjs vX.Y.Z` then `git tag vX.Y.Z`, so the
-      # checked-out monitor.ts / package.json / README.md all report the tag
+      # checked-out src/version.ts / package.json / README.md all report the tag
       # version. This step is a guard for tags created without that check.
       - name: Verify version matches tag
         run: node scripts/check-version.mjs "${{ steps.version.outputs.version }}"
 
-      - name: Check plugin compiles
-        run: bun build --no-bundle --target node --external "*" monitor.ts
+      # Build the single-file artifact (src/ -> root monitor.ts, with a
+      # PLUGIN_VERSION literal assertion inside scripts/build.mjs). npm publish
+      # packs exactly this freshly-built monitor.ts (see package.json files).
+      - name: Build plugin bundle
+        run: node scripts/build.mjs
 
       # Trusted Publishing: no secrets, no config set. npm fetches an OIDC
       # token from the workflow's id-token permission and exchanges it for a
