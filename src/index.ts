@@ -9,7 +9,11 @@ import { ProjectRegistryStore, registerProject } from "./registry";
 import { TelegramSessionMonitor } from "./monitor";
 import type { TelegramConfig } from "./types";
 
-export { TelegramSessionMonitor } from "./monitor";
+// NOTE: 不要从这里 re-export TelegramSessionMonitor（类）或任何其它函数/类。
+// opencode 的 legacy 插件加载器（getLegacyPlugins）会遍历模块的 **全部导出**
+// 并把每个函数/类都当作 server 插件调用；re-export 类会被无 new 调用，
+// 抛 "Cannot call a class constructor ... without |new|"，导致整个插件加载失败
+// （2026-09-02 线上事故根因）。测试需要类时直接 import src/monitor.ts。
 
 export default (async ({ client, directory, worktree }) => {
   const root = worktree === "/" ? directory : worktree;

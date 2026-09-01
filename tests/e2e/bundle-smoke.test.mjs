@@ -9,9 +9,10 @@
 //   1. 产物可被 dynamic import() 加载（模块不抛错）；
 //   2. default 导出为函数（原入口 `export default ... satisfies Plugin` 的形态；
 //      opencode 插件按 default 函数挂载）；
-//   3. TelegramSessionMonitor 命名导出存在且为函数（测试契约 §2.12 依赖的命名导出，
-//      tests/behavior.test.mjs 同一导出面）。
-// 断言全部落在本文件，由 bun 直接执行，无内联源码。
+//   3. 除 default 外没有其它函数/类导出（回归断言，2026-09-02 事故：曾 re-export
+//      TelegramSessionMonitor 类，opencode legacy 插件加载器 Object.values(mod)
+//      遍历全部导出、把类当 server 插件无 new 调用 → 整个插件加载失败）。
+//      tests/behavior.test.mjs 需要类时直接 import src/monitor.ts，不依赖产物。
 //
 // 用法：bun tests/e2e/bundle-smoke.test.mjs（cwd = 仓库根；产物 monitor.ts 必须在场）
 
@@ -52,14 +53,22 @@ if (mod) {
     console.log("ok   API-006: default export is a function (Plugin entry shape)");
   }
 
-  // 断言 3：TelegramSessionMonitor 命名导出存在且为函数
-  if (typeof mod.TelegramSessionMonitor !== "function") {
+  // 断言 3：除 default 外不得有任何函数/类导出（opencode legacy 加载器会把它们
+  // 当 server 插件逐个调用——类会被无 new 调用而炸掉整个插件）。
+  const extraFunctions = Object.entries(mod)
+    .filter(([key]) => key !== "default")
+    .filter(([, value]) => typeof value === "function")
+    .map(([key]) => key);
+  if (extraFunctions.length > 0) {
     failures += 1;
     console.error(
-      `FAIL API-006: named export TelegramSessionMonitor missing (got ${typeof mod.TelegramSessionMonitor})`,
+      `FAIL API-006: extra function/class exports present: ${extraFunctions.join(", ")} ` +
+        "(opencode legacy loader would call them as plugins and fail)",
     );
   } else {
-    console.log("ok   API-006: named export TelegramSessionMonitor is a function/class");
+    console.log(
+      "ok   API-006: no function/class exports besides default (opencode-loader safe)",
+    );
   }
 }
 
