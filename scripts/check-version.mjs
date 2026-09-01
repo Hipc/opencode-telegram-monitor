@@ -2,7 +2,7 @@
 // Verifies that the release version (from a git tag, e.g. v0.5.1) matches EVERY
 // place the plugin version appears, BEFORE you create the tag:
 //
-//   - monitor.ts   -> const PLUGIN_VERSION = "..."   (single source of truth)
+//   - src/version.ts -> const PLUGIN_VERSION = "..."   (single source of truth)
 //   - package.json -> "version": "..."
 //   - README.md    -> the npm install pin ("opencode-telegram-monitor@...")
 //
@@ -32,18 +32,18 @@ if (!/^\d+\.\d+\.\d+$/.test(version)) {
   fail(`invalid version "${raw}" (expected semver like 1.2.3 or v1.2.3)`);
 }
 
-const monitor = readFileSync(join(root, "monitor.ts"), "utf8");
+const versionFile = readFileSync(join(root, "src", "version.ts"), "utf8");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const readme = readFileSync(join(root, "README.md"), "utf8");
 
 const mismatches = [];
 
-const monitorMatch = monitor.match(/const PLUGIN_VERSION = "([^"]+)";/);
-if (!monitorMatch) {
-  mismatches.push("monitor.ts: PLUGIN_VERSION constant not found");
-} else if (monitorMatch[1] !== version) {
+const versionMatch = versionFile.match(/const PLUGIN_VERSION = "([^"]+)";/);
+if (!versionMatch) {
+  mismatches.push("src/version.ts: PLUGIN_VERSION constant not found");
+} else if (versionMatch[1] !== version) {
   mismatches.push(
-    `monitor.ts reports ${monitorMatch[1]}, expected ${version}`,
+    `src/version.ts reports ${versionMatch[1]}, expected ${version}`,
   );
 }
 
@@ -71,4 +71,4 @@ if (mismatches.length > 0) {
   );
 }
 
-console.log(`check-version: ${raw} matches monitor.ts, package.json, README.md`);
+console.log(`check-version: ${raw} matches src/version.ts, package.json, README.md`);

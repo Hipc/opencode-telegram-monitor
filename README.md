@@ -48,10 +48,11 @@ The plugin is published as [`opencode-telegram-monitor`](https://www.npmjs.com/p
 
 ### From source (local file)
 
-1. Copy `monitor.ts` into your opencode plugins directory:
+1. Build the plugin into the single-file `monitor.ts` bundle, then copy that artifact into your opencode plugins directory:
 
    ```bash
    mkdir -p ~/.config/opencode/plugins
+   node scripts/build.mjs
    cp monitor.ts ~/.config/opencode/plugins/telegram-session-monitor.ts
    ```
 
@@ -76,7 +77,7 @@ The workflow **refuses to publish** if the tag version does not match the versio
 
 | Place | Field |
 | ----- | ----- |
-| `monitor.ts` | `const PLUGIN_VERSION = "x.y.z"` (source of truth) |
+| `src/version.ts` | `const PLUGIN_VERSION = "x.y.z"` (source of truth) |
 | `package.json` | `"version": "x.y.z"` |
 | `README.md` | npm install pin `opencode-telegram-monitor@x.y.z` |
 

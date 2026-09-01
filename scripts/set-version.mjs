@@ -3,7 +3,7 @@
 // the release version (e.g. "1.2.3", with or without the "v" prefix).
 //
 // The release version is the single source of truth for a published build:
-//   - monitor.ts  -> const PLUGIN_VERSION = "..."
+//   - src/version.ts -> const PLUGIN_VERSION = "..."
 //   - package.json -> "version": "..."
 //   - README.md    -> the npm install pin ("opencode-telegram-monitor@...")
 //
@@ -28,18 +28,19 @@ if (!/^\d+\.\d+\.\d+$/.test(version)) {
   fail(`invalid version "${raw}" (expected semver like 1.2.3)`);
 }
 
-const monitorPath = join(root, "monitor.ts");
+const versionPath = join(root, "src", "version.ts");
 const packagePath = join(root, "package.json");
 const readmePath = join(root, "README.md");
 
-// 1) monitor.ts: const PLUGIN_VERSION = "..." (single source of truth)
-const monitor = readFileSync(monitorPath, "utf8");
-if (!/const PLUGIN_VERSION = "[^"]+";/.test(monitor)) {
-  fail("PLUGIN_VERSION constant not found in monitor.ts");
+// 1) src/version.ts: const PLUGIN_VERSION = "..." (single source of truth)
+//    (`export const ...` is fine — the unanchored regex matches the substrings)
+const versionFile = readFileSync(versionPath, "utf8");
+if (!/const PLUGIN_VERSION = "[^"]+";/.test(versionFile)) {
+  fail("PLUGIN_VERSION constant not found in src/version.ts");
 }
 writeFileSync(
-  monitorPath,
-  monitor.replace(/const PLUGIN_VERSION = "[^"]+";/, `const PLUGIN_VERSION = "${version}";`),
+  versionPath,
+  versionFile.replace(/const PLUGIN_VERSION = "[^"]+";/, `const PLUGIN_VERSION = "${version}";`),
   "utf8",
 );
 
@@ -62,4 +63,4 @@ writeFileSync(
   "utf8",
 );
 
-console.log(`set-version: monitor.ts, package.json, README.md -> ${version}`);
+console.log(`set-version: src/version.ts, package.json, README.md -> ${version}`);
