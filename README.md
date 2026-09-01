@@ -62,7 +62,7 @@ The plugin is published as [`opencode-telegram-monitor`](https://www.npmjs.com/p
 When installed from npm, the plugin checks for a newer release on the npm registry **once per opencode start** (5 seconds after startup, non-blocking). If a newer version is found, it:
 
 1. Downloads the new tarball into a **staging directory** (`~/.otg/update-staging/`).
-2. Verifies the staged `monitor.ts` reports the expected version.
+2. Verifies the version in the staged package's `package.json` matches the expected version.
 3. Atomically swaps the cached plugin directory (old directory is renamed as a backup, then replaced), re-verifies, and only then removes the backup.
 4. Sends a Telegram notification; **restart opencode** to load the new version.
 
@@ -83,14 +83,14 @@ The workflow **refuses to publish** if the tag version does not match the versio
 For a **bugfix** (patch) release, bump only the lowest number — never the middle one (`0.5.0 → 0.5.1`, not `0.6.0`):
 
 ```bash
-# 1. set the new version everywhere (monitor.ts / package.json / README.md)
+# 1. set the new version everywhere (src/version.ts / package.json / README.md)
 node scripts/set-version.mjs v0.5.1
 
 # 2. verify the tag you are about to create matches the code (exits non-zero on mismatch)
 node scripts/check-version.mjs v0.5.1
 
 # 3. commit, tag, push — the workflow verifies again and publishes
-git add monitor.ts package.json README.md
+git add src/version.ts package.json README.md
 git commit -m "feat(monitor): ..."
 git tag v0.5.1
 git push origin main
