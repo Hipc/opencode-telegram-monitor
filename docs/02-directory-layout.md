@@ -2,13 +2,16 @@
 
 > 更新: 2026-09-02。拆分完成后根 `monitor.ts` 变为**构建产物**，源码在 `src/`。
 > 文件级契约（导出名/签名）以 docs/modules/split-contracts.md §1/§2 为准。
+> 版本单源迁移轮（2026-09-02）：PLUGIN_VERSION 改为构建注入点，scripts 只写/校验
+> package.json + README——契约见 docs/modules/version-injection.md。
 
 ```
 opencode-telegram-monitor/
 ├── monitor.ts                  # 构建产物：bun bundle src/index.ts → 根 monitor.ts（不 minify）
 │                               # 由 .gitignore 忽略（/monitor.ts，Phase 1.9 加）；git 不再跟踪
 ├── src/
-│   ├── version.ts              # 版本/self-update 常量（PLUGIN_VERSION 字面量在此）
+│   ├── version.ts              # 版本/self-update 常量（PLUGIN_VERSION 为注入点：
+│   │                           #   __PLUGIN_VERSION__ + "0.0.0-dev" fallback，见 version-injection.md）
 │   ├── constants.ts            # OTG/DIAG 路径、时间限额、菜单限额、PLANNED_COMMANDS、15 个 ICON_*
 │   ├── types.ts                # 全部共享类型（含新增 TodoCounts/TokensSummary/SessionDisplayState）
 │   ├── diagnostics.ts          # dline（诊断日志；OTG_DIR mkdir 副作用在此）
@@ -36,9 +39,9 @@ opencode-telegram-monitor/
 │       ├── poller-lock.ts      # LockInfo + PollerLock
 │       └── shared-file-store.ts# SharedFileStoreOptions + SharedFileStore<T>（dead，未接线）
 ├── scripts/
-│   ├── build.mjs               # bundle src/index.ts → 根 monitor.ts + PLUGIN_VERSION 字面量断言
-│   ├── set-version.mjs         # 改读 src/version.ts（正则不变）
-│   └── check-version.mjs       # 改读 src/version.ts（正则不变）
+│   ├── build.mjs               # bundle src/index.ts → 根 monitor.ts；--define 注入 pkg.version + 产物版本断言
+│   ├── set-version.mjs         # 只写 package.json + README.md（版本注入发生在构建时）
+│   └── check-version.mjs       # 只校验 package.json + README.md
 ├── tests/
 │   └── behavior.test.mjs       # 行为验证（stub enqueueMessage 喂事件；--dry 模式）
 ├── docs/

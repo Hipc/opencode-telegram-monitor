@@ -26,8 +26,12 @@
 
 ## 版本与发布
 
-- 版本单一事实来源：`src/version.ts` 的 `const PLUGIN_VERSION = "0.5.3";`（当前 0.5.3，不发版）。
-- 变更流程：`node scripts/set-version.mjs <v>` 同步三处 → `node scripts/check-version.mjs v<v>` 校验 → 打 tag → publish.yml 构建 + 发布。
+- 版本单一事实来源：`package.json` 的 `version` 字段（当前 0.5.3，本轮从
+  `src/version.ts` 迁移中——构建时经 `bun build --define` 注入 bundle 产物，
+  契约见 docs/modules/version-injection.md）。
+- 变更流程：`node scripts/set-version.mjs <v>` 写 package.json + README pin →
+  `node scripts/check-version.mjs v<v>` 校验（package.json + README）→ 打 tag →
+  publish.yml 构建（注入）+ 发布。
 - .github pre-push hook 校验 tag 与 version 一致。
 
 ## 本轮（Round 1）目标
@@ -35,6 +39,10 @@
 把 3611 行单文件 `monitor.ts` 拆为 `src/` 多文件 + bun bundle 打包回根 `monitor.ts` 构建产物。
 对外机制（npm 发布、本地单文件复制安装、自更新）完全不变；主类 `TelegramSessionMonitor` 保留，纯函数/独立类全部拆出。
 详细计划见 `docs/todos/split-monitor-into-modules.md`，跨 phase 契约见 `docs/modules/split-contracts.md`。
+
+> 拆分轮已完成并合并。当前进行中：**版本单源迁移轮**（package.json 唯一来源 +
+> 构建时注入），计划见 `docs/todos/version-from-package-json.md`，契约见
+> `docs/modules/version-injection.md`。
 
 ## Git 约定
 
