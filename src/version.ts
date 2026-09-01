@@ -1,9 +1,14 @@
 export const SERVICE = "telegram-session-monitor";
 export const TARGET_OPENCODE_VERSION = "1.18.23";
-// Single source of truth for the npm package version. The publish script
-// (scripts/set-version.mjs) reads this constant and writes it into
-// package.json before `npm publish`, so the two never drift apart.
-export const PLUGIN_VERSION = "0.5.3";
+// PLUGIN_VERSION is injected at bundle time by scripts/build.mjs from
+// package.json "version" (see docs/modules/version-injection.md). Running the
+// sources directly (tests/dev) without the define yields the dev fallback
+// below; a released bundle always carries the real package version.
+declare const __PLUGIN_VERSION__: string | undefined;
+export const PLUGIN_VERSION =
+  typeof __PLUGIN_VERSION__ !== "undefined"
+    ? __PLUGIN_VERSION__
+    : "0.0.0-dev";
 
 // Self-update: the npm package name and registry endpoints used to check for
 // and download newer releases. The update is atomic (staging dir + backup +
