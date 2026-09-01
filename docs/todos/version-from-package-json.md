@@ -1,6 +1,6 @@
 # 版本号唯一来源迁移到 package.json（构建时注入）
 
-> 状态: in-progress
+> 状态: completed
 > 创建: 2026-09-02
 > 当前轮次: Round 1
 > 关联文档: docs/modules/version-injection.md（本轮冻结契约）、README.md#releases
@@ -75,7 +75,7 @@
 
 ## Round 1
 
-### Phase 1.1: 版本注入链路（version.ts 注入点 + build.mjs 注入） ⬜
+### Phase 1.1: 版本注入链路（version.ts 注入点 + build.mjs 注入） ✅
 
 **目标**: `package.json` version 经 `bun build --define` 注入 bundle；src 直跑时走 dev fallback。
 **并行组**: 批次 A（可与 1.2 并发，无文件交集）
@@ -105,9 +105,13 @@
 - [ ] 直跑 src（bun test/import）时 PLUGIN_VERSION === "0.0.0-dev"，无运行时错误
 - [ ] SERVICE 导出未受影响（behavior 套件相关用例不因此报错）
 
-**实现记录**: （合并后回写）
+**实现记录**: 分支 `phase-r1-p1.1` @ `82696b0`（feat(build): inject package.json version via bun define，+27/−30）。
+产物形态实测 = 契约目标形态 `var PLUGIN_VERSION = "0.5.3";`（bun 对 typeof 守卫常量折叠 + var hoist），§3 无偏离、无需回写；
+直跑 src 输出 `0.0.0-dev`（typeof 守卫生效，无 ReferenceError）；build.mjs 硬门断言保留未放宽。
+处置记录：仓库存在上一轮遗留的同名死分支（指向 main 祖先、无独有提交），已 `git branch -d` 后从 main 重建签出。
+无延期、无偏差。
 
-### Phase 1.2: 版本脚本收缩（set-version / check-version / 文档措辞） ⬜
+### Phase 1.2: 版本脚本收缩（set-version / check-version / 文档措辞） ✅
 
 **目标**: 发版与校验脚本只认 package.json + README 两个面；文档描述与新链路一致。
 **并行组**: 批次 A（可与 1.1 并发，无文件交集）
@@ -139,12 +143,34 @@
 - [ ] pre-push / publish.yml 逻辑零改动（与基线 diff 仅注释行，pre-push 可为空 diff）
 - [ ] README 版本流程描述与新链路一致，无 src/version.ts 残留描述
 
-**实现记录**: （合并后回写）
+**实现记录**: 分支 `phase-r1-p1.2` @ `0bbdac2`（refactor(scripts): drop src/version.ts from version scripts，4 files +26/−50）。
+临时副本实测：check-version 0.5.3 → exit 0（输出无 src/version.ts）；9.9.9 → exit 1（错误含 package.json/README 两条，提示语保留）；
+set-version 9.9.9 后副本 package.json/README 更新、src/version.ts 未变、`x.y.z` 占位符未被误改，set 后 check-version 9.9.9 → exit 0。
+顺手清理：删除 set-version.mjs 头部「publish workflow 回写 main with [skip ci]」过期注释（与 workflow 现状不符）；check-version 失败首行措辞改为 `does not match the pinned version`。
+处置记录：`phase-r1-p1.2` 同样撞上轮陈旧分支（已确认是 main 祖先），`git branch -D` 后从 main 重建。pre-push 零改动（diff 为空）。无延期、无偏差。
 
 ### Round 1 整体测试记录
 
-- 测试结论：【通过】/【不通过】（待填）
-- 失败摘要与根因归属：（待填）
+- 测试结论：【通过】（12/12 用例；单元回归 REG-001 behavior 3/3 + 对外面 5 条全绿）
+- 执行记录：REG-001 `HOME=$(mktemp -d) bun tests/behavior.test.mjs` exit 0；E2E-001 `node tests/e2e/version-injection.test.mjs` exit 0
+  （产物含 `var PLUGIN_VERSION = "0.5.3";`，无 0.0.0-dev 残留）；API-001/002/003 `node tests/e2e/version-scripts.test.mjs` exit 0；
+  REG-002 `bun tests/e2e/bundle-smoke.test.mjs` exit 0。失败：无。
+- 测试文件：本轮新增 `tests/e2e/version-injection.test.mjs`、`tests/e2e/version-scripts.test.mjs`（提交 `f346412`）；
+  既有 `tests/behavior.test.mjs`、`tests/e2e/bundle-smoke.test.mjs` 未改。
+- 执行器约束（已固化在新测试文件头部注释）：纯 spawn+fs 类 e2e 必须用 `node` 执行——bun（WSL interop Windows 二进制）
+  下内部 spawnSync 落入 Windows 域会 ENOENT。
+- 失败摘要与根因归属：无。
+
+## 交付总结
+
+- **结论**：1 轮完成，整体测试【通过】，版本号唯一来源已迁移到 package.json。
+- **合并链**：`9b4fc0a`(docs) → `82696b0`(p1.1) → `0bbdac2`(p1.2) → `5ea2f7e`(merge HEAD) → `f346412`(test e2e)。
+- **改动面**：src/version.ts（注入点+fallback）、scripts/build.mjs（--define 注入+硬门保留）、
+  scripts/set-version.mjs / scripts/check-version.mjs（只认 package.json+README）、
+  .github/workflows/publish.yml（注释）、README.md（版本流程段）、tests/e2e/ 新增 2 个测试文件。
+- **产物形态**：`var PLUGIN_VERSION = "0.5.3";`（bun typeof 常量折叠实证，契约 §3 无偏离）；直跑 src 为 "0.0.0-dev"。
+- **遗留**：分支领先 origin/main 33 个提交未推送（等用户确认 docs 可公开后自行 push）；
+  publish.yml/pre-push 属 CI 集成面，无独立 e2e 条目（本轮仅注释改动，逻辑零改动）。
 
 ## 断点记录（运输层错误续传用）
 
