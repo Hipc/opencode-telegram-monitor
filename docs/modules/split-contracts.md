@@ -228,9 +228,9 @@ export const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 | `findEntryByToken` | 3309-3314 | |
 | `setProjectEnabled` | 3316-3333 | JSDoc 随迁 |
 | `deleteProjectByPath` | 3335-3349 | JSDoc 随迁 |
-| `class ProjectRegistryStore` | 3351-3488 | 整类逐字节平移（缓存/serialized 队列/3 次重试/原子写/Windows fallback） |
+| `class ProjectRegistryStore` | 3351-3488 | 拆分轮逐字节平移；2026-09-02 Round 1 起 mutate 内嵌 PollerLock 写入锁（CAS×3 移除），类契约以 docs/modules/projects-registry.md 为准 |
 
-- import：`node:path` 的 `resolve/dirname`、`node:fs/promises` 的 `stat/readFile/writeFile/rename/rm/mkdir/copyFile`、`node:crypto` 的 `createHash`。无 src 内部依赖。
+- import：`node:path` 的 `resolve/dirname`、`node:fs/promises` 的 `stat/readFile/writeFile/rename/rm/mkdir/copyFile`、`node:crypto` 的 `createHash`。拆分轮无 src 内部依赖；2026-09-02 Round 1 起 ProjectRegistryStore 新增 `../infra/poller-lock`（依赖方向仍符合 directory-layout 的 infra→registry 序），见 projects-registry.md §3。
 - 提供：1.4。消费：1.6（buildMenuKeyboard 用 entryToken）、1.7（测试构造 ProjectRegistryStore）、1.8（主类构造参数类型、入口 new ProjectRegistryStore）。
 
 ### 2.8 src/format/（Phase 1.6 新建；四文件 + barrel）
