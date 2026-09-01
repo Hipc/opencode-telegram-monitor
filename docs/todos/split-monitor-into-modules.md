@@ -65,7 +65,7 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 ### 外部接口测试
 
 - [API-001] 行为脚本 tests/behavior.test.mjs：auto-approve（permission.asked 随即 permission.replied）→ 0 条通知；来源 AGENTS.md 验证章节
-- [API-002] 行为脚本：真待审批（仅 permission.asked，等 2.5s）→ 1 条 [WAITING] 通知且含 "Permission"；来源 AGENTS.md 验证章节
+- [API-002] 行为脚本：真待审批（仅 permission.asked，等 2.5s）→ 恰 1 条通知，内容含 ⚠️ 图标与 `permission` 类型行（**实证修正**：notifyWaiting 实际输出为 titleLine(iconForWaitingType)+fieldTable，不含 `[WAITING]` 字面；AGENTS.md 该描述已过时，本测试断言真实行为）；来源 AGENTS.md 验证章节 + monitor.ts:1231-1254 实证
 - [API-003] 行为脚本：question.asked → 立即 1 条通知（不去抖）；来源 AGENTS.md 验证章节
 - [API-004] 构建产物：`bun build`（bundle 模式）产出根目录 monitor.ts，exit 0，且产物中可匹配 `PLUGIN_VERSION` 与 "0.5.3" 字面量（self-update 校验可识别）；来源 验收标准
 - [API-005] `node scripts/check-version.mjs v0.5.3` exit 0（读 src/version.ts）；`node scripts/check-version.mjs v9.9.9` exit 非 0；来源 验收标准
@@ -93,7 +93,9 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - 合并顺序：A 任意序 → B 任意序；整体测试在 B 合并后执行（1.7 完整断言也在此时）。
 - 分支/worktree 统一：`phase-r1-p1.{1..9}` / `.worktrees/phase-r1-p1.{1..9}`。
 
-### Phase 1.1: src/version.ts + src/constants.ts + src/types.ts ✅|⬜
+### Phase 1.1: src/version.ts + src/constants.ts + src/types.ts ✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.1`，SHA `dece569`，worktree 已删。三文件与 monitor.ts 原文值级 diff EXIT=0（仅 export 前缀 + :263 注释修正）；PLUGIN_VERSION 字面形态保留；契约新增 TodoCounts/TokensSummary/SessionDisplayState。备注：bun 多入口 build 需 --outdir，语法自检用单入口逐文件等效执行。
 
 **目标**: 建立 src/ 的基础层——版本常量、共享常量、共享类型，供后续所有模块 import
 **并行组**: 批次 A（可与 1.2–1.7 并发）
@@ -111,7 +113,9 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [ ] 三个文件符号清单与 monitor.ts 原符号一一对应（无遗漏/重命名/默认值变化）
 - [ ] `bun build --no-bundle --target node --external "*" src/version.ts src/constants.ts src/types.ts` 语法通过
 
-### Phase 1.2: src/diagnostics.ts + src/infra/ ✅|⬜
+### Phase 1.2: src/diagnostics.ts + src/infra/ ✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.2`，SHA `a6b9faf`，worktree 已删。4/4 语法自检通过 + 字节级等价核验 MATCH；mkdirSync 副作用随迁 diagnostics.ts（契约 §2.2）；SharedFileStore 原样平移。备注：diagnostics import 路径按契约用 `./constants`（计划文件原写 `../constants` 系笔误）。
 
 **目标**: 拆出诊断日志与跨进程基础设施
 **并行组**: 批次 A（可与 1.1、1.3–1.7 并发）
@@ -129,7 +133,9 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [ ] 四个文件与原实现逐行等价（仅 import 路径变化）
 - [ ] `bun build --no-bundle --target node --external "*" src/infra/*.ts` 语法通过（未建兄弟模块的 import 失败属预期）
 
-### Phase 1.3: src/config/ ✅|⬜
+### Phase 1.3: src/config/ ✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.3`，SHA `9ff36b2`，worktree 已删。三函数逐字节平移（diff 验证），校验正则/打码不变。偏差：ProxySpec 未从 load-config re-export（函数体未用到，契约 §2.6 亦未声明导出）——telegram/types.ts 已直接从 types.ts 转口，无影响。
 
 **目标**: 拆出配置读取
 **并行组**: 批次 A（可与 1.1、1.2、1.4–1.7 并发）
@@ -145,7 +151,9 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [ ] 校验逻辑逐行等价（botToken/chatId/proxy 正则不变）
 - [ ] bun build 语法自检通过
 
-### Phase 1.4: src/registry/ ✅|⬜
+### Phase 1.4: src/registry/ ✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.4`，SHA `9e6b3c5`，worktree 已删。src/registry/index.ts 与原 3220-3488 区间除 import 头外逐行一致；原实现未引用 delay/isMissingFile/OTG_DIR，故未 import（与契约 §2.7 吻合）。
 
 **目标**: 拆出项目注册表（类型 + 纯函数族 + Store 类）
 **并行组**: 批次 A（可与 1.1、1.2、1.3、1.5–1.7 并发）
@@ -161,7 +169,9 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [ ] 符号与行为逐行等价（缓存/serialized 队列/3 次重试/原子写/Windows fallback 不变）
 - [ ] bun build 语法自检通过
 
-### Phase 1.5: src/telegram/ ✅|⬜
+### Phase 1.5: src/telegram/ ✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.5`，SHA `b74d935`，worktree 已删。逐函数行级等价 diff 全 OK；无 this 残留；2490-2494 注释逐字节保留。偏差：① `Socket` 类型改自 node:net（node:tls 不导出该类型，tsc 实证），tlsConnect 仍来自 node:tls；② requestViaProxy 局部变量 `proxy` 与新参数同名冲突，机械重命名为 `proxySpec`（两处）。
 
 **目标**: 拆出 Telegram 协议类型 + API 传输层（retry/request/direct/proxy/tunnel/parseProxy + TelegramApiError）
 **并行组**: 批次 A（可与 1.1–1.4、1.6–1.7 并发）
@@ -179,7 +189,9 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [ ] parseProxy 输出 ProxySpec 结构不变
 - [ ] bun build 语法自检通过
 
-### Phase 1.6: src/format/ ✅|⬜
+### Phase 1.6: src/format/ ✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.6`，SHA `58774cf`，worktree 已删。5 文件 830 行，全部函数字符串/模板字面量与原段逐字节一致；自引用解耦两处（契约要求）。备注：redact.ts 保留文件私有 record/string/number 助手（避免 coerce↔redact 环）；format.ts 实际未用 coerce 导出故未 import。
 
 **目标**: 拆出全部格式化/脱敏纯函数与 ICON 常量（本轮最大纯函数集）
 **并行组**: 批次 A（可与 1.1–1.5、1.7 并发）
@@ -198,7 +210,9 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [ ] 脱敏行为不变（safeText 对 botToken/root 的打码逻辑原样）
 - [ ] bun build 语法自检通过
 
-### Phase 1.7: tests/behavior.test.mjs 行为验证脚本 ✅|⬜
+### Phase 1.7: tests/behavior.test.mjs 行为验证脚本 ✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.7`，SHA `45b03a5`，worktree 已删。219 行，dynamic import（保持同路径/同导出名，--dry 兼容）；隔离 HOME；进程显式 exit（bootstrap 遗留 8s timer）。**发现 API-002 文本断言与代码现状冲突**（`[WAITING]` 字面不存在，实际为 ⚠️+permission 表格）——已在「最终验证测试任务」中实证修正为断言真实行为。fake client 按运行需要补最小 stub（session.list/status/get）。
 
 **目标**: 固化 AGENTS.md 描述的行为验证为可重复脚本（stub enqueueMessage 喂事件断言）
 **并行组**: 批次 A（可与 1.1–1.6 并发）
