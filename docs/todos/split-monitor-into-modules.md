@@ -67,7 +67,7 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [API-001] 行为脚本 tests/behavior.test.mjs：auto-approve（permission.asked 随即 permission.replied）→ 0 条通知；来源 AGENTS.md 验证章节
 - [API-002] 行为脚本：真待审批（仅 permission.asked，等 2.5s）→ 恰 1 条通知，内容含 ⚠️ 图标与 `permission` 类型行（**实证修正**：notifyWaiting 实际输出为 titleLine(iconForWaitingType)+fieldTable，不含 `[WAITING]` 字面；AGENTS.md 该描述已过时，本测试断言真实行为）；来源 AGENTS.md 验证章节 + monitor.ts:1231-1254 实证
 - [API-003] 行为脚本：question.asked → 立即 1 条通知（不去抖）；来源 AGENTS.md 验证章节
-- [API-004] 构建产物：`bun build`（bundle 模式）产出根目录 monitor.ts，exit 0，且产物中可匹配 `PLUGIN_VERSION` 与 "0.5.3" 字面量（self-update 校验可识别）；来源 验收标准
+- [API-004] 构建产物：`node scripts/build.mjs` 产出根目录 monitor.ts，exit 0，产物含 `PLUGIN_VERSION = "0.5.3"` 形态（bun 会把 const 重写为 var，任意关键字匹配即可）；self-update 校验已实证走兜底（读包内 package.json version），不依赖 const 字面量；来源 验收标准 + Phase 1.8/1.9 实证
 - [API-005] `node scripts/check-version.mjs v0.5.3` exit 0（读 src/version.ts）；`node scripts/check-version.mjs v9.9.9` exit 非 0；来源 验收标准
 - [API-006] bundle 产物 import 冒烟：产物可被 `import()` 加载且 default 导出为函数（satisfies Plugin 形态）；来源 插件约定
 
@@ -230,7 +230,9 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [ ] 三条断言齐全且测试编号写入用例名
 - [ ] 脚本自身 `bun tests/behavior.test.mjs --dry` 语法可载入（完整运行在合并后整体测试执行）
 
-### Phase 1.8: 主类迁移与入口重建（rewiring）✅|⬜
+### Phase 1.8: 主类迁移与入口重建（rewiring）✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.8`，SHA `33a35d9`，worktree 已删。src/monitor.ts（1836 行）+ src/index.ts（61 行）；根 monitor.ts 已 git rm（+1897/−3611）。**bundle 实机结论**：bun 把 `export const PLUGIN_VERSION` 重写为 `var`（不 minify 也如此，双 worker 独立实测一致）→ self-update 按契约 §4.3 兜底改为读 staging/current 包 package.json 的 version 字段（staged 与 post-swap 两处，错误消息与失败路径逐字保留）。死导入 httpRequest 一并移除。行为测试（1.8 分支内）：API-001/003 ✅，API-002 因测试文件断言陈旧 ✗（已由 1.10 修复）。
 
 **目标**: src/monitor.ts 主类（引用全部新模块，删除已迁出成员）+ src/index.ts 入口；根 monitor.ts 退出 git
 **并行组**: 批次 B（依赖批次 A 全部合并；与 1.9 并发——文件不相交）
@@ -250,7 +252,9 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [ ] bundle 产物含 PLUGIN_VERSION 字面量（或已按兜底改 self-update 并记录）
 - [ ] 主类保留成员清单与计划边界一致（handleEvent/投影/命令/轮询/发送队列/自更新在类内）
 
-### Phase 1.9: 构建脚本与发布链路联动 ✅|⬜
+### Phase 1.9: 构建脚本与发布链路联动 ✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.9`，SHA `bb0afd2`，worktree 已删。scripts/build.mjs 新建（bundle + 版本硬门：产物含 `PLUGIN_VERSION = "<pkg.version>"` 即过，const 字面量缺失仅 WARNING 不阻断）；check-version/set-version 改读 src/version.ts（实测 v0.5.3 exit 0 / v9.9.9 exit 1）；publish.yml 步骤序 Verify → Build → Publish；.gitignore 加 `/monitor.ts`；README 安装章节与版本来源表已更新。build.mjs 用相对路径（本机 bun 为 WSL interop Windows 二进制，绝对 Linux 路径 BadPathName）。
 
 **目标**: bundle 构建 + scripts/workflow/package.json/README/.gitignore 全部指向新结构
 **并行组**: 批次 B（依赖 1.1 的 version.ts 契约冻结；与 1.8 并发——文件不相交）
@@ -270,6 +274,10 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 - [ ] `node scripts/check-version.mjs v0.5.3` exit 0、`v9.9.9` exit 非 0（本地以 src/version.ts 实测）
 - [ ] `node scripts/build.mjs` 产出根 monitor.ts 且断言通过（若 src/monitor.ts 尚未合并，本 phase 内允许以临时 stub index 验证脚本逻辑，整体测试再全链验证）
 - [ ] publish.yml 语法有效（yaml 解析通过）
+
+### Phase 1.10: 测试断言实证修正 + README 残留行 ✅
+
+**实现记录**: 完成。分支 `phase-r1-p1.10`，SHA `3f26007`（tests）+ `fe20d2b`（README），worktree 已删。API-002 断言改为真实输出特征（⚠️ 图标 + 小写 permission Type 行 + Session/Request 字段），1.8 分支物化实证 3/3 通过；README 三处发布流程过期表述更新（staging 校验表述/set-version 注释/git add 路径）。
 
 ### Round 1 整体测试记录
 
