@@ -8,6 +8,9 @@ export const DEFAULT_TTL_MS = 60_000;
 
 export const IDLE_DEBOUNCE_MS = 5_000;
 export const WAITING_NOTIFY_DEBOUNCE_MS = 1_000;
+// sessions 落盘 → TG 中继的扫描间隔：poller.lock 持有者每秒扫描 projects.json
+// 中 send=false && resolved=false 的等待记录并推送（契约 docs/modules/sessions-relay.md §6.1）。
+export const SESSIONS_SCAN_INTERVAL_MS = 1_000;
 export const TELEGRAM_POLL_SECONDS = 25;
 export const TELEGRAM_POLL_TIMEOUT_MS = 35_000;
 export const TELEGRAM_SEND_TIMEOUT_MS = 15_000;
