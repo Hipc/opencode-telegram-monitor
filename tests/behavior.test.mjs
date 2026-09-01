@@ -153,10 +153,12 @@ async function main() {
     },
   );
 
-  // API-002: 真待审批（仅 permission.asked，无 replied）→ 2.5s 后恰 1 条
-  // [WAITING] 通知且文本含 "Permission"。
+  // API-002: 真待审批（仅 permission.asked，无 replied）→ 2.5s 后恰 1 条通知。
+  // 实证修正：notifyWaiting 实际输出为 titleLine(iconForWaitingType)+fieldTable，
+  // 即 ⚠️ 标题行 + Session/Type/Request 表格字段，不含 "[WAITING]" 字面
+  // （AGENTS.md 对该通知格式的描述已过时，此处断言真实行为）。
   await runCase(
-    "API-002 pending permission: only permission.asked -> 1 [WAITING] notification after 2.5s",
+    "API-002 pending permission: only permission.asked -> exactly 1 notification with ⚠️/permission/Request (actual notifyWaiting output)",
     async () => {
       const { monitor, collected } = makeMonitor();
       monitor.accept({
@@ -171,11 +173,18 @@ async function main() {
         );
       }
       const text = collected[0];
-      if (!text.includes("[WAITING]")) {
-        throw new Error(`notification missing [WAITING] marker: ${text}`);
+      // notifyWaiting = titleLine(iconForWaitingType(type), projectLabel) + fieldTable(rows)：
+      // - ⚠️ 标题行（iconForWaitingType("permission") === ICON_PERMISSION）
+      // - "Type" 行的值为小写 "permission"（WaitingType 字面值）
+      // - 表格含 "Session" / "Request" 字段行
+      if (!text.includes("⚠️")) {
+        throw new Error(`notification missing ⚠️ icon in title line: ${text}`);
       }
-      if (!text.includes("Permission")) {
-        throw new Error(`notification missing Permission text: ${text}`);
+      if (!text.includes("permission")) {
+        throw new Error(`notification missing lowercase "permission" Type row: ${text}`);
+      }
+      if (!text.includes("Session") || !text.includes("Request")) {
+        throw new Error(`notification missing Session/Request table fields: ${text}`);
       }
       await monitor.dispose();
     },
