@@ -1,6 +1,6 @@
 # monitor.ts 单文件拆分为多模块
 
-> 状态: in-progress
+> 状态: completed
 > 创建: 2026-09-02
 > 当前轮次: Round 1
 > 关联文档: docs/todos/shared-file-store.md（历史交付记录，勿混用）
@@ -281,8 +281,15 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 
 ### Round 1 整体测试记录
 
-- 测试结论：【通过】/【不通过】（待填）
-- 失败摘要与根因归属：（待填）
+- 测试结论：【通过】（2026-09-02，design-driven-test 真实执行）
+- 执行记录：
+  - API-001/002/003：`HOME=$(mktemp -d) bun tests/behavior.test.mjs` → 3/3 通过（exit 0）；`--dry` 载入通过
+  - API-004：`node scripts/build.mjs` → exit 0，bundle 18 模块 94.19 KB，产物 L49 `var PLUGIN_VERSION = "0.5.3";`；git status 干净（`/monitor.ts` gitignore:11 生效）
+  - API-005：check-version v0.5.3 exit 0 / v9.9.9 exit 1（三处 mismatch 明细）
+  - API-006：`bun tests/e2e/bundle-smoke.test.mjs`（本轮新建回归资产）→ 3/3 通过（import OK / default 函数 / 命名导出存在）
+  - 附带核验：publish.yml 步骤序 Verify → Build → Publish ✅；package.json check/prepublishOnly → scripts/build.mjs ✅
+- 失败摘要与根因归属：无失败用例
+- 残余风险：self-update 端到端（staged tarball 校验链）未在本轮验证（无真实 npm 发布演练），兜底逻辑（读包内 package.json version）属计划内并经代码落地；建议后续发布演练覆盖
 
 ## 断点记录（运输层错误续传用）
 
@@ -290,4 +297,8 @@ monitor.ts 已增长到 3611 行（主类约 2767 行），单文件不利于维
 
 ## 交付总结
 
-- （待填）
+- **轮次**：仅 Round 1，整体测试一次通过（API-001…006 共 6 条外部面 + 行为套件 3/3）
+- **结构**：单文件 monitor.ts（3611 行）→ src/ 10 个模块文件 + tests/ 2 个回归资产 + scripts/build.mjs；主类 TelegramSessionMonitor 保留于 src/monitor.ts（强耦合逻辑不拆）；根 monitor.ts 转为 gitignored 构建产物
+- **合并链**：批次 A（p1.1–p1.7，e6a7f18…c9e203f）→ 批次 B（p1.8 988e05d / p1.9 a23db42 / 补丁 p1.10 dc01f03）→ 文档 0748188
+- **关键实证决策**：① bun bundle 将 `export const` 重写为 `var`（双 worker 独立实测一致）→ self-update 校验走契约兜底（读 staging 包 package.json version）；② notifyWaiting 实际输出无 `[WAITING]` 字面（AGENTS.md/测试断言过时）→ API-002 断言实证修正为 ⚠️+permission 真实特征，行为零变化
+- **外部机制零变化**：npm 发布（files 白名单 + CI 现场构建）、本地复制安装（先 build.mjs）、check-version/set-version（改读 src/version.ts）、~/.otg 数据格式、PLUGIN_VERSION=0.5.3 不变、不发版
