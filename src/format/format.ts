@@ -1,0 +1,547 @@
+import { basename } from "node:path";
+import type { Session, Todo } from "@opencode-ai/sdk";
+
+import {
+  ICON_CANCELLED,
+  ICON_COMPLETED,
+  ICON_FAILED,
+  ICON_HELP,
+  ICON_IDLE,
+  ICON_PERMISSION,
+  ICON_QUESTION,
+  ICON_RETRYING,
+  ICON_RUNNING,
+  ICON_TODO,
+  ICON_USAGE,
+  ICON_WAITING,
+  MENU_MAX_PROJECTS,
+  TELEGRAM_MESSAGE_LIMIT,
+} from "../constants";
+import { entryToken, type ProjectRegistry } from "../registry";
+import type {
+  ErrorSummary,
+  SessionDisplayState,
+  SessionOutcome,
+  SessionProjection,
+  TelegramInlineButton,
+  TelegramInlineKeyboard,
+  TokenTotals,
+  TodoCounts,
+  TokensSummary,
+  WaitingType,
+} from "../types";
+import { safeText, type RedactionContext } from "./redact";
+import {
+  escapeHtml,
+  fieldRow,
+  fieldTable,
+  paragraph,
+  titleLine,
+} from "./html";
+
+export type FormatContext = RedactionContext & {
+  projectLabel: string;
+  sessions: Map<string, SessionProjection>;
+  sessionInfo: Map<string, Session>;
+};
+
+export function formatNumber(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return String(value);
+}
+
+export function formatCost(tokens: TokenTotals): string {
+  if (!tokens.hasCost) return "N/A";
+  if (tokens.cost >= 1) return `$${tokens.cost.toFixed(2)}`;
+  if (tokens.cost >= 0.01) return `$${tokens.cost.toFixed(3)}`;
+  return `$${tokens.cost.toFixed(4)}`;
+}
+
+export function formatDuration(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+export function shortID(sessionID: string): string {
+  const normalized = sessionID.startsWith("ses_")
+    ? sessionID.slice(4)
+    : sessionID;
+  return normalized.slice(0, 8);
+}
+
+export function matchesSessionID(sessionID: string, candidate: string): boolean {
+  const normalizedCandidate = candidate.trim().toLowerCase();
+  const normalizedID = sessionID.toLowerCase();
+  const withoutPrefix = normalizedID.startsWith("ses_")
+    ? normalizedID.slice(4)
+    : normalizedID;
+  return (
+    normalizedID === normalizedCandidate ||
+    normalizedID.startsWith(normalizedCandidate) ||
+    withoutPrefix.startsWith(normalizedCandidate)
+  );
+}
+
+export function limitMessage(text: string): string {
+  if (text.length <= TELEGRAM_MESSAGE_LIMIT) return text;
+  // Reserve room for the truncation marker.
+  const RESERVED = "\n... truncated".length;
+  const cut = TELEGRAM_MESSAGE_LIMIT - RESERVED;
+  let truncated = text.slice(0, cut);
+  // Back up to the previous tag boundary if we sliced mid-tag so we never
+  // leave a half-written <table>/<tr>/<td>/<b>... that would break parsing.
+  const lt = truncated.lastIndexOf("<");
+  const gt = truncated.lastIndexOf(">");
+  if (lt > gt) truncated = truncated.slice(0, lt);
+  truncated += "\n... truncated";
+  // Close any block/formatting tags left open by the cut so the rich HTML
+  // parser does not reject the message.
+  const openClose: Array<[RegExp, string, string]> = [
+    [/<table>/g, /<\/table>/g, "</table>"],
+    [/<tr>/g, /<\/tr>/g, "</tr>"],
+    [/<td>/g, /<\/td>/g, "</td>"],
+    [/<th>/g, /<\/th>/g, "</th>"],
+    [/<ul>/g, /<\/ul>/g, "</ul>"],
+    [/<li>/g, /<\/li>/g, "</li>"],
+    [/<p>/g, /<\/p>/g, "</p>"],
+    [/<code>/g, /<\/code>/g, "</code>"],
+    [/<b>/g, /<\/b>/g, "</b>"],
+  ];
+  for (const [openRe, closeRe, closeTag] of openClose) {
+    const opens = (truncated.match(openRe) ?? []).length;
+    const closes = (truncated.match(closeRe) ?? []).length;
+    if (opens > closes) truncated += closeTag.repeat(opens - closes);
+  }
+  return truncated;
+}
+
+export function todoCounts(todos: Todo[]): TodoCounts {
+  return {
+    inProgress: todos.filter((todo) => todo.status === "in_progress").length,
+    pending: todos.filter((todo) => todo.status === "pending").length,
+    completed: todos.filter((todo) => todo.status === "completed").length,
+    cancelled: todos.filter((todo) => todo.status === "cancelled").length,
+    total: todos.length,
+  };
+}
+
+export function todoSummary(counts: TodoCounts): string {
+  if (counts.total === 0) return "none reported";
+  return `${counts.completed}/${counts.total} completed, ${counts.inProgress} in progress, ${counts.pending} pending, ${counts.cancelled} cancelled`;
+}
+
+export function totalTokens(tokens: TokenTotals): number {
+  return (
+    tokens.input +
+    tokens.output +
+    tokens.reasoning +
+    tokens.cacheRead +
+    tokens.cacheWrite
+  );
+}
+
+export function emptyTokens(): TokenTotals {
+  return {
+    input: 0,
+    output: 0,
+    reasoning: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    cost: 0,
+    hasCost: false,
+  };
+}
+
+export function displayState(session: SessionProjection): SessionDisplayState {
+  if (session.waitingByRequestID.size > 0) return "waiting";
+  if (session.status === "busy") return "running";
+  if (session.status === "retry") return "retrying";
+  return session.outcome ?? "idle";
+}
+
+export function sessionTitle(
+  session: SessionProjection,
+  ctx: RedactionContext,
+): string {
+  return safeText(session.info?.title ?? "Untitled session", 100, ctx);
+}
+
+export function sessionLabel(
+  session: SessionProjection,
+  ctx: RedactionContext,
+): string {
+  return `${sessionTitle(session, ctx)} | ${shortID(session.sessionID)}`;
+}
+
+export function iconForOutcome(outcome: SessionOutcome): string {
+  switch (outcome) {
+    case "completed":
+      return ICON_COMPLETED;
+    case "failed":
+      return ICON_FAILED;
+    case "cancelled":
+      return ICON_CANCELLED;
+  }
+}
+
+export function iconForState(state: SessionDisplayState): string {
+  switch (state) {
+    case "running":
+      return ICON_RUNNING;
+    case "retrying":
+      return ICON_RETRYING;
+    case "waiting":
+      return ICON_WAITING;
+    case "completed":
+      return ICON_COMPLETED;
+    case "failed":
+      return ICON_FAILED;
+    case "cancelled":
+      return ICON_CANCELLED;
+    case "idle":
+      return ICON_IDLE;
+  }
+}
+
+export function iconForWaitingType(type: WaitingType): string {
+  return type === "permission" ? ICON_PERMISSION : ICON_QUESTION;
+}
+
+export function childSessions(
+  parentID: string,
+  sessions: Map<string, SessionProjection>,
+  sessionInfo: Map<string, Session>,
+): SessionProjection[] {
+  return [...sessions.values()].filter((candidate) => {
+    let current = candidate.info?.parentID;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      if (current === parentID) return true;
+      seen.add(current);
+      current = sessionInfo.get(current)?.parentID;
+    }
+    return false;
+  });
+}
+
+export function aggregateTokens(
+  session: SessionProjection,
+  ctx: FormatContext,
+): TokensSummary {
+  const totals = emptyTokens();
+  for (const item of [
+    session,
+    ...childSessions(session.sessionID, ctx.sessions, ctx.sessionInfo),
+  ]) {
+    totals.input += item.tokens.input;
+    totals.output += item.tokens.output;
+    totals.reasoning += item.tokens.reasoning;
+    totals.cacheRead += item.tokens.cacheRead;
+    totals.cacheWrite += item.tokens.cacheWrite;
+    totals.cost += item.tokens.cost;
+    totals.hasCost = totals.hasCost || item.tokens.hasCost;
+  }
+  return totals;
+}
+
+export function menuText(registry: ProjectRegistry): string {
+  const parts = [
+    paragraph(`📋 项目监控列表（${registry.projects.length}）`),
+  ];
+  if (registry.projects.length === 0) {
+    parts.push(paragraph("（暂无项目，启动 opencode 后会自动注册）"));
+  } else {
+    const items = [];
+    for (
+      let i = 0;
+      i < Math.min(registry.projects.length, MENU_MAX_PROJECTS);
+      i += 1
+    ) {
+      const entry = registry.projects[i]!;
+      items.push(
+        `<li>${entry.enabled ? "✅" : "⚪"} ${escapeHtml(basename(entry.path))}</li>`,
+      );
+    }
+    parts.push(`<ul>${items.join("")}</ul>`);
+    if (registry.projects.length > MENU_MAX_PROJECTS) {
+      parts.push(
+        paragraph(
+          `... 以及另外 ${registry.projects.length - MENU_MAX_PROJECTS} 个项目`,
+        ),
+      );
+    }
+  }
+  parts.push(paragraph("✅ 已监控 · ⚪ 已注册未开启 · 🗑 删除"));
+  return parts.join("\n");
+}
+
+export function buildMenuKeyboard(
+  registry: ProjectRegistry,
+): TelegramInlineKeyboard {
+  const rows: TelegramInlineButton[][] = [];
+  for (
+    let i = 0;
+    i < Math.min(registry.projects.length, MENU_MAX_PROJECTS);
+    i += 1
+  ) {
+    const entry = registry.projects[i]!;
+    // callback_data 用路径 token（稳定标识）而非位置序号，避免多实例并发下
+    // 列表变化导致删错/切错项目；同时携带目标状态实现幂等。
+    const token = entryToken(entry.path);
+    const target = entry.enabled ? 0 : 1;
+    rows.push([
+      {
+        text: `${entry.enabled ? "✅" : "⚪"} ${basename(entry.path)}`,
+        callback_data: `otg:set:${token}:${target}`,
+      },
+      { text: "🗑", callback_data: `otg:del:${token}` },
+    ]);
+  }
+  rows.push([{ text: "🔄 刷新", callback_data: "otg:refresh" }]);
+  return { inline_keyboard: rows };
+}
+
+export function helpText(): string {
+  const commands = [
+    "/menu - Manage monitored projects",
+    "/help - Show this help",
+  ];
+  const planned = [
+    "/start - Check the plugin connection",
+    "/sessions - List active sessions",
+    "/use <short-id> - Select a session",
+    "/status - Show selected session status",
+    "/todo - Show selected session todos",
+    "/usage - Show selected session token usage and cost",
+  ];
+  const listItems = commands
+    .map((command) => `<li>${escapeHtml(command)}</li>`)
+    .join("");
+  const plannedItems = planned
+    .map((command) => `<li>${escapeHtml(command)}</li>`)
+    .join("");
+  return [
+    `<p>${ICON_HELP} Commands:</p>`,
+    `<ul>${listItems}</ul>`,
+    "<p>Planned (not available yet):</p>",
+    `<ul>${plannedItems}</ul>`,
+    "<p>This bot is read-only. Approvals and answers must be handled in OpenCode.</p>",
+  ].join("\n");
+}
+
+export function formatStatus(
+  session: SessionProjection,
+  ctx: FormatContext,
+): string {
+  const currentTool = [...session.toolsByCallID.values()]
+    .filter((tool) => tool.state === "pending" || tool.state === "running")
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  const todo = todoCounts(session.todos);
+  const rows = [
+    fieldRow("Session", sessionLabel(session, ctx)),
+  ];
+
+  if (session.agent) rows.push(fieldRow("Agent", session.agent));
+  if (currentTool) {
+    rows.push(fieldRow("Current tool", safeText(currentTool.tool, 80, ctx)));
+    if (currentTool.target) rows.push(fieldRow("Target", currentTool.target));
+    rows.push(fieldRow("Tool state", currentTool.state));
+    if (currentTool.progress)
+      rows.push(fieldRow("Progress", currentTool.progress));
+  }
+  rows.push(fieldRow("Todo", todoSummary(todo)));
+  if (session.turnStartedAt && session.status !== "idle") {
+    rows.push(
+      fieldRow(
+        "Elapsed",
+        formatDuration(Date.now() - session.turnStartedAt),
+      ),
+    );
+  }
+
+  const parts = [
+    titleLine(iconForState(displayState(session)), ctx.projectLabel),
+    fieldTable(rows),
+  ];
+
+  const children = childSessions(
+    session.sessionID,
+    ctx.sessions,
+    ctx.sessionInfo,
+  );
+  const activeChildren = children.filter(
+    (child) => child.status !== "idle" || child.waitingByRequestID.size > 0,
+  );
+  if (activeChildren.length > 0) {
+    const listItems = activeChildren
+      .slice(0, 5)
+      .map((child) => {
+        const tool = [...child.toolsByCallID.values()]
+          .filter(
+            (item) => item.state === "pending" || item.state === "running",
+          )
+          .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+        return `<li>${escapeHtml(sessionTitle(child, ctx))} | ${displayState(child)}${tool ? ` | ${escapeHtml(tool.tool)}` : ""}</li>`;
+      })
+      .join("");
+    parts.push(paragraph("Active subtasks:"));
+    parts.push(`<ul>${listItems}</ul>`);
+    if (activeChildren.length > 5) {
+      parts.push(paragraph(`... and ${activeChildren.length - 5} more`));
+    }
+  }
+
+  return limitMessage(parts.join("\n"));
+}
+
+export function formatTerminalNotification(
+  session: SessionProjection,
+  outcome: SessionOutcome,
+  error: ErrorSummary | undefined,
+  ctx: FormatContext,
+): string {
+  const todo = todoCounts(session.todos);
+  const rows = [
+    fieldRow("Session", sessionLabel(session, ctx)),
+  ];
+  if (session.turnStartedAt) {
+    rows.push(
+      fieldRow(
+        "Duration",
+        formatDuration(Date.now() - session.turnStartedAt),
+      ),
+    );
+  }
+  if (error && outcome === "failed") {
+    rows.push(
+      fieldRow(
+        "Error",
+        error.message ? `${error.name}: ${error.message}` : error.name,
+      ),
+    );
+  }
+  rows.push(fieldRow("Todo", todoSummary(todo)));
+
+  const children = childSessions(
+    session.sessionID,
+    ctx.sessions,
+    ctx.sessionInfo,
+  );
+  if (children.length > 0) {
+    const completed = children.filter(
+      (child) => child.outcome === "completed",
+    ).length;
+    const failed = children.filter(
+      (child) => child.outcome === "failed",
+    ).length;
+    const cancelled = children.filter(
+      (child) => child.outcome === "cancelled",
+    ).length;
+    const active = children.filter(
+      (child) => child.status !== "idle" || child.observedRunning,
+    ).length;
+    rows.push(
+      fieldRow(
+        "Subtasks",
+        `${completed} completed, ${failed} failed, ${cancelled} cancelled, ${active} active`,
+      ),
+    );
+  }
+
+  const tokens = aggregateTokens(session, ctx);
+  rows.push(fieldRow("Tokens", formatNumber(totalTokens(tokens))));
+  rows.push(fieldRow("Input", formatNumber(tokens.input)));
+  rows.push(fieldRow("Output", formatNumber(tokens.output)));
+  rows.push(
+    fieldRow(
+      "Cache",
+      formatNumber(tokens.cacheRead + tokens.cacheWrite),
+    ),
+  );
+  rows.push(fieldRow("Cost", formatCost(tokens)));
+  return limitMessage(
+    [
+      titleLine(iconForOutcome(outcome), ctx.projectLabel),
+      fieldTable(rows),
+    ].join("\n"),
+  );
+}
+
+export function formatTodos(
+  session: SessionProjection,
+  ctx: FormatContext,
+): string {
+  const groups = [
+    "in_progress",
+    "pending",
+    "completed",
+    "cancelled",
+  ] as const;
+  const labels: Record<(typeof groups)[number], string> = {
+    in_progress: "IN PROGRESS",
+    pending: "PENDING",
+    completed: "COMPLETED",
+    cancelled: "CANCELLED",
+  };
+  const table = fieldTable([
+    fieldRow("Session", sessionLabel(session, ctx)),
+  ]);
+  const title = titleLine(ICON_TODO, ctx.projectLabel);
+
+  if (session.todos.length === 0) {
+    return limitMessage(
+      [title, table, paragraph("No todos reported.")].join("\n"),
+    );
+  }
+
+  const parts = [title, table];
+  let shown = 0;
+  for (const group of groups) {
+    const todos = session.todos.filter((todo) => todo.status === group);
+    if (todos.length === 0) continue;
+    parts.push(paragraph(labels[group]));
+    const items: string[] = [];
+    for (const todo of todos) {
+      const line = `- ${escapeHtml(safeText(todo.content, 180, ctx))}`;
+      if (
+        parts.join("\n").length + items.join("\n").length + line.length >
+        TELEGRAM_MESSAGE_LIMIT - 100
+      )
+        break;
+      items.push(`<li>${escapeHtml(safeText(todo.content, 180, ctx))}</li>`);
+      shown += 1;
+    }
+    if (items.length > 0) parts.push(`<ul>${items.join("")}</ul>`);
+  }
+
+  if (shown < session.todos.length) {
+    parts.push(paragraph(`... and ${session.todos.length - shown} more items`));
+  }
+  return limitMessage(parts.join("\n"));
+}
+
+export function formatUsage(
+  session: SessionProjection,
+  ctx: FormatContext,
+): string {
+  const tokens = aggregateTokens(session, ctx);
+  return [
+    titleLine(ICON_USAGE, ctx.projectLabel),
+    fieldTable([
+      fieldRow("Session", sessionLabel(session, ctx)),
+      fieldRow("Total tokens", formatNumber(totalTokens(tokens))),
+      fieldRow("Input", formatNumber(tokens.input)),
+      fieldRow("Output", formatNumber(tokens.output)),
+      fieldRow("Reasoning", formatNumber(tokens.reasoning)),
+      fieldRow("Cache read", formatNumber(tokens.cacheRead)),
+      fieldRow("Cache write", formatNumber(tokens.cacheWrite)),
+      fieldRow("Cost", formatCost(tokens)),
+    ]),
+  ].join("\n");
+}
