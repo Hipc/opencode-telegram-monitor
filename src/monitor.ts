@@ -1600,7 +1600,7 @@ export class TelegramSessionMonitor {
   private async commandMenu() {
     const registry = await this.registry.read();
     this.enqueueMessageWithKeyboard(
-      menuText(registry),
+      menuText(),
       buildMenuKeyboard(registry),
     );
   }
@@ -1693,7 +1693,7 @@ export class TelegramSessionMonitor {
     await telegramWithRetry("editMessageText", {
       chat_id: chatID,
       message_id: messageID,
-      text: menuText(registry),
+      text: menuText(),
       reply_markup: buildMenuKeyboard(registry),
     }, { config: this.config, signal: this.abortController.signal });
   }

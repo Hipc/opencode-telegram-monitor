@@ -250,35 +250,9 @@ export function aggregateTokens(
   return totals;
 }
 
-export function menuText(registry: ProjectRegistry): string {
-  const parts = [
-    paragraph(`📋 项目监控列表（${registry.projects.length}）`),
-  ];
-  if (registry.projects.length === 0) {
-    parts.push(paragraph("（暂无项目，启动 opencode 后会自动注册）"));
-  } else {
-    const items = [];
-    for (
-      let i = 0;
-      i < Math.min(registry.projects.length, MENU_MAX_PROJECTS);
-      i += 1
-    ) {
-      const entry = registry.projects[i]!;
-      items.push(
-        `<li>${entry.enabled ? "✅" : "⚪"} ${escapeHtml(basename(entry.path))}</li>`,
-      );
-    }
-    parts.push(`<ul>${items.join("")}</ul>`);
-    if (registry.projects.length > MENU_MAX_PROJECTS) {
-      parts.push(
-        paragraph(
-          `... 以及另外 ${registry.projects.length - MENU_MAX_PROJECTS} 个项目`,
-        ),
-      );
-    }
-  }
-  parts.push(paragraph("✅ 已监控 · ⚪ 已注册未开启 · 🗑 删除"));
-  return parts.join("\n");
+export function menuText(): string {
+  // 项目列表已由下方按钮区域承载，文字部分只保留标题。
+  return paragraph("📋 项目监控列表");
 }
 
 export function buildMenuKeyboard(
