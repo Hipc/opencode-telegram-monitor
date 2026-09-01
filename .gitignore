@@ -22,3 +22,9 @@ dist/
 
 # Planning notes (local only, not part of swarm docs)
 specs/
+
+# Local install helper (personal use, never committed)
+/scripts/install-local.sh
+
+# Design/todo docs are local working notes, never committed to git
+docs/
