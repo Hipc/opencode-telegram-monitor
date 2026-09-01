@@ -9,6 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { PollerLock } from "../infra/poller-lock";
 
 export type RegistryEntry = {
   path: string;
@@ -141,14 +142,24 @@ export function deleteProjectByPath(
   return next.projects.length === registry.projects.length ? registry : next;
 }
 
+// 跨进程写锁参数（契约 docs/modules/projects-registry.md §4.1）：
+// 抢锁 deadline 与重试间隔；超时返回 undefined 不抛错——插件绝不因注册表锁阻塞 opencode。
+const ACQUIRE_TIMEOUT_MS = 3_000;
+const RETRY_MS = 50;
+
 export class ProjectRegistryStore {
   private cache?: { key: string; registry: ProjectRegistry };
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly lock: PollerLock;
 
   constructor(
     private readonly filePath: string,
     private readonly logger?: (message: string) => Promise<void> | void,
-  ) {}
+  ) {
+    // 锁文件 = 注册表路径 + ".lock"；默认 TTL（DEFAULT_TTL_MS=60s）。
+    // 只创建 PollerLock 对象，不创建任何文件/目录（构造函数无副作用）。
+    this.lock = new PollerLock(`${filePath}.lock`);
+  }
 
   private serialized<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.queue.then(fn, fn);
@@ -210,11 +221,21 @@ export class ProjectRegistryStore {
     fn: (reg: ProjectRegistry) => ProjectRegistry | undefined,
   ): Promise<ProjectRegistry | undefined> {
     return this.serialized(async () => {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const beforeKey = await this.statKey();
+      // 跨进程锁：serialized() 仅保证进程内互斥；PollerLock 保证多进程（多
+      // opencode 窗口）互斥。锁内重读保证「读到即最新」（锁外无写者），
+      // 因此不再需要 statKey CAS 前后对比重试。
+      const deadline = Date.now() + ACQUIRE_TIMEOUT_MS;
+      for (;;) {
+        if (await this.lock.tryAcquire()) break;
+        if (Date.now() >= deadline) return undefined; // 抢锁超时：不执行 fn、不抛错、不改缓存
+        await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+      }
+      try {
+        // 锁内重读：statKey 兼作缓存比对 key（同旧实现 beforeKey）
+        const key = await this.statKey();
         let registry: ProjectRegistry = EMPTY_REGISTRY;
         let hadParseError = false;
-        if (beforeKey !== undefined) {
+        if (key !== undefined) {
           let text = "";
           try {
             text = await readFile(this.filePath, "utf8");
@@ -242,19 +263,18 @@ export class ProjectRegistryStore {
         if (next === undefined) return undefined;
         if (next === registry && !hadParseError) {
           // 幂等无变化：不写盘，仅刷新缓存（损坏文件时仍走写盘以修复）
-          this.cache = { key: beforeKey ?? "missing", registry: next };
+          this.cache = { key: key ?? "missing", registry: next };
           return next;
         }
-        const afterKey = await this.statKey();
-        if (beforeKey !== afterKey && attempt < 2) continue; // 并发写者改了文件 -> 重试
         await this.writeAtomic(next);
         this.cache = {
           key: (await this.statKey()) ?? "missing",
           registry: next,
         };
         return next;
+      } finally {
+        await this.lock.release();
       }
-      return undefined;
     });
   }
 

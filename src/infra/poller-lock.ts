@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, rm, stat, utimes } from "node:fs/promises";
+import { open, mkdir, readFile, rm, stat, utimes } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 
