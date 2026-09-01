@@ -79,12 +79,16 @@ import {
 } from "./format";
 import { PollerLock } from "./infra/poller-lock";
 import {
+  appendSessionRecord,
   deleteProjectByPath,
   findEntryByToken,
+  findRegistryEntry,
+  markSessionResolved,
   registerProject,
   setProjectEnabled,
   type ProjectRegistry,
   type ProjectRegistryStore,
+  type SessionRecord,
 } from "./registry";
 import {
   TelegramApiError,
@@ -671,7 +675,7 @@ export class TelegramSessionMonitor {
           type: "permission",
           summary: `${safeText(permission, 80, { root: this.root, botToken: this.config.botToken })} permission`,
           toolCallID: string(tool?.callID) ?? string(source?.callID),
-        });
+        }, properties);
         return;
       }
 
@@ -685,7 +689,7 @@ export class TelegramSessionMonitor {
           type: "permission",
           summary: `${safeText(permission, 80, { root: this.root, botToken: this.config.botToken })} permission`,
           toolCallID: string(properties.callID),
-        });
+        }, properties);
         return;
       }
 
@@ -696,8 +700,16 @@ export class TelegramSessionMonitor {
           string(properties.requestID) ??
           string(properties.permissionID);
         if (requestID) {
+          const debounceActive = this.waitingNotifyTimers.has(requestID);
           this.cancelWaitingNotify(requestID);
           this.ensureSession(sessionID).waitingByRequestID.delete(requestID);
+          if (!debounceActive) {
+            // 记录已落盘（去抖窗口已过）：按 request_id 回写 resolved=true
+            this.track(
+              this.resolveWaitingRecord(requestID),
+              "Session resolved mark failed",
+            );
+          }
         }
         return;
       }
@@ -723,7 +735,7 @@ export class TelegramSessionMonitor {
             { root: this.root, botToken: this.config.botToken },
           ),
           toolCallID: string(tool?.callID),
-        });
+        }, properties);
         return;
       }
 
@@ -734,8 +746,16 @@ export class TelegramSessionMonitor {
         if (!sessionID) return;
         const requestID = string(properties.requestID);
         if (requestID) {
+          const debounceActive = this.waitingNotifyTimers.has(requestID);
           this.cancelWaitingNotify(requestID);
           this.ensureSession(sessionID).waitingByRequestID.delete(requestID);
+          if (!debounceActive) {
+            // 记录已落盘（question 立即写入，无去抖窗口）：回写 resolved=true
+            this.track(
+              this.resolveWaitingRecord(requestID),
+              "Session resolved mark failed",
+            );
+          }
         }
         return;
       }
@@ -852,45 +872,125 @@ export class TelegramSessionMonitor {
     );
   }
 
-  private addWaiting(sessionID: string, waiting: WaitingProjection) {
+  private addWaiting(
+    sessionID: string,
+    waiting: WaitingProjection,
+    payload: unknown,
+  ) {
     const session = this.ensureSession(sessionID);
     if (this.seenWaitingRequestIDs.has(waiting.requestID)) return;
     rememberBounded(this.seenWaitingRequestIDs, waiting.requestID);
     session.waitingByRequestID.set(waiting.requestID, waiting);
     if (waiting.type === "permission") {
       // opencode's auto-approve mode answers permission requests client-side
-      // within milliseconds of publishing permission.asked. Defer the Telegram
-      // notification by a short window so auto-approved requests (which arrive
-      // with a permission.replied right after) don't spam the chat; only
-      // permissions that are still pending after the window are reported.
-      this.scheduleWaitingNotify(sessionID, waiting);
+      // within milliseconds of publishing permission.asked. Defer the disk
+      // write by a short window so auto-approved requests (which arrive with
+      // a permission.replied right after) never reach projects.json; only
+      // permissions that are still pending after the window are persisted.
+      this.scheduleWaitingNotify(sessionID, waiting, payload);
       return;
     }
+    // question: 立即写盘（不去抖，决策 #4）；旧直发 notifyWaiting 已停用。
     this.track(
-      this.notifyWaiting(sessionID, waiting),
-      "Waiting notification failed",
+      this.persistWaitingRecord(sessionID, waiting, payload),
+      "Waiting record persist failed",
     );
   }
 
-  private scheduleWaitingNotify(sessionID: string, waiting: WaitingProjection) {
+  private scheduleWaitingNotify(
+    sessionID: string,
+    waiting: WaitingProjection,
+    payload: unknown,
+  ) {
     dline(`scheduleWaitingNotify(${waiting.requestID}) type=${waiting.type}`);
     const timer = setTimeout(() => {
       this.waitingNotifyTimers.delete(waiting.requestID);
       if (this.disposed) return;
       this.track(
-        this.notifyWaiting(sessionID, waiting),
-        "Waiting notification failed",
+        this.persistWaitingRecord(sessionID, waiting, payload),
+        "Waiting record persist failed",
       );
     }, WAITING_NOTIFY_DEBOUNCE_MS);
     this.waitingNotifyTimers.set(waiting.requestID, timer);
   }
 
   private cancelWaitingNotify(requestID: string) {
+    // 语义 = 「取消待写入」：去抖窗口内收到 replied → clearTimeout，
+    // 该 request_id 完全不落盘（auto-approve 零落盘，决策 #4）。
     const timer = this.waitingNotifyTimers.get(requestID);
     if (timer) {
       dline(`cancelWaitingNotify(${requestID})`);
       clearTimeout(timer);
       this.waitingNotifyTimers.delete(requestID);
+    }
+  }
+
+  /**
+   * 落盘一条等待记录（契约 sessions-relay.md §5.1/§5.2，决策 #1/#2/#4）。
+   * permission 经去抖窗口（scheduleWaitingNotify 回调）触发；question 立即触发。
+   * message = 完整事件 properties 的 JSON 字符串；session_name 经
+   * ensureSessionInfo 拉取 title，拉不到兜底 sessionID（不阻塞写盘）。
+   * 未注册项目（registry 无 root 条目）→ 跳过写盘并 logWarn；
+   * mutate 返回 undefined（抢锁超时）→ logWarn，不重试不抛错。
+   */
+  private async persistWaitingRecord(
+    sessionID: string,
+    waiting: WaitingProjection,
+    payload: unknown,
+  ) {
+    if (!findRegistryEntry(await this.registry.read(), this.root)) {
+      await this.log(
+        "warn",
+        "Session record not persisted: project not in projects.json registry",
+        { requestID: waiting.requestID },
+      );
+      return;
+    }
+    const info = await this.ensureSessionInfo(sessionID).catch(() => undefined);
+    const title = info?.title;
+    const record: SessionRecord = {
+      session_id: sessionID,
+      session_name: title
+        ? safeText(title, 100, {
+            root: this.root,
+            botToken: this.config.botToken,
+          })
+        : sessionID,
+      type: waiting.type,
+      message: JSON.stringify(payload),
+      send: false,
+      resolved: false,
+      request_id: waiting.requestID,
+      created_at: new Date().toISOString(),
+    };
+    const next = await this.registry.mutate((reg) =>
+      appendSessionRecord(reg, this.root, record),
+    );
+    if (next === undefined) {
+      await this.log(
+        "warn",
+        "Session record persist skipped: registry mutate timeout",
+        { requestID: waiting.requestID },
+      );
+    }
+  }
+
+  /**
+   * replied/rejected 事件回写（决策 #5，契约 §5.3）：按 request_id 置
+   * resolved=true。调用方已先 cancelWaitingNotify 并确认去抖窗口已过
+   * （waitingNotifyTimers 无该 requestID —— 写入已发生或从未发生）。
+   * mutate 返回 undefined（抢锁超时或无匹配记录）→ logWarn，静默容忍。
+   */
+  private async resolveWaitingRecord(requestID: string) {
+    const next = await this.registry.mutate((reg) =>
+      markSessionResolved(reg, requestID),
+    );
+    if (next === undefined) {
+      await this.log(
+        "warn",
+        "Session resolved mark skipped: registry mutate timeout or no matching record",
+        { requestID },
+      );
     }
   }
 
