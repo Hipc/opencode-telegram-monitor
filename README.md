@@ -73,25 +73,26 @@ Any failure along the way — including being **offline** — leaves the previou
 
 Releases are tag-driven: pushing a `v*` tag triggers the publish workflow, which verifies the version and publishes to npm with Trusted Publishing (OIDC) — no token, no git write-back.
 
-The workflow **refuses to publish** if the tag version does not match the version reported in the code, so keep all three in sync before tagging:
+The workflow **refuses to publish** if the tag version does not match the version pinned in `package.json` — the single source of truth, injected into the bundle at build time — so keep the two release-facing pins in sync before tagging:
 
 | Place | Field |
 | ----- | ----- |
-| `src/version.ts` | `const PLUGIN_VERSION = "x.y.z"` (source of truth) |
-| `package.json` | `"version": "x.y.z"` |
+| `package.json` | `"version": "x.y.z"` (single source of truth) |
 | `README.md` | npm install pin `opencode-telegram-monitor@x.y.z` |
+
+The built `monitor.ts` never stores an editable version: `scripts/build.mjs` reads `package.json` and injects the version into the bundle (`bun build --define __PLUGIN_VERSION__`), so the artifact always reports the pinned version.
 
 For a **bugfix** (patch) release, bump only the lowest number — never the middle one (`0.5.0 → 0.5.1`, not `0.6.0`):
 
 ```bash
-# 1. set the new version everywhere (src/version.ts / package.json / README.md)
+# 1. set the new version (package.json + README.md; the bundle picks it up at build time)
 node scripts/set-version.mjs v0.5.1
 
-# 2. verify the tag you are about to create matches the code (exits non-zero on mismatch)
+# 2. verify the tag you are about to create matches the pinned version (exits non-zero on mismatch)
 node scripts/check-version.mjs v0.5.1
 
 # 3. commit, tag, push — the workflow verifies again and publishes
-git add src/version.ts package.json README.md
+git add package.json README.md
 git commit -m "feat(monitor): ..."
 git tag v0.5.1
 git push origin main
