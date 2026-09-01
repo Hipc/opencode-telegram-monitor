@@ -15,6 +15,20 @@ export type RegistryEntry = {
   path: string;
   enabled: boolean;
   addedAt: string;
+  sessions?: SessionRecord[]; // 可选：旧文件/旧代码路径无此键时保持 undefined
+};
+
+// 等待状态落盘记录（契约 docs/modules/sessions-relay.md §2，冻结）。
+// message 为完整事件 payload 的 JSON 字符串；resolved 为终态（轮询不再补发）。
+export type SessionRecord = {
+  session_id: string; // opencode sessionID（事件 properties.sessionID）
+  session_name: string; // 展示名：ensureSessionInfo 拉取 info.title；拉不到兜底 sessionID
+  type: "question" | "permission"; // 与 src/types.ts WaitingType 同构（字面量内联，不强依赖 import）
+  message: string; // 完整事件 payload 的 JSON 字符串
+  send: boolean; // 初始 false；poller 发送成功置 true
+  resolved: boolean; // 初始 false；replied/rejected 置 true；终态（不再改回）
+  request_id: string; // 内部匹配键：asked 事件 properties.id；replied 匹配键
+  created_at: string; // ISO 8601 字符串（new Date().toISOString()），本轮仅预留不消费
 };
 
 export type ProjectRegistry = {
@@ -45,19 +59,61 @@ export function parseRegistry(text: string): ProjectRegistry | undefined {
           : undefined;
       const path = typeof rec?.path === "string" ? rec.path : undefined;
       if (!path) return undefined;
-      entries.push({
+      const sessions =
+        rec !== undefined && Array.isArray(rec.sessions)
+          ? rec.sessions
+              .map(parseSessionRecord)
+              .filter((s): s is SessionRecord => s !== undefined)
+          : undefined; // 键缺失或非数组：整字段忽略（条目保留），不抛错
+      const entry: RegistryEntry = {
         path,
         enabled: rec.enabled === true,
         addedAt:
           typeof rec.addedAt === "string"
             ? rec.addedAt
             : new Date().toISOString(),
-      });
+      };
+      if (sessions !== undefined) entry.sessions = sessions;
+      entries.push(entry);
     }
     return { projects: entries };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * 严格校验单条 SessionRecord（契约 sessions-relay.md §3.2）：全部 8 字段类型
+ * 必须正确，不允许从默认值推断（如把非 boolean 的 send 按 truthy 处理）；
+ * 任一字段不符 → undefined（调用方丢弃该记录，不抛错、不影响其它记录）。
+ */
+function parseSessionRecord(value: unknown): SessionRecord | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return undefined;
+  const rec = value as Record<string, unknown>;
+  const type =
+    rec.type === "question" || rec.type === "permission" ? rec.type : undefined;
+  if (
+    typeof rec.session_id !== "string" ||
+    typeof rec.session_name !== "string" ||
+    typeof rec.message !== "string" ||
+    typeof rec.request_id !== "string" ||
+    typeof rec.created_at !== "string" ||
+    typeof rec.send !== "boolean" ||
+    typeof rec.resolved !== "boolean" ||
+    !type
+  )
+    return undefined;
+  return {
+    session_id: rec.session_id,
+    session_name: rec.session_name,
+    type,
+    message: rec.message,
+    send: rec.send,
+    resolved: rec.resolved,
+    request_id: rec.request_id,
+    created_at: rec.created_at,
+  };
 }
 
 export function serializeRegistry(registry: ProjectRegistry) {
@@ -140,6 +196,87 @@ export function deleteProjectByPath(
     ),
   };
   return next.projects.length === registry.projects.length ? registry : next;
+}
+
+/**
+ * 追加一条 SessionRecord 到指定路径条目（决策 #3：追加不覆盖、不去重）。
+ * 按 normalizeRegistryPath(rootPath) 匹配条目（复用 findRegistryEntry 语义）；
+ * 条目不存在 → 返回原 registry 引用（幂等：mutate 的 next === registry 短路
+ * 不写盘；调用方已先 registerProject，路径不存在是防御性兜底）。
+ * 返回的 registry 必须是新对象引用（mutate 依赖引用比较做幂等短路）。
+ * 契约 docs/modules/sessions-relay.md §4.1（冻结）。
+ */
+export function appendSessionRecord(
+  registry: ProjectRegistry,
+  rootPath: string,
+  record: SessionRecord,
+): ProjectRegistry {
+  const normalized = normalizeRegistryPath(rootPath);
+  const index = registry.projects.findIndex(
+    (entry) => normalizeRegistryPath(entry.path) === normalized,
+  );
+  if (index === -1) return registry;
+  const projects = registry.projects.slice();
+  const entry = projects[index]!;
+  projects[index] = {
+    ...entry,
+    sessions: [...(entry.sessions ?? []), record],
+  };
+  return { projects };
+}
+
+/**
+ * 按 request_id 全局精确标记 resolved=true（请求 ID 全局唯一，跨条目全局找
+ * 第一条；顺序 = projects 数组序 + sessions 数组序）。无匹配 → undefined
+ * （mutate 不写盘不抛错）；已置位 → 返回原引用（幂等，mutate 短路不写盘）；
+ * send 保持不动（决策 #6：resolved 即终态，即使 send=false 也不补发）。
+ * 契约 docs/modules/sessions-relay.md §4.2（冻结）。
+ */
+export function markSessionResolved(
+  registry: ProjectRegistry,
+  requestID: string,
+): ProjectRegistry | undefined {
+  return markSessionFlag(registry, requestID, "resolved");
+}
+
+/**
+ * 按 request_id 全局精确标记 send=true（poller 发送成功后置位）。无匹配 →
+ * undefined；已置位 → 原引用；resolved 保持不动（poller 只置 send）。
+ * 契约 docs/modules/sessions-relay.md §4.2（冻结）。
+ */
+export function markSessionSent(
+  registry: ProjectRegistry,
+  requestID: string,
+): ProjectRegistry | undefined {
+  return markSessionFlag(registry, requestID, "send");
+}
+
+function markSessionFlag(
+  registry: ProjectRegistry,
+  requestID: string,
+  flag: "send" | "resolved",
+): ProjectRegistry | undefined {
+  for (let i = 0; i < registry.projects.length; i++) {
+    const entry = registry.projects[i]!;
+    const sessions = entry.sessions;
+    if (!sessions) continue;
+    for (let j = 0; j < sessions.length; j++) {
+      if (sessions[j]!.request_id !== requestID) continue;
+      if (sessions[j]![flag] === true) return registry; // 已置位：幂等，原引用
+      const projects = registry.projects.slice();
+      projects[i] = {
+        ...entry,
+        sessions: sessions.map((record, k) => {
+          if (k !== j) return record;
+          return flag === "resolved"
+            ? { ...record, resolved: true }
+            : { ...record, send: true };
+        }),
+      };
+      return { projects };
+    }
+  }
+  return undefined; // 无匹配：无可标记记录，静默跳过写盘
 }
 
 // 跨进程写锁参数（契约 docs/modules/projects-registry.md §4.1）：
