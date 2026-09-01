@@ -1,0 +1,21 @@
+# Project-local files, never committed to git
+.gitignore
+AGENTS.md
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Logs
+*.log
+
+# Parallel phase worktrees (swarm workflow, Round 1+)
+.worktrees/
+
+# Planning notes (local only, not part of swarm docs)
+specs/
