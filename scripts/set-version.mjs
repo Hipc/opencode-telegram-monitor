@@ -1,15 +1,13 @@
 #!/usr/bin/env node
-// Sets the plugin version everywhere it appears, driven by ONE argument:
+// Sets the release version in the release-facing files, driven by ONE argument:
 // the release version (e.g. "1.2.3", with or without the "v" prefix).
 //
-// The release version is the single source of truth for a published build:
-//   - src/version.ts -> const PLUGIN_VERSION = "..."
+// package.json "version" is the single source of truth — scripts/build.mjs
+// reads it at bundle time and injects it into the built monitor.ts via
+// `bun build --define` (see docs/modules/version-injection.md). This script
+// syncs the remaining release-facing surface so everything reports one version:
 //   - package.json -> "version": "..."
 //   - README.md    -> the npm install pin ("opencode-telegram-monitor@...")
-//
-// The publish workflow runs this script against the checked-out tag so the
-// published tarball always reports the tag's version, then commits the changes
-// back to main with [skip ci].
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,28 +26,15 @@ if (!/^\d+\.\d+\.\d+$/.test(version)) {
   fail(`invalid version "${raw}" (expected semver like 1.2.3)`);
 }
 
-const versionPath = join(root, "src", "version.ts");
 const packagePath = join(root, "package.json");
 const readmePath = join(root, "README.md");
 
-// 1) src/version.ts: const PLUGIN_VERSION = "..." (single source of truth)
-//    (`export const ...` is fine — the unanchored regex matches the substrings)
-const versionFile = readFileSync(versionPath, "utf8");
-if (!/const PLUGIN_VERSION = "[^"]+";/.test(versionFile)) {
-  fail("PLUGIN_VERSION constant not found in src/version.ts");
-}
-writeFileSync(
-  versionPath,
-  versionFile.replace(/const PLUGIN_VERSION = "[^"]+";/, `const PLUGIN_VERSION = "${version}";`),
-  "utf8",
-);
-
-// 2) package.json: "version": "..."
+// 1) package.json: "version": "..."
 const pkg = JSON.parse(readFileSync(packagePath, "utf8"));
 pkg.version = version;
 writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
 
-// 3) README.md: the npm install pin inside the opencode.json example.
+// 2) README.md: the npm install pin inside the opencode.json example.
 // Match ONLY a `"opencode-telegram-monitor@x.y.z"` literal inside the plugin
 // array (an exact semver followed by a closing quote), so the generic
 // `x.y.z` placeholders in the release-script examples are never rewritten.
@@ -63,4 +48,4 @@ writeFileSync(
   "utf8",
 );
 
-console.log(`set-version: src/version.ts, package.json, README.md -> ${version}`);
+console.log(`set-version: package.json, README.md -> ${version}`);

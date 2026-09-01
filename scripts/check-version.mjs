@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // Verifies that the release version (from a git tag, e.g. v0.5.1) matches EVERY
-// place the plugin version appears, BEFORE you create the tag:
+// place the plugin version is pinned, BEFORE you create the tag:
 //
-//   - src/version.ts -> const PLUGIN_VERSION = "..."   (single source of truth)
-//   - package.json -> "version": "..."
+//   - package.json -> "version": "..."   (single source of truth)
 //   - README.md    -> the npm install pin ("opencode-telegram-monitor@...")
 //
 // Usage (run this, then tag only if it exits 0):
@@ -11,9 +10,9 @@
 //   node scripts/check-version.mjs 0.5.1        # "v" prefix optional
 //
 // Any mismatch exits with code 1 and prints exactly which file disagrees, so
-// the tag can never point at a version the code does not report. Bump the
+// the tag can never point at a version the package does not report. Bump the
 // version first with `node scripts/set-version.mjs <version>` (which rewrites
-// all three files in one pass), then verify, then tag.
+// both files in one pass), then verify, then tag.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,20 +31,10 @@ if (!/^\d+\.\d+\.\d+$/.test(version)) {
   fail(`invalid version "${raw}" (expected semver like 1.2.3 or v1.2.3)`);
 }
 
-const versionFile = readFileSync(join(root, "src", "version.ts"), "utf8");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const readme = readFileSync(join(root, "README.md"), "utf8");
 
 const mismatches = [];
-
-const versionMatch = versionFile.match(/const PLUGIN_VERSION = "([^"]+)";/);
-if (!versionMatch) {
-  mismatches.push("src/version.ts: PLUGIN_VERSION constant not found");
-} else if (versionMatch[1] !== version) {
-  mismatches.push(
-    `src/version.ts reports ${versionMatch[1]}, expected ${version}`,
-  );
-}
 
 if (pkg.version !== version) {
   mismatches.push(`package.json reports ${pkg.version}, expected ${version}`);
@@ -67,8 +56,8 @@ if (readmePins.length === 0) {
 
 if (mismatches.length > 0) {
   fail(
-    `${raw} does not match the code version:\n  - ${mismatches.join("\n  - ")}\nRun \`node scripts/set-version.mjs ${raw}\` first.`,
+    `${raw} does not match the pinned version:\n  - ${mismatches.join("\n  - ")}\nRun \`node scripts/set-version.mjs ${raw}\` first.`,
   );
 }
 
-console.log(`check-version: ${raw} matches src/version.ts, package.json, README.md`);
+console.log(`check-version: ${raw} matches package.json, README.md`);

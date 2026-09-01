@@ -63,10 +63,11 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      # The tag must already be in sync with the code: the release flow is
-      # `node scripts/check-version.mjs vX.Y.Z` then `git tag vX.Y.Z`, so the
-      # checked-out src/version.ts / package.json / README.md all report the tag
-      # version. This step is a guard for tags created without that check.
+      # The tag must already be in sync with the pinned version: the release
+      # flow is `node scripts/check-version.mjs vX.Y.Z` then `git tag vX.Y.Z`,
+      # so the checked-out package.json / README.md report the tag version (the
+      # Build step injects it into the bundle). This step is a guard for tags
+      # created without that check.
       - name: Verify version matches tag
         run: node scripts/check-version.mjs "${{ steps.version.outputs.version }}"
 
