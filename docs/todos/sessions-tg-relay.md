@@ -1,6 +1,6 @@
 # sessions 落盘 + TG 中继（permission/question 状态经 projects.json 发送）
 
-> 状态: planning
+> 状态: completed
 > 创建: 2026-09-02
 > 当前轮次: Round 1
 > 关联文档: docs/modules/projects-registry.md（registry 锁契约，须兼容）、docs/modules/sessions-relay.md
@@ -129,7 +129,7 @@
 
 ## Round 1
 
-### Phase 1.1: registry sessions 存储层 ⬜
+### Phase 1.1: registry sessions 存储层 ✅
 
 **契约**: docs/modules/sessions-relay.md §2~§4（SessionRecord 类型、RegistryEntry.sessions、
 parse/serialize 容错、append/mark 纯函数签名与语义——全部冻结，照此实现）
@@ -154,7 +154,13 @@ parse/serialize 容错、append/mark 纯函数签名与语义——全部冻结�
 - [ ] parseRegistry 对含 sessions 的文件往返后字段逐项一致（含 created_at/request_id）
 - [ ] 不触碰 mutate/锁代码（LOCK 回归证明）
 
-### Phase 1.2: monitor 写入路径（去抖写盘 + resolved 回写 + 停用旧直发） ⬜
+**实现记录**（2026-09-02，分支 `phase-r1-p1.1`，SHA `8fefe75`，merge `c9943e0`）：
+- 全部验收达成：REG-101 拆为 10 用例 10/10 通过；LOCK-001~005 回归 5/5；`node scripts/build.mjs` exit 0（18 modules）。
+- `serializeRegistry` 零改动（契约 §3.3 原文保留）；无 sessions 键往返不新增键；11 种非法记录丢弃不抛错、全非法留空数组；`markSessionResolved`/`markSessionSent` 共用私有 `markSessionFlag` 实现，两个私有 helper（parseSessionRecord/markSessionFlag）未导出（契约未要求）。
+- 行号漂移（+85~90）：SessionRecord/RegistryEntry.sessions 现 14-33 行；parseRegistry 扩展 40-80；私有 parseSessionRecord 85-119；三个导出纯函数 201-283。
+- 坑：开工时 `phase-r1-p1.1` 分支已存在且指向旧提交（历史残留空壳），已 `git branch -f` 重置到 main 后使用——后续 phase 分支签出需同样检查。
+
+### Phase 1.2: monitor 写入路径（去抖写盘 + resolved 回写 + 停用旧直发） ✅
 
 **契约**: docs/modules/sessions-relay.md §5（事件→记录映射、去抖写盘、resolved 回写、旧直发停用）+
 §7 编辑区间（658-741、855-920 独占）+ §8 测试归属（API-001~005）
@@ -181,7 +187,16 @@ runTelegram 1286-1381 与 sendMessage/enqueueMessage 区 1717+）；`tests/behav
 - [ ] `node scripts/build.mjs` exit 0（bundle 冒烟，monitor.ts 无类型/导入错误）
 - [ ] 旧直发函数源码仍在（grep notifyWaiting 有定义），waiting 通知无调用点
 
-### Phase 1.3: poller 每秒扫描发送 ⬜
+**实现记录**（2026-09-02，分支 `phase-r1-p1.2`，SHA `a47b284`，merge `aedc8ef`）：
+- 全部验收达成：behavior 8/8（API-001；API-002；API-003 含 500ms 立即 + 2s 不重复双断言；API-004 拆 a/b/c/d 四个 replied/rejected 变体；API-005 三个并发 permission 恰 3 条）；构建冒烟 exit 0。
+- 口径澄清（对任务第 4 条）：resolved 回写仅由 permission.replied / permission.v2.replied / question.replied / question.rejected / question.v2.* 触发（契约 §5.3 冻结清单）；**permission.updated 仅作写入事件**（去抖写盘，不回写）。
+- 窗口内外判定：replied 分支先取 `debounceActive = waitingNotifyTimers.has(requestID)` 再 `cancelWaitingNotify`——窗口内只取消不 mutate；窗口外才 `resolveWaitingRecord`。与契约等价且避免 auto-approve 噪音。
+- 未注册项目拦截：`persistWaitingRecord` 前置 `findRegistryEntry` 检查，条目缺失 → logWarn + return。
+- 旧机制：`notifyWaiting` 函数体保留（现约 1003 行），waiting 通知调用点已全部移除；enqueueMessage/sendMessage 本体未动。
+- 行号漂移：import 区 +5；新私有方法 `persistWaitingRecord`/`resolveWaitingRecord` 位于 notifyWaiting 之前；runTelegram 与 enqueueMessage/sendMessage 区零触碰。
+- 坑：worktree add 时 `-b` 兜底分支抢先生效导致提交一度落在 `phase-r1-p1.2-tmp`，事后已修正（`git branch -f phase-r1-p1.2 a47b284` + 删 tmp 分支）——后续轮次签出时须确认 worktree 实际检出分支名。
+
+### Phase 1.3: poller 每秒扫描发送 ✅
 
 **契约**: docs/modules/sessions-relay.md §6（SESSIONS_SCAN_INTERVAL_MS、扫描条件、
 sendMessage 复用与可测试入口、ticker 生命周期）+ §7 编辑区间（1286-1383 独占）+
@@ -208,15 +223,34 @@ session 记录发到 Telegram，成功后置 send=true；失败保留重试。
 - [ ] ticker 生命周期正确：锁释放后无残留 interval（测试或代码审查可证）
 - [ ] `node scripts/build.mjs` exit 0
 
+**实现记录**（2026-09-02，分支 `phase-r1-p1.3`，SHA `6f28507`，merge `9e67223`）：
+- 全部验收达成：sessions-poller 5/5（API-006 拆发送+格式+置位 / 失败保持重试 / resolved 跳过 / send=true 不重发 / 混合队列双图标）；构建冒烟 exit 0。
+- 实现：`startSessionsScan`/`stopSessionsScan`（ticker 与锁同生命周期，finally 覆盖 401/异常/abort/dispose）+ `scanSessionQueue`（契约 §6.3 可测试入口；in-flight 守卫防重叠）+ `formatSessionRecordMessage`（⚠️/❓ titleLine + Type/Session fieldTable + safeText 300 字节选 + limitMessage）。
+- 语义记录：`scanSessionQueue` 返回本轮处理条数；发送成功即计入（含 mutate undefined 未置位的安全重试态，可能重复投递一次）；`fieldRow("Session")` 展示 `session_name || shortID(session_id)`。
+- 行号漂移：runTelegram 现 1293-1400，ticker 启动 1313、finally 清理 1390；四个新方法位于 runTelegram 之后 handleTelegramUpdate 之前（约 1499-1600），未挤占 1.2 区间（合并时代理已核查无重叠）。
+- 过程失误：曾误写主工作区一次，已当场 `git restore` 还原并复制回 worktree 重验，主工作区最终干净。
+
 ### Round 1 整体测试记录
 
-- 测试结论：【通过】/【不通过】（待填）
-- 失败摘要与根因归属：（待填）
+- 测试结论：【通过】（2026-09-02，main @ `9e67223`）
+- 单元回归门槛 28/28：behavior 8/8（API-001~005）+ registry-sessions 10/10（REG-101）+ registry-concurrency 5/5（LOCK-001~005 回归）+ sessions-poller 5/5（API-006）；构建 BUILD-001 exit 0（18 modules，100.50KB）+ BUILD-002 bundle-smoke 3/3。
+- 失败摘要与根因归属：无失败。
+- 残余风险：① 真实 Telegram 网络/代理链路未覆盖（禁用真实凭据，TG 行为经 stub 验证）——建议上线后人工冒烟一次；② 发送成功但 mutate 置位超时的安全重试态，极端网络抖动下可能重复投递一条通知（契约允许）；③ opencode 宿主内真实 event hook 动态加载未测（bundle 形态已静态保证）。
 
 ## 断点记录（运输层错误续传用）
 
-- （暂无）
+- （暂无运输层错误）
+- 流程坑记录（非运输层）：phase 分支可能存在历史残留空壳（指向旧提交、无独有提交）——工人签出前须 `git branch -f <branch> main` 重置；worktree add 时注意 `-b` 兜底分支是否抢先生效（Phase 1.2 曾踩，事后已修正）。
 
 ## 交付总结
 
-- （待填）
+- **轮次**：1 轮完成（文档先行 → 批次 A → 合并 → 批次 B 并发 → 合并 → 整体测试【通过】）。
+- **提交链**：`444605d`（docs 冻结）→ `8fefe75`/`c9943e0`（Phase 1.1）→ `a47b284`/`aedc8ef`（Phase 1.2）→ `6f28507`/`9e67223`（Phase 1.3 merge，最终 HEAD）。
+- **改动文件**：
+  - `src/registry/index.ts`：SessionRecord 类型、RegistryEntry.sessions、parseRegistry 白名单扩展、appendSessionRecord / markSessionResolved / markSessionSent 纯函数
+  - `src/monitor.ts`：permission 1s 去抖写盘 / question 立即写 / replied 置 resolved（persistWaitingRecord / resolveWaitingRecord）；poller.lock 持有者 1s ticker 扫描发送（startSessionsScan / stopSessionsScan / scanSessionQueue / formatSessionRecordMessage）；旧 notifyWaiting 直发源码保留、调用停用
+  - `src/constants.ts`：SESSIONS_SCAN_INTERVAL_MS = 1_000
+  - 新测试：tests/registry-sessions.test.mjs（REG-101）、tests/sessions-poller.test.mjs（API-006）；改写 tests/behavior.test.mjs（API-001~005 新语义）
+  - 契约文档：docs/modules/sessions-relay.md（新建）；projects-registry.md §10 追加扩展声明
+- **最终整体测试**：28/28 单测 + BUILD-001/002 全绿（详见 Round 1 整体测试记录）。
+- **遗留事项**：① sessions 清理策略未做（created_at 已预留，后续安排）；② TG 回写审批（代答）未做，本轮保持只读；③ 真实 TG 链路建议人工冒烟；④ 极端网络抖动下可能有单条重复投递（安全重试语义）。
