@@ -18,9 +18,12 @@ export type RegistryEntry = {
   sessions?: SessionRecord[]; // 可选：旧文件/旧代码路径无此键时保持 undefined
 };
 
-// 等待状态落盘记录（契约 docs/modules/sessions-relay.md §2 冻结；Round 2 扩展 §13.1）。
+// 等待状态落盘记录（契约 docs/modules/sessions-relay.md §2 冻结；Round 2 扩展
+// §13.1；Round 4 扩展 §14.1.1）。
 // message 为完整事件 payload 的 JSON 字符串；resolved 为终态（轮询不再补发）；
 // reply 为可选字段：null/缺失 = 未回复；三值 = 用户选定回复（透传不映射）。
+// q_* 为 question 向导可选字段（§14.1.1）：写入端初始不设置任何 q_* 键；
+// q_answers 写入 / q_reject=true 为向导终态（消费端 apply 后 resolved=true）。
 export type SessionRecord = {
   session_id: string; // opencode sessionID（事件 properties.sessionID）
   session_name: string; // 展示名：ensureSessionInfo 拉取 info.title；拉不到兜底 sessionID
@@ -31,6 +34,12 @@ export type SessionRecord = {
   request_id: string; // 内部匹配键：asked 事件 properties.id；replied 匹配键
   created_at: string; // ISO 8601 字符串（new Date().toISOString()），本轮仅预留不消费
   reply?: "once" | "always" | "reject" | null; // Round 2：null/缺失=未回复；三值=用户选定回复（透传不映射）
+  q_draft?: Array<Array<string>>; // 向导草稿：长度=questions 数；每题=已选 label 数组；未答=空数组
+  q_stage?: number; // 向导当前题索引 0-based；=questions.length 表示总结阶段
+  q_input?: number | null; // 待自定义输入题索引；显式 null=无输入态
+  q_answers?: Array<Array<string>>; // 最终提交答案（透传不映射）；消费端 reply 触发器
+  q_reject?: boolean; // 放弃标志（true=用户取消整个向导）；消费端 reject 触发器
+  q_msg_id?: number; // TG 向导消息 message_id（poller 发送成功后回写，供编辑）
 };
 
 export type ProjectRegistry = {
@@ -85,12 +94,30 @@ export function parseRegistry(text: string): ProjectRegistry | undefined {
 }
 
 /**
- * 严格校验单条 SessionRecord（契约 sessions-relay.md §3.2，Round 2 扩展 §13.1）：
+ * q_draft / q_answers 共享结构校验（契约 sessions-relay.md §14.1.2）：
+ * Array<Array<string>>——每项为 Array 且元素全为 string。
+ */
+function isStringMatrix(value: unknown): value is Array<Array<string>> {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (row) =>
+        Array.isArray(row) && row.every((item) => typeof item === "string"),
+    )
+  );
+}
+
+/**
+ * 严格校验单条 SessionRecord（契约 sessions-relay.md §3.2，Round 2 扩展 §13.1，
+ * Round 4 扩展 §14.1.2）：
  * 8 基础字段类型必须正确，不允许从默认值推断（如把非 boolean 的 send 按
  * truthy 处理）；任一字段不符 → undefined（调用方丢弃该记录，不抛错、不影响
  * 其它记录）。可选 reply 字段四态：键缺失 → 构造记录不含该键（serialize 自动
  * 省略，旧文件往返不新增键）；显式 null → null；三合法值 → 原样保留；其它
  * 任何值 → 丢弃整条记录（严格白名单风格，不抛错）。
+ * q_* 6 字段（§14.1.2）：键缺失 → 构造记录不含该键；q_input 显式 null → null；
+ * 合法值 → 原样保留；其它任何值 → 丢弃整条记录。q_stage 只做 typeof number
+ * （不校验范围/整数性——由回调状态重建处钳制）。
  */
 function parseSessionRecord(value: unknown): SessionRecord | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -122,6 +149,37 @@ function parseSessionRecord(value: unknown): SessionRecord | undefined {
       return undefined; // 非法 reply 值：丢弃整条记录，不抛错、不影响其它记录
     }
   }
+  let q_draft: Array<Array<string>> | undefined;
+  let q_stage: number | undefined;
+  let q_input: number | null | undefined;
+  let q_answers: Array<Array<string>> | undefined;
+  let q_reject: boolean | undefined;
+  let q_msg_id: number | undefined;
+  if ("q_draft" in rec) {
+    if (isStringMatrix(rec.q_draft)) q_draft = rec.q_draft;
+    else return undefined; // 非法 q_draft：丢弃整条记录
+  }
+  if ("q_stage" in rec) {
+    if (typeof rec.q_stage === "number") q_stage = rec.q_stage;
+    else return undefined; // 非法 q_stage（含 null）：丢弃整条记录
+  }
+  if ("q_input" in rec) {
+    if (rec.q_input === null) q_input = null; // 显式 null = 无输入态，保留
+    else if (typeof rec.q_input === "number") q_input = rec.q_input;
+    else return undefined; // 非法 q_input：丢弃整条记录
+  }
+  if ("q_answers" in rec) {
+    if (isStringMatrix(rec.q_answers)) q_answers = rec.q_answers;
+    else return undefined; // 非法 q_answers：丢弃整条记录
+  }
+  if ("q_reject" in rec) {
+    if (typeof rec.q_reject === "boolean") q_reject = rec.q_reject;
+    else return undefined; // 非法 q_reject：丢弃整条记录
+  }
+  if ("q_msg_id" in rec) {
+    if (typeof rec.q_msg_id === "number") q_msg_id = rec.q_msg_id;
+    else return undefined; // 非法 q_msg_id：丢弃整条记录
+  }
   const record: SessionRecord = {
     session_id: rec.session_id,
     session_name: rec.session_name,
@@ -133,6 +191,12 @@ function parseSessionRecord(value: unknown): SessionRecord | undefined {
     created_at: rec.created_at,
   };
   if (reply !== undefined) record.reply = reply;
+  if (q_draft !== undefined) record.q_draft = q_draft;
+  if (q_stage !== undefined) record.q_stage = q_stage;
+  if (q_input !== undefined) record.q_input = q_input;
+  if (q_answers !== undefined) record.q_answers = q_answers;
+  if (q_reject !== undefined) record.q_reject = q_reject;
+  if (q_msg_id !== undefined) record.q_msg_id = q_msg_id;
   return record;
 }
 
@@ -305,6 +369,154 @@ export function setSessionReply(
     }
   }
   return undefined; // 无匹配：无可写记录，静默跳过写盘
+}
+
+/**
+ * q_* 纯函数共用实现（契约 sessions-relay.md §14.1.3，Round 4 question 向导）：
+ * 全局 request_id 精确匹配（跨全部条目找第一条，顺序 = projects 数组序 +
+ * sessions 数组序）；无匹配 → undefined（mutate 不写盘不抛错）；匹配且
+ * isSame(record) 成立 → 返回原 registry 引用（幂等，mutate 短路不写盘）；
+ * 否则返回新 registry，仅按 update(record) 改写目标记录（send/resolved/
+ * reply 及其它 q_* 不动）。返回必须是新对象引用。
+ */
+function updateQuestionField(
+  registry: ProjectRegistry,
+  requestID: string,
+  isSame: (record: SessionRecord) => boolean,
+  update: (record: SessionRecord) => SessionRecord,
+): ProjectRegistry | undefined {
+  for (let i = 0; i < registry.projects.length; i++) {
+    const entry = registry.projects[i]!;
+    const sessions = entry.sessions;
+    if (!sessions) continue;
+    for (let j = 0; j < sessions.length; j++) {
+      if (sessions[j]!.request_id !== requestID) continue;
+      if (isSame(sessions[j]!)) return registry; // 同值：幂等，原引用
+      const projects = registry.projects.slice();
+      projects[i] = {
+        ...entry,
+        sessions: sessions.map((record, k) =>
+          k !== j ? record : update(record),
+        ),
+      };
+      return { projects };
+    }
+  }
+  return undefined; // 无匹配：无可写记录，静默跳过写盘
+}
+
+/**
+ * 写向导草稿 + 阶段（契约 sessions-relay.md §14.1.3；选项点击/导航/自定义
+ * 输入写入共用；draft 与 stage 都为完整新值）。三态同 §4.2；仅改
+ * q_draft/q_stage（send/resolved/reply 及其它 q_* 不动）。
+ */
+export function setQuestionDraft(
+  registry: ProjectRegistry,
+  requestID: string,
+  draft: Array<Array<string>>, // 长度=questions 数
+  stage: number, // 0..questions.length；=length 为总结阶段
+): ProjectRegistry | undefined {
+  return updateQuestionField(
+    registry,
+    requestID,
+    (record) => record.q_draft === draft && record.q_stage === stage,
+    (record) => ({ ...record, q_draft: draft, q_stage: stage }),
+  );
+}
+
+/**
+ * 写/清自定义输入态（契约 sessions-relay.md §14.1.3；index=题索引；null=清除）。
+ * 三态同 §4.2；仅改 q_input。
+ */
+export function setQuestionInput(
+  registry: ProjectRegistry,
+  requestID: string,
+  index: number | null,
+): ProjectRegistry | undefined {
+  return updateQuestionField(
+    registry,
+    requestID,
+    (record) => record.q_input === index,
+    (record) => ({ ...record, q_input: index }),
+  );
+}
+
+/**
+ * 最终提交（契约 sessions-relay.md §14.1.3；消费端 reply 触发器；answers
+ * 原样透传不校验）。三态同 §4.2；仅改 q_answers。
+ */
+export function submitQuestionAnswers(
+  registry: ProjectRegistry,
+  requestID: string,
+  answers: Array<Array<string>>,
+): ProjectRegistry | undefined {
+  return updateQuestionField(
+    registry,
+    requestID,
+    (record) => record.q_answers === answers,
+    (record) => ({ ...record, q_answers: answers }),
+  );
+}
+
+/**
+ * 放弃整个向导（契约 sessions-relay.md §14.1.3；消费端 reject 触发器；
+ * 置 q_reject=true）。三态同 §4.2；仅改 q_reject。
+ */
+export function rejectQuestion(
+  registry: ProjectRegistry,
+  requestID: string,
+): ProjectRegistry | undefined {
+  return updateQuestionField(
+    registry,
+    requestID,
+    (record) => record.q_reject === true,
+    (record) => ({ ...record, q_reject: true }),
+  );
+}
+
+/**
+ * 回写向导消息 message_id（契约 sessions-relay.md §14.1.3；poller 发送成功后）。
+ * 三态同 §4.2；仅改 q_msg_id。
+ */
+export function setQuestionMessageID(
+  registry: ProjectRegistry,
+  requestID: string,
+  messageID: number,
+): ProjectRegistry | undefined {
+  return updateQuestionField(
+    registry,
+    requestID,
+    (record) => record.q_msg_id === messageID,
+    (record) => ({ ...record, q_msg_id: messageID }),
+  );
+}
+
+/**
+ * /cancel 批量清除（契约 sessions-relay.md §14.1.3 辅助函数）：清除全部记录的
+ * q_input 键（回到「缺失」态，serialize 自动省略）。无任何变更 → 返回原
+ * registry 引用；有变更 → 新 registry（仅重建含 q_input 记录的条目）。
+ * 不返回 undefined；send/resolved/reply 及其它 q_* 一律不动。
+ */
+export function clearQuestionInputs(
+  registry: ProjectRegistry,
+): ProjectRegistry {
+  let changed = false;
+  const projects = registry.projects.map((entry) => {
+    const sessions = entry.sessions;
+    if (!sessions) return entry;
+    let entryChanged = false;
+    const nextSessions = sessions.map((record) => {
+      if (!("q_input" in record)) return record;
+      entryChanged = true;
+      const next = { ...record };
+      delete next.q_input;
+      return next;
+    });
+    if (!entryChanged) return entry;
+    changed = true;
+    return { ...entry, sessions: nextSessions };
+  });
+  return changed ? { projects } : registry;
 }
 
 function markSessionFlag(
