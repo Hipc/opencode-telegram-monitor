@@ -2918,12 +2918,10 @@ export class TelegramSessionMonitor {
       return;
     }
 
-    // submit：仅总结阶段可用（守卫）；未全答 → 提示题号、不提交不编辑。
+    // submit：任意阶段可用（Phase 1.5 修订——单问题多选恒 stage=0 也需提交路径，
+    // 键盘层多问题仍只在总结阶段显示 Submit，回调层不再依赖 stage 守卫）；
+    // 未全答 → 提示题号、不提交不编辑。
     if (action === "submit") {
-      if (stage !== questions.length) {
-        await this.answerCallback(callbackID, "Unknown action", false);
-        return;
-      }
       const emptyIndex = draft.findIndex((answers) => answers.length === 0);
       if (emptyIndex !== -1) {
         await this.answerCallback(
