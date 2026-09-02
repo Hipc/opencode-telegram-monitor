@@ -40,18 +40,18 @@ async function main() {
   const { appendSessionRecord, markSessionResolved, registerProject } =
     registryModule;
 
-  // fake client 最小面：scanSessionQueue 只经 sendMessage（被 stub）与
+  // 假 client 最小面：scanSessionQueue 只经 sendMessage（被 stub）与
   // this.log（client.app.log）交互；bootstrap 不会被调用（不调 initialize()）。
   // Phase 1.3（API-103/104）：追加 permission reply API stub —— 测试经
   // replyCalls 断言透传、replyError 控制成功/失败（方法名/参数形状以本机 SDK
   // 核验为准：client.postSessionIdPermissionsPermissionId({ path: { id,
   // permissionID }, body: { response } })，契约 §13.8）。
-  // Phase 1.4（API-205）：追加 question reply/reject API stub（方法名按契约
-  // §14.4.3 兜底形态：client.postApiSessionSessionIDQuestionRequestIDReply({
-  // path: { sessionID, requestID }, body: { questionV2Reply: { answers } } })
-  // / postApiSessionSessionIDQuestionRequestIDReject({ path: { sessionID,
-  // requestID } })）；questionReplyCalls/questionRejectCalls 断言透传，
-  // questionReplyError/questionRejectError 控制成功/失败。
+  // Phase 2.1（API-205 改判 / API-206）：运行时实证扁平客户端无任何 question
+  // 方法（契约 §14.8.1），删除 Phase 1.4 的两个扁平 question stub 与
+  // questionReplyCalls/questionRejectCalls/questionReplyError/
+  // questionRejectError 成员；改为 _client.post stub —— postCalls 记录
+  // { url, path, query, body, headers, throwOnError }、postError 控制
+  // 成功/失败（可传含 status/statusCode 的 Error 对象模拟 404）。
   const fakeClient = {
     app: { log: async () => {} },
     session: {
@@ -68,29 +68,26 @@ async function main() {
       if (fakeClient.replyError) throw fakeClient.replyError;
       return { data: true };
     },
-    postApiSessionSessionIDQuestionRequestIDReply: async (options) => {
-      fakeClient.questionReplyCalls.push({
-        sessionID: options?.path?.sessionID,
-        requestID: options?.path?.requestID,
-        answers: options?.body?.questionV2Reply?.answers,
-      });
-      if (fakeClient.questionReplyError) throw fakeClient.questionReplyError;
-      return { data: true };
-    },
-    postApiSessionSessionIDQuestionRequestIDReject: async (options) => {
-      fakeClient.questionRejectCalls.push({
-        sessionID: options?.path?.sessionID,
-        requestID: options?.path?.requestID,
-      });
-      if (fakeClient.questionRejectError) throw fakeClient.questionRejectError;
-      return { data: true };
+    // 分层通道 ②③ 的 transport stub（§14.8.1）：(client as any)._client.post
+    // 与 v2 gen 生成方法共用同一 transport，自动继承 baseUrl/auth。
+    _client: {
+      post: async (options) => {
+        fakeClient.postCalls.push({
+          url: options?.url,
+          path: options?.path,
+          query: options?.query,
+          body: options?.body,
+          headers: options?.headers,
+          throwOnError: options?.throwOnError,
+        });
+        if (fakeClient.postError) throw fakeClient.postError;
+        return { data: true };
+      },
     },
     replyCalls: [],
     replyError: undefined,
-    questionReplyCalls: [],
-    questionRejectCalls: [],
-    questionReplyError: undefined,
-    questionRejectError: undefined,
+    postCalls: [],
+    postError: undefined,
   };
 
   // 假配置（字面值）；绝不真发。
@@ -407,10 +404,8 @@ async function main() {
   await runCase(
     "API-205 question reply/reject apply: answers passthrough, both set resolved=true, permission path unchanged",
     async () => {
-      fakeClient.questionReplyCalls = [];
-      fakeClient.questionRejectCalls = [];
-      fakeClient.questionReplyError = undefined;
-      fakeClient.questionRejectError = undefined;
+      fakeClient.postCalls = [];
+      fakeClient.postError = undefined;
       fakeClient.replyCalls = [];
       // q_answers 已写入的 question 记录 → reply API。
       await registry.mutate((reg) =>
@@ -473,34 +468,58 @@ async function main() {
       if (applied !== 3) {
         throw new Error(`expected 3 applied, got ${applied}`);
       }
-      // question reply 透传断言（sessionID/requestID/answers 原样）。
-      if (fakeClient.questionReplyCalls.length !== 1) {
+      // question reply 透传断言（分层通道②：_client.post url/path/body 顶层
+      // { answers }；§14.8.1/§14.8.7）。运行时无扁平方法 → typeof 走失败分支。
+      const replyCalls = fakeClient.postCalls.filter((call) =>
+        call.url === "/api/session/{sessionID}/question/{requestID}/reply",
+      );
+      if (replyCalls.length !== 1) {
         throw new Error(
-          `expected exactly 1 question reply API call, got ${fakeClient.questionReplyCalls.length}`,
+          `expected exactly 1 question reply _client.post call, got ${replyCalls.length}`,
         );
       }
-      const rc = fakeClient.questionReplyCalls[0];
-      if (rc.sessionID !== "ses_testp0001") {
-        throw new Error(`question reply sessionID mismatch: ${rc.sessionID}`);
+      const rc = replyCalls[0];
+      if (rc.path?.sessionID !== "ses_testp0001") {
+        throw new Error(`question reply sessionID mismatch: ${rc.path?.sessionID}`);
       }
-      if (rc.requestID !== "req-q1") {
-        throw new Error(`question reply requestID mismatch: ${rc.requestID}`);
+      if (rc.path?.requestID !== "req-q1") {
+        throw new Error(`question reply requestID mismatch: ${rc.path?.requestID}`);
       }
-      if (JSON.stringify(rc.answers) !== JSON.stringify([["A"]])) {
-        throw new Error(`question reply answers passthrough mismatch: ${JSON.stringify(rc.answers)}`);
-      }
-      // question reject 透传断言（sessionID/requestID）。
-      if (fakeClient.questionRejectCalls.length !== 1) {
+      if (JSON.stringify(rc.body) !== JSON.stringify({ answers: [["A"]] })) {
         throw new Error(
-          `expected exactly 1 question reject API call, got ${fakeClient.questionRejectCalls.length}`,
+          `question reply body must be top-level { answers }, got ${JSON.stringify(rc.body)}`,
         );
       }
-      const jc = fakeClient.questionRejectCalls[0];
-      if (jc.sessionID !== "ses_testp0001") {
-        throw new Error(`question reject sessionID mismatch: ${jc.sessionID}`);
+      if (rc.body && "questionV2Reply" in rc.body) {
+        throw new Error(`question reply body must not nest questionV2Reply`);
       }
-      if (jc.requestID !== "req-q2") {
-        throw new Error(`question reject requestID mismatch: ${jc.requestID}`);
+      if (rc.throwOnError !== true) {
+        throw new Error(`question reply call must set throwOnError: true`);
+      }
+      // question reject 透传断言（同构：url .../reject、无 body 字段）。
+      const rejectCalls = fakeClient.postCalls.filter((call) =>
+        call.url === "/api/session/{sessionID}/question/{requestID}/reject",
+      );
+      if (rejectCalls.length !== 1) {
+        throw new Error(
+          `expected exactly 1 question reject _client.post call, got ${rejectCalls.length}`,
+        );
+      }
+      const jc = rejectCalls[0];
+      if (jc.path?.sessionID !== "ses_testp0001") {
+        throw new Error(`question reject sessionID mismatch: ${jc.path?.sessionID}`);
+      }
+      if (jc.path?.requestID !== "req-q2") {
+        throw new Error(`question reject requestID mismatch: ${jc.path?.requestID}`);
+      }
+      if (jc.body !== undefined) {
+        throw new Error(`question reject call must carry no body, got ${JSON.stringify(jc.body)}`);
+      }
+      // 分层命中通道②：不得有任何 v2 全局路由（/question/...）调用。
+      if (fakeClient.postCalls.some((call) => !call.url.startsWith("/api/session/"))) {
+        throw new Error(
+          `channel 2 must be hit first; unexpected global-route call: ${JSON.stringify(fakeClient.postCalls)}`,
+        );
       }
       // permission 回归：permission reply API 仍被调用。
       if (fakeClient.replyCalls.length !== 1) {
@@ -541,14 +560,13 @@ async function main() {
   );
 
   // API-205-2：apply 失败 → resolved 保持 false、下轮重试成功（reply 与
-  // reject 双路径各验证一次；单条失败不中断整轮）。
+  // reject 双路径各验证一次；postError 使两条记录都失败，单条失败不中断
+  // 整轮，成功计数为 0）。
   await runCase(
     "API-205 question apply failure keeps resolved=false and retries to success (reply + reject)",
     async () => {
-      fakeClient.questionReplyCalls = [];
-      fakeClient.questionRejectCalls = [];
-      fakeClient.questionReplyError = undefined;
-      fakeClient.questionRejectError = undefined;
+      fakeClient.postCalls = [];
+      fakeClient.postError = undefined;
       await registry.mutate((reg) =>
         appendSessionRecord(
           reg,
@@ -573,13 +591,13 @@ async function main() {
           }),
         ),
       );
-      // ① reply apply 失败（stub 抛错，如「已决」404）→ 不置位；reject 成功
-      // → 置位（单条失败不中断整轮，成功计数只含 reject）。
-      fakeClient.questionReplyError = new Error("question already decided (404)");
+      // ① apply 失败（postError 抛非 404 错误，如「已决」）→ 两条记录均
+      // 不置位（单条失败不中断整轮，成功计数为 0）。
+      fakeClient.postError = new Error("question already decided");
       const monitor = makeMonitor(async () => {});
       const first = await monitor.scanReplyQueue();
-      if (first !== 1) {
-        throw new Error(`expected 1 applied (reject only), got ${first}`);
+      if (first !== 0) {
+        throw new Error(`expected 0 applied while postError set, got ${first}`);
       }
       let r5 = await findRecord("req-q5");
       if (!r5 || r5.resolved !== false) {
@@ -587,17 +605,17 @@ async function main() {
           `q5 resolved must stay false after failed reply apply: ${JSON.stringify(r5)}`,
         );
       }
-      const r6 = await findRecord("req-q6");
-      if (!r6 || r6.resolved !== true) {
+      let r6 = await findRecord("req-q6");
+      if (!r6 || r6.resolved !== false) {
         throw new Error(
-          `q6 must be resolved after successful reject: ${JSON.stringify(r6)}`,
+          `q6 resolved must stay false after failed reject apply: ${JSON.stringify(r6)}`,
         );
       }
-      // ② 下轮重试：reply stub 恢复成功 → resolved=true。
-      fakeClient.questionReplyError = undefined;
+      // ② 下轮重试：postError 清除 → 两路径均成功置位。
+      fakeClient.postError = undefined;
       const second = await monitor.scanReplyQueue();
-      if (second !== 1) {
-        throw new Error(`expected 1 applied on retry, got ${second}`);
+      if (second !== 2) {
+        throw new Error(`expected 2 applied on retry, got ${second}`);
       }
       r5 = await findRecord("req-q5");
       if (!r5 || r5.resolved !== true) {
@@ -605,14 +623,17 @@ async function main() {
           `q5 resolved not true after retry success: ${JSON.stringify(r5)}`,
         );
       }
-      if (fakeClient.questionReplyCalls.length !== 2) {
+      r6 = await findRecord("req-q6");
+      if (!r6 || r6.resolved !== true) {
         throw new Error(
-          `expected 2 question reply API calls total, got ${fakeClient.questionReplyCalls.length}`,
+          `q6 resolved not true after retry success: ${JSON.stringify(r6)}`,
         );
       }
-      if (fakeClient.questionRejectCalls.length !== 1) {
+      // 每记录每轮：非 404 失败 → 通道② + 降级通道③ 各一次；首轮 2 记录 × 2
+      // = 4，重试轮 2 记录 × 1（② 成功） = 2，共 6。
+      if (fakeClient.postCalls.length !== 6) {
         throw new Error(
-          `expected 1 question reject API call total, got ${fakeClient.questionRejectCalls.length}`,
+          `expected 6 _client.post calls total (4 failed degrade + 2 success), got ${fakeClient.postCalls.length}`,
         );
       }
       await monitor.dispose();
@@ -624,8 +645,8 @@ async function main() {
   await runCase(
     "API-205 already-resolved question record is skipped (event path first)",
     async () => {
-      fakeClient.questionReplyCalls = [];
-      fakeClient.questionRejectCalls = [];
+      fakeClient.postCalls = [];
+      fakeClient.postError = undefined;
       await registry.mutate((reg) =>
         appendSessionRecord(
           reg,
@@ -644,13 +665,307 @@ async function main() {
       if (applied !== 0) {
         throw new Error(`expected 0 applied for resolved, got ${applied}`);
       }
-      if (
-        fakeClient.questionReplyCalls.length !== 0 ||
-        fakeClient.questionRejectCalls.length !== 0
-      ) {
+      if (fakeClient.postCalls.length !== 0) {
         throw new Error(
-          `question API must not be called for already-resolved record`,
+          `question _client.post must not be called for already-resolved record`,
         );
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // ---- Phase 2.1 (API-206) ----
+  // 契约 docs/modules/sessions-relay.md §14.8.1/§14.8.2/§14.8.7：消费端通道
+  // 修复。运行时扁平客户端无 question 方法（实机实证）→ 分层通道命中 ②
+  // （(client as any)._client.post，url/path/body 顶层 { answers }）；① 扁平
+  // 方法存在时直用；404 → resolved 终态不再重试；非 404 失败仍重试（② 失败
+  // 降级 ③ 后仍失败）；reject 同构（无 body）。
+  // API-206-1：分层命中通道②——reply 与 reject 同构（url/path/body 断言、
+  // 无 v2 全局路由调用、无 questionV2Reply 嵌套）。
+  await runCase(
+    "API-206 layered channel 2 hit: _client.post url/path/body top-level {answers}, reject no body, no global route",
+    async () => {
+      fakeClient.postCalls = [];
+      fakeClient.postError = undefined;
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-a1",
+            type: "question",
+            message: JSON.stringify({ id: "req-a1", questions: [] }),
+            q_answers: [["A"]],
+          }),
+        ),
+      );
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-a2",
+            type: "question",
+            message: JSON.stringify({ id: "req-a2", questions: [] }),
+            q_reject: true,
+          }),
+        ),
+      );
+      const monitor = makeMonitor(async () => {});
+      const applied = await monitor.scanReplyQueue();
+      if (applied !== 2) {
+        throw new Error(`expected 2 applied, got ${applied}`);
+      }
+      // 恰 2 次 _client.post，均为 v2 会话级路由（通道②，无 v2 全局降级）。
+      if (fakeClient.postCalls.length !== 2) {
+        throw new Error(
+          `expected exactly 2 _client.post calls, got ${fakeClient.postCalls.length}`,
+        );
+      }
+      for (const call of fakeClient.postCalls) {
+        if (!call.url.startsWith("/api/session/")) {
+          throw new Error(`unexpected non-session route: ${call.url}`);
+        }
+      }
+      const rc = fakeClient.postCalls.find((c) => c.url.endsWith("/reply"));
+      if (!rc) throw new Error("missing reply _client.post call");
+      if (rc.path?.sessionID !== "ses_testp0001") {
+        throw new Error(`reply path.sessionID mismatch: ${rc.path?.sessionID}`);
+      }
+      if (rc.path?.requestID !== "req-a1") {
+        throw new Error(`reply path.requestID mismatch: ${rc.path?.requestID}`);
+      }
+      if (JSON.stringify(rc.body) !== JSON.stringify({ answers: [["A"]] })) {
+        throw new Error(`reply body must be top-level { answers }, got ${JSON.stringify(rc.body)}`);
+      }
+      if (rc.body && "questionV2Reply" in rc.body) {
+        throw new Error(`reply body must not nest questionV2Reply`);
+      }
+      if (rc.query !== undefined) {
+        throw new Error(`channel 2 reply must not carry query, got ${JSON.stringify(rc.query)}`);
+      }
+      const jc = fakeClient.postCalls.find((c) => c.url.endsWith("/reject"));
+      if (!jc) throw new Error("missing reject _client.post call");
+      if (jc.path?.requestID !== "req-a2") {
+        throw new Error(`reject path.requestID mismatch: ${jc.path?.requestID}`);
+      }
+      if (jc.body !== undefined) {
+        throw new Error(`reject must carry no body, got ${JSON.stringify(jc.body)}`);
+      }
+      if (jc.query !== undefined) {
+        throw new Error(`channel 2 reject must not carry query, got ${JSON.stringify(jc.query)}`);
+      }
+      const r1 = await findRecord("req-a1");
+      if (!r1 || r1.resolved !== true) {
+        throw new Error(`a1 resolved not true after reply apply: ${JSON.stringify(r1)}`);
+      }
+      const r2 = await findRecord("req-a2");
+      if (!r2 || r2.resolved !== true) {
+        throw new Error(`a2 resolved not true after reject apply: ${JSON.stringify(r2)}`);
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // API-206-2：① 扁平方法存在时直用（用例内临时挂方法，断言命中后清理）。
+  await runCase(
+    "API-206 flat question methods are used directly when present (channel 1)",
+    async () => {
+      fakeClient.postCalls = [];
+      fakeClient.postError = undefined;
+      const flatCalls = [];
+      const flatReply = async (options) => {
+        flatCalls.push({ kind: "reply", options });
+        return { data: true };
+      };
+      const flatReject = async (options) => {
+        flatCalls.push({ kind: "reject", options });
+        return { data: true };
+      };
+      fakeClient.postApiSessionSessionIDQuestionRequestIDReply = flatReply;
+      fakeClient.postApiSessionSessionIDQuestionRequestIDReject = flatReject;
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({
+              request_id: "req-a3",
+              type: "question",
+              message: JSON.stringify({ id: "req-a3", questions: [] }),
+              q_answers: [["B"]],
+            }),
+          ),
+        );
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({
+              request_id: "req-a4",
+              type: "question",
+              message: JSON.stringify({ id: "req-a4", questions: [] }),
+              q_reject: true,
+            }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 2) {
+          throw new Error(`expected 2 applied via flat methods, got ${applied}`);
+        }
+        // 扁平方法直用：_client.post 未被调用。
+        if (fakeClient.postCalls.length !== 0) {
+          throw new Error(
+            `_client.post must not be called when flat methods exist, got ${fakeClient.postCalls.length} calls`,
+          );
+        }
+        if (flatCalls.length !== 2) {
+          throw new Error(`expected 2 flat method calls, got ${flatCalls.length}`);
+        }
+        const fr = flatCalls.find((c) => c.kind === "reply");
+        if (!fr) throw new Error("flat reply method not called");
+        if (fr.options.path?.sessionID !== "ses_testp0001") {
+          throw new Error(`flat reply path.sessionID mismatch: ${fr.options.path?.sessionID}`);
+        }
+        if (fr.options.path?.requestID !== "req-a3") {
+          throw new Error(`flat reply path.requestID mismatch: ${fr.options.path?.requestID}`);
+        }
+        if (JSON.stringify(fr.options.body) !== JSON.stringify({ answers: [["B"]] })) {
+          throw new Error(`flat reply body must be top-level { answers }, got ${JSON.stringify(fr.options.body)}`);
+        }
+        const fj = flatCalls.find((c) => c.kind === "reject");
+        if (!fj) throw new Error("flat reject method not called");
+        if (fj.options.path?.requestID !== "req-a4") {
+          throw new Error(`flat reject path.requestID mismatch: ${fj.options.path?.requestID}`);
+        }
+        if (fj.options.body !== undefined) {
+          throw new Error(`flat reject must carry no body, got ${JSON.stringify(fj.options.body)}`);
+        }
+        const r3 = await findRecord("req-a3");
+        if (!r3 || r3.resolved !== true) {
+          throw new Error(`a3 resolved not true after flat reply apply: ${JSON.stringify(r3)}`);
+        }
+        const r4 = await findRecord("req-a4");
+        if (!r4 || r4.resolved !== true) {
+          throw new Error(`a4 resolved not true after flat reject apply: ${JSON.stringify(r4)}`);
+        }
+        await monitor.dispose();
+      } finally {
+        delete fakeClient.postApiSessionSessionIDQuestionRequestIDReply;
+        delete fakeClient.postApiSessionSessionIDQuestionRequestIDReject;
+      }
+    },
+  );
+
+  // API-206-3：404 → resolved 终态，不再重试（下一轮 scan 不再调用）。
+  await runCase(
+    "API-206 404 marks question resolved (terminal), no retry on next scan",
+    async () => {
+      fakeClient.postCalls = [];
+      fakeClient.postError = Object.assign(new Error("question not found"), {
+        status: 404,
+      });
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-a5",
+            type: "question",
+            message: JSON.stringify({ id: "req-a5", questions: [] }),
+            q_answers: [["C"]],
+          }),
+        ),
+      );
+      const monitor = makeMonitor(async () => {});
+      const applied = await monitor.scanReplyQueue();
+      // 404 终态：不 rethrow、应用成功计数 +1；仅 1 次通道②调用（404 立即
+      // 终态，不继续尝试后续通道）。
+      if (applied !== 1) {
+        throw new Error(`expected 1 applied (404 terminal), got ${applied}`);
+      }
+      if (fakeClient.postCalls.length !== 1) {
+        throw new Error(
+          `expected 1 _client.post call before 404 terminal, got ${fakeClient.postCalls.length}`,
+        );
+      }
+      const r5 = await findRecord("req-a5");
+      if (!r5 || r5.resolved !== true) {
+        throw new Error(`a5 must be resolved after 404: ${JSON.stringify(r5)}`);
+      }
+      // 下一轮 scan：resolved=true → 跳过，不再调用 _client.post。
+      const callsAfter = fakeClient.postCalls.length;
+      const second = await monitor.scanReplyQueue();
+      if (second !== 0) {
+        throw new Error(`expected 0 applied on next scan, got ${second}`);
+      }
+      if (fakeClient.postCalls.length !== callsAfter) {
+        throw new Error(`_client.post must not be called again after 404 terminal`);
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // API-206-4：非 404 失败仍重试——② 失败降级尝试 ③（v2 全局路由，query
+  // directory=root）后仍失败 → 不置位；下轮 postError 清除 → 重试成功。
+  await runCase(
+    "API-206 non-404 failure retries and degrades to channel 3 (global route), then succeeds",
+    async () => {
+      fakeClient.postCalls = [];
+      fakeClient.postError = new Error("boom");
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-a6",
+            type: "question",
+            message: JSON.stringify({ id: "req-a6", questions: [] }),
+            q_answers: [["D"]],
+          }),
+        ),
+      );
+      const monitor = makeMonitor(async () => {});
+      const first = await monitor.scanReplyQueue();
+      if (first !== 0) {
+        throw new Error(`expected 0 applied while postError set, got ${first}`);
+      }
+      // ② 失败 → ③ 也被尝试：两个 url 形态都在 postCalls 中（均失败）。
+      const sessionCalls = fakeClient.postCalls.filter((c) =>
+        c.url.startsWith("/api/session/"),
+      );
+      const globalCalls = fakeClient.postCalls.filter((c) =>
+        c.url.startsWith("/question/"),
+      );
+      if (sessionCalls.length !== 1) {
+        throw new Error(`expected 1 channel-2 call, got ${sessionCalls.length}`);
+      }
+      if (globalCalls.length !== 1) {
+        throw new Error(`expected 1 channel-3 call (degraded), got ${globalCalls.length}`);
+      }
+      if (globalCalls[0].path?.requestID !== "req-a6") {
+        throw new Error(`channel-3 path.requestID mismatch: ${globalCalls[0].path?.requestID}`);
+      }
+      if (globalCalls[0].query?.directory !== root) {
+        throw new Error(`channel-3 query.directory must be root, got ${JSON.stringify(globalCalls[0].query)}`);
+      }
+      if (JSON.stringify(globalCalls[0].body) !== JSON.stringify({ answers: [["D"]] })) {
+        throw new Error(`channel-3 body mismatch: ${JSON.stringify(globalCalls[0].body)}`);
+      }
+      const r6 = await findRecord("req-a6");
+      if (!r6 || r6.resolved !== false) {
+        throw new Error(`a6 must stay unresolved after non-404 failure: ${JSON.stringify(r6)}`);
+      }
+      // 下轮重试：postError 清除 → 通道②成功置位。
+      fakeClient.postError = undefined;
+      const second = await monitor.scanReplyQueue();
+      if (second !== 1) {
+        throw new Error(`expected 1 applied on retry, got ${second}`);
+      }
+      const r6b = await findRecord("req-a6");
+      if (!r6b || r6b.resolved !== true) {
+        throw new Error(`a6 resolved not true after retry success: ${JSON.stringify(r6b)}`);
       }
       await monitor.dispose();
     },
