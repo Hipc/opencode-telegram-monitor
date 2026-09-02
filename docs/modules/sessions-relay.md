@@ -331,6 +331,12 @@ export function markSessionSent(
 | 本文件 §13.7/§13.12.4 编辑区间 | Round 2/3 区间划分 | Round 4 区间以 §14.6 为准 |
 | 本文件 §8/§13.9 测试编号 | API-001~006/101~106 / REG-101/201 / REDACT / LOCK / BUILD | Round 4 新增 REG-301 / API-201~205（§14.5） |
 | docs/00-overview.md「question 本轮无按钮」 | 「question 与其它一切审批/回答流程仍留在 opencode，插件绝不擅自代答」（00-overview 29 行同款） | Round 4 起 question 记录支持 TG 向导交互（仅用户显式点击/输入触发；绝不主动代答）。README/00-overview 文字修订超出 doc-prep 写权限边界（∉ docs/**），由 dev-lead 另行指派执行 |
+| 本文件 §14.4.3 兜底形态 | 扁平方法 `postApiSessionSessionIDQuestionRequestIDReply/...Reject` + 嵌套 body `{ questionV2Reply: { answers } }` | **Round 2（修复轮）supersede**：运行时实证扁平客户端无任何 question 方法（必然 not-a-function），body 实为顶层 `{ answers }`——改走 `(client as any)._client.post` 分层通道 ①②③ + 实例级缓存（§14.8.1） |
+| 本文件 §14.4.2 失败重试 | 失败/抛错 → logWarn 不置位，下轮 ticker 重试 | **Round 2（修复轮）supersede 例外**：错误判定「不存在」（404/QuestionNotFound/SessionNotFound）→ 置 resolved 终态 + log info + 不重试（§14.8.2）；非 404 维持原语义 |
+| 本文件 §14.2.2 sendMessageWithKeyboard 返回 | `return response?.result?.message_id`（单形态） | **Round 2（修复轮）supersede**：三形态防御解析（`result?.message_id ?? result?.message?.message_id ?? result?.messageId`）+ 首次 dline 键名诊断；语义不变（§14.8.3） |
+| 本文件 §14.2.1 custom 行条件 | custom 行仅当 `questions[stage].custom === true` 渲染 | **Round 2（修复轮）supersede**：✏️ Custom 恒显示（真实 payload 从不带 custom 标志）；§14.3.1 custom 防御同步移除、§14.3.3 文案行删除（§14.8.4） |
+| 本文件 §14.2.1 总结阶段导航行 | `[✅ Submit] [❌ Cancel]` | **Round 2（修复轮）supersede**：多问题请求总结阶段 = `[⬅️ Prev] [✅ Submit] [❌ Cancel]`；回调 clamp 已支持 prev 从 stage=length 回最后一题，零回调改动（§14.8.5） |
+| 本文件 §14.3.2 第 5 步（纯文本编辑） | q_msg_id 缺失 → logWarn 跳过编辑（答案已落盘） | **Round 2（修复轮）supersede**：q_msg_id 缺失 → 发一条新的当前阶段向导消息（多问题含键盘并回写新 q_msg_id；单问题 ✅ Submitted 终态无键盘），旧消息不动（§14.8.6） |
 
 ## 12. 变更记录
 
@@ -361,6 +367,23 @@ export function markSessionSent(
   消费端 applyQuestionReply/Reject 与 SDK 签名核验任务（v2 嵌套 body `{ questionV2Reply: { answers } }`
   修正早稿「body `{ answers }`」）、测试编号 REG-301/API-201~205 与锚点修正（API-006-5/API-101-2
   既有断言最小改判归 1.2）、编辑区间零交集。**supersede §13.10「不做 question 按钮/回写」**。
+  supersede 记录见 §11。
+- 2026-09-02 修订（Round 4 / Phase 1.5 单问题多选提交死角修复）：§14.2.1 键盘行序第 3 条——
+  单问题请求多选（`multiple === true`）追加 `[✅ Submit](:submit)` + `[❌ Cancel](:cancel)`
+  （toggle 不自动提交，须显式 Submit，消除无提交路径死角）；§14.3.1 submit 守卫放宽为
+  **任意 stage 均可提交**（多问题请求键盘层仍总结阶段才渲染 Submit，行为不变）；
+  §14.3.3 文案表删除「非总结阶段 submit → Unknown action」场景。
+- 2026-09-02 冻结（Round 2 修复轮 / question-tg-wizard，见 §14.8，实机反馈三问题）：消费端
+  applyQuestionReply/Reject **supersede §14.4.3 兜底形态**——运行时扁平客户端无任何 question
+  方法实证（必然 not-a-function）+ body 顶层 `{answers}` 实证（非嵌套），改走
+  `(client as any)._client.post` 分层通道（①扁平 typeof → ②v2 会话级 → ③v2 全局
+  `query:{directory:root}`，每轮按序尝试、实例级缓存已成功通道）；404 终态（404/
+  QuestionNotFound/SessionNotFound → markSessionResolved + log info + 不重试，非 404 维持重试）；
+  sendRichMessage message_id 三形态防御解析 + 首次 dline 键名诊断；✏️ Custom 恒显示
+  （移除 custom===true 条件与「该题不支持自定义输入」防御及文案行）；汇总阶段导航行加
+  ⬅️ Prev；输入兜底——q_msg_id 缺失改发新向导消息（多问题含键盘+回写新 id / 单问题
+  ✅ Submitted 无键盘）；fakeClient 调整（删扁平 stub → `_client.post`）+ API-205 改判（2.1）+
+  API-203-4 改判（2.2）；测试编号 API-206/207 与锚点、Round 2 编辑区间（零交集）。
   supersede 记录见 §11。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
@@ -916,11 +939,15 @@ export function buildQuestionKeyboard(
 
 - 行序冻结（返回 `{ inline_keyboard: rows }`，复用 `TelegramInlineButton`/`TelegramInlineKeyboard`）：
   1. **选项行**（`questions[stage].options ?? []` 逐项按钮，单行内平铺）：callback_data 统一 `${OTG_Q_CB_PREFIX}${entryID}:o${idx}`（idx = 选项数组 0-based 下标）；text = **多选**（`multiple === true`）且已选 → `✅ ${label}`，否则 `label`；
-  2. **custom 行**（仅当 `questions[stage].custom === true`）：`[{ text: "✏️ Custom", callback_data: `${OTG_Q_CB_PREFIX}${entryID}:custom` }]`；
-  3. **导航/提交行**：
-     - 多问题请求（`questions.length > 1`）非总结：`[⬅️ Prev](:prev)` `[➡️ Next](:next)` `[❌ Cancel](:cancel)`；
-     - 多问题请求总结阶段（`stage === questions.length`）：`[✅ Submit](:submit)` `[❌ Cancel](:cancel)`；
-     - **单问题请求（`questions.length === 1`）**：**无导航无提交按钮**——只有选项行（+custom 行若有）+ `[❌ Cancel](:cancel)`（点选项直接提交形态，决策 #6）。
+  2. **custom 行**（**Round 2 修订：恒显示**，§14.8.4 supersede——原「仅当
+     `questions[stage].custom === true`」条件移除；有 current 即渲染）：
+     `[{ text: "✏️ Custom", callback_data: `${OTG_Q_CB_PREFIX}${entryID}:custom` }]`；
+   3. **导航/提交行**：
+      - 多问题请求（`questions.length > 1`）非总结：`[⬅️ Prev](:prev)` `[➡️ Next](:next)` `[❌ Cancel](:cancel)`；
+      - 多问题请求总结阶段（`stage === questions.length`）：**（Round 2 修订：加 ⬅️ Prev，§14.8.5 supersede）**
+        `[⬅️ Prev](:prev)` `[✅ Submit](:submit)` `[❌ Cancel](:cancel)`；
+      - **单问题请求（`questions.length === 1`）单选**：**无导航无提交按钮**——只有选项行（+custom 行若有）+ `[❌ Cancel](:cancel)`（点选项直接提交形态，决策 #6）；
+      - **单问题请求多选（`multiple === true`，Phase 1.5 修订）**：选项行（toggle）+（custom 行若有）+ `[✅ Submit](:submit)` + `[❌ Cancel](:cancel)`——多选 toggle 不自动提交，须显式 Submit（TUI 对齐：space 切换、enter 提交；否则该形态无提交路径的功能死角）。
 - `entryID` 由调用方（monitor）保证回调 ASCII 且 ≤ 64 字节（§14.2.3）；函数本身不做长度断言（同 §13.3）。
 
 #### 14.2.2 scanSessionQueue question 分支（1.2 地盘 1679-1740，冻结）
@@ -944,6 +971,8 @@ export function buildQuestionKeyboard(
   ): Promise<number | undefined> // 响应 result.message_id；无则 undefined
   ```
 - 实现：`const response = await telegramWithRetry<{ result?: { message_id?: number } }>("sendRichMessage", {…}, ctx)` → `return response?.result?.message_id`。
+  **（Round 2 修订：§14.8.3 supersede 此返回解析**——防御三形态
+  `result?.message_id ?? result?.message?.message_id ?? result?.messageId` + 首次 dline 键名诊断；语义不变）
 - 既有调用点（permission 键盘发送）忽略返回值，兼容；测试 stub 同步改为可返回 message_id。
 
 #### 14.2.3 questionEntryID / qShortMap（1.2，冻结）
@@ -972,8 +1001,10 @@ export function buildQuestionKeyboard(
     - 当前题**单选**且**多问题**：`draft[stage] = [label]` → `setQuestionDraft(reg, requestID, draft, Math.min(stage + 1, questions.length))`（=length 自然进总结）→ answer `已选「{label}」` → 编辑下一题；
     - 当前题**单选**且**单问题请求**（`questions.length === 1`）：**直接提交** `submitQuestionAnswers(reg, requestID, [[label]])` → answer `已提交` → 编辑 ✅ Submitted（键盘移除）。
   - `prev` / `next`：`newStage = clamp(stage + (next ? 1 : -1), 0, questions.length)`（next 上限 = 总结阶段；prev 下限 0；答案保留不丢）→ `setQuestionDraft(reg, requestID, draft, newStage)` → answer `已跳转` → 编辑目标阶段。
-  - `custom`（防御：`questions[stage].custom !== true` → answer「该题不支持自定义输入」return）：`setQuestionInput(reg, requestID, stage)` → answer `直接回复文本作为答案，/cancel 取消` → 编辑当前消息（追加输入提示行、**键盘保留**）。
-  - `submit`（防御：`stage !== questions.length`（非总结阶段）→ answer「Unknown action」return）：
+  - `custom`（**Round 2 修订：恒可用，§14.8.4 supersede**——移除去「`questions[stage].custom !== true` →
+    answer「该题不支持自定义输入」return」防御；`current` 判空保留为失效兜底）：
+    `setQuestionInput(reg, requestID, stage)` → answer `直接回复文本作为答案，/cancel 取消` → 编辑当前消息（追加输入提示行、**键盘保留**）。
+  - `submit`（**Phase 1.5 修订：任意 stage 均可提交**——原「非总结阶段 → Unknown action」守卫删除；键盘层多问题请求仍只在总结阶段渲染 Submit，行为不变，放宽仅为单问题多选（恒 stage 0）提供提交路径）：
     - 校验 `draft.every((a) => a.length > 0)`；未全答 → answer `第 {n} 题未作答，请先作答`（n = 首个空数组下标 + 1）+ **不提交不编辑**；
     - 全答 → `submitQuestionAnswers(reg, requestID, draft)` → answer `已提交` → 编辑 ✅ Submitted（键盘移除）。
   - `cancel`（任意阶段可用）：`rejectQuestion(reg, requestID)` → answer `已取消` → 编辑 ❌ Cancelled（键盘移除）。
@@ -1004,7 +1035,7 @@ export function buildQuestionKeyboard(
      - `setQuestionInput(reg, requestID, null)`（清输入态）；
      - **多问题** → `setQuestionDraft(reg, requestID, draft, Math.min(q_input + 1, questions.length))`（=length 自然进总结）；
      - **单问题** → `submitQuestionAnswers(reg, requestID, draft)`（直接提交）。
-  5. 编辑向导消息：多问题 → `editQuestionWizardMessage` 渲染下一题（键盘保留）；单问题 → 原文本 + `\n✅ Submitted`（键盘移除）；**纯文本路径 messageID 仅用 `record.q_msg_id`**（无 callback.message 可兜底；缺失 → logWarn 跳过编辑——答案已落盘不受影响）；
+  5. 编辑向导消息：多问题 → `editQuestionWizardMessage` 渲染下一题（键盘保留）；单问题 → 原文本 + `\n✅ Submitted`（键盘移除）；**纯文本路径 messageID 仅用 `record.q_msg_id`**（无 callback.message 可兜底；缺失 → **Round 2 修订：§14.8.6 supersede「logWarn 跳过编辑」**——改为发一条新的当前阶段向导消息（多问题含键盘并回写新 q_msg_id；单问题 ✅ Submitted 终态文本无键盘），旧消息不动；答案已落盘不受影响）；
   6. 回复确认：`this.enqueueMessage(paragraph("已记录第 {n} 题答案"))`（n = q_input + 1；enqueueMessage 与命令路径一致，不阻塞）。
 - **`/cancel` 命令**：switch 追加 `case "cancel":` → `registry.mutate((reg) => clearQuestionInputs(reg))` → `this.enqueueMessage(paragraph("已取消输入模式"))` → return。**不改 `PLANNED_COMMANDS`**（已核验 constants.ts 26-33：cancel 不在其中，命令可达）。
 - 确认文案冻结：`已记录第 {n} 题答案`；`/cancel` → `已取消输入模式`。
@@ -1014,9 +1045,9 @@ export function buildQuestionKeyboard(
 | 场景 | 文案 | alert |
 |---|---|---|
 | 记录不存在 / 已 resolved / 已 q_answers / 已 q_reject / message 解析失败 | `记录不存在或已失效` | true |
-| 正则不命中 / 非总结阶段 submit | `Unknown action` | false |
+| 正则不命中 | `Unknown action` | false |
 | `o<idx>` 越界 | `选项无效` | false |
-| custom 但该题不支持 | `该题不支持自定义输入` | false |
+| ~~custom 但该题不支持~~（**Round 2 修订：该行删除，§14.8.4 supersede**——custom 恒可用，路径不存在） | — | — |
 | 单选多题点选 | `已选「{label}」` | false |
 | 多选 toggle | `已选 {n} 项` | false |
 | 单问题直接提交 / submit 成功 | `已提交` | false |
@@ -1040,6 +1071,7 @@ export function buildQuestionKeyboard(
 #### 14.4.2 applyQuestionReply / applyQuestionReject（1.4 新增，放 applySessionReply 之后）
 
 - 与 `applySessionReply`（1633-1669）**同构**：调用 → 成功 `registry.mutate(markSessionResolved)`（undefined → logWarn，下轮重试）；失败/抛错 → logWarn（token 脱敏）**不置位**，下轮 ticker 重试；不引入认领机制。
+  **（Round 2 修订：§14.8.2 supersede 失败语义**——错误判定「不存在」（404/QuestionNotFound/SessionNotFound）→ 置 resolved 终态 + log info + 不 rethrow，不再重试；非 404 维持 logWarn + rethrow 下轮重试）**
 - **透传语义（冻结）**：`answers = record.q_answers` 原样（不映射、不校验——parse 已保证 `Array<Array<string>>`）；`sessionID = record.session_id`、`requestID = record.request_id`。
 - **双路径说明（冻结）**：question.replied/rejected 事件路径（§5.3）保留**先到先得**——筛选已排除 resolved；若 read→apply 窗口内事件/其它实例先置位，本实例 API 调用以「已决」失败被捕获 → logWarn → 下轮读到 resolved=true 即跳过（§13.6 竞态收敛同款）。
 
@@ -1068,6 +1100,9 @@ export function buildQuestionKeyboard(
   });
   ```
 - 本契约以核验后结果为准，§14.4.3 为冻结兜底基线。
+- **（Round 2 修订：§14.8.1 supersede 本小节全部**——运行时实证扁平客户端**无任何 question 方法**
+  且 body 为顶层 `{ answers }`（非嵌套），§14.4.3 兜底形态作废，改走
+  `(client as any)._client.post` 分层通道）**
 
 ### 14.5 测试编号与锚点契约（supersede §8/§13.9 新增编号）
 
@@ -1079,6 +1114,8 @@ export function buildQuestionKeyboard(
 | API-203 | 自定义输入：✏️ Custom → q_input 落盘 + answer + 编辑提示；纯文本消息 → draft[q_input] 写入 + 清输入 + 推进（多问题）/直接提交（单问题）+ 回复确认；/cancel 清除全部 q_input + 确认 | 同上 | 1.3 |
 | API-204 | 取消：任意阶段 ❌ → q_reject 落盘 + answer + 编辑 ❌ 键盘移除；已取消记录再点按钮 → 失效提示 | 同上 | 1.3 |
 | API-205 | 消费端：q_answers → reply API 透传（sessionID/requestID/answers）→ resolved=true；q_reject → reject API → resolved=true；失败不置位下轮重试；已 resolved 跳过；permission 回归（API-103/104 不受影响） | `tests/sessions-poller.test.mjs`（Phase 1.3 区块尾部 + fakeClient 扩展） | 1.4 |
+| API-206 | **（Round 2 新增，§14.8.7）** 消费端通道：分层命中通道②（`_client.post` url/path/body 顶层 `{answers}`）；① 扁平方法存在时直用；404 → resolved 终态不重试；非 404 失败重试（② 降级 ③ 后仍失败）；reject 同构 | 同上（API-205 区块 657 行后 + fakeClient 55-93 区调整） | 2.1 |
+| API-207 | **（Round 2 新增，§14.8.7）** 交互：任意题键盘恒含 ✏️ Custom；汇总页含 ⬅️ Prev 且点击回最后一题；无 q_msg_id 输入兜底发新消息（含键盘/终态 ✅ Submitted）；API-203-4 改判 | 同上（文件尾 2682 后） | 2.2 |
 
 **同文件追加锚点（当前文件 1058 行事实；沿用 §13.9 实测经验：同锚点追加 ⇒ CONFLICT；不同锚点 ⇒ 自动干净合并）**：
 
@@ -1111,6 +1148,27 @@ export function buildQuestionKeyboard(
 | 1.4 | `src/monitor.ts` scanReplyQueue（1588-1619）+ applySessionReply 后空白（1669 后） | 筛选双分支 + applyQuestionReply/applyQuestionReject |
 | 1.4 | `tests/sessions-poller.test.mjs` fakeClient（44-66）+ Phase 1.3 区块尾部（369/372 间） | question stub + API-205 |
 
+**Round 2 编辑区间（supersede §14.6 本轮范围，冻结；行号参考，以函数名界定）**：
+
+| Phase | 独占文件/区间（当前行号） | 内容 |
+|---|---|---|
+| 2.1 | `src/monitor.ts` applyQuestionReply/applyQuestionReject（1731-1811） | 分层调用通道（§14.8.1）+ 404 终态（§14.8.2）+ 实例级通道缓存字段 |
+| 2.1 | `src/monitor.ts` sendMessageWithKeyboard（3209-3224） | message_id 三形态防御解析 + 首次 dline 键名诊断（§14.8.3） |
+| 2.1 | `tests/sessions-poller.test.mjs` fakeClient（55-93） | 删两个扁平 question stub + 四个成员；新增 `_client.post` stub（postCalls/postError） |
+| 2.1 | `tests/sessions-poller.test.mjs` API-205 区块（399-657） | 三个用例断言最小改判为 `_client.post` 形态 |
+| 2.1 | `tests/sessions-poller.test.mjs`（657 行 `);` 后、`// API-006-3` 前） | API-206 区块 |
+| 2.2 | `src/format/format.ts` buildQuestionKeyboard（409-491） | custom 行恒显示 + 总结阶段加 ⬅️ Prev（§14.8.4/§14.8.5） |
+| 2.2 | `src/monitor.ts` handleQuestionCallback custom 分支（2888-2919） | 移除「该题不支持自定义输入」防御（§14.8.4） |
+| 2.2 | `src/monitor.ts` handleQuestionTextInput（2224-2358，2316-2322 / 2349-2355 两处 logWarn 分支） | q_msg_id 缺失 → 发新消息兜底 + q_msg_id 回写（§14.8.6） |
+| 2.2 | `tests/sessions-poller.test.mjs` API-203-4（2437-2458） | 最小改判为「custom 恒可用」语义 |
+| 2.2 | `tests/sessions-poller.test.mjs`（文件尾 2682 后） | API-207 区块 |
+
+- **交集为零**：2.1 不得碰 format.ts / handleQuestionCallback / handleQuestionTextInput /
+  scanSessionQueue / handleTelegramUpdate；2.2 不得碰 applyQuestionReply/applyQuestionReject /
+  sendMessageWithKeyboard（仅**调用**它，不改其实现体）/ fakeClient / API-205 区块 /
+  scanSessionQueue。2.2 对 sendMessageWithKeyboard 是「使用方」，2.1 是「实现方」——职责边界清晰，
+  行为契约 §14.8.3（返回 `Promise<number | undefined>`）由 2.1 保证、2.2 消费。
+
 - **交集为零**：1.2 不得碰 handleCallback/handleTelegramUpdate/scanReplyQueue/applySessionReply/fakeClient/registry；1.3 不得碰 scanSessionQueue/sendMessageWithKeyboard/import 块/format.ts/registry/scanReplyQueue；1.4 不得碰 scanSessionQueue/handleCallback/handleTelegramUpdate/format.ts/registry/import 块。
 - `src/registry/index.ts` 全文件归 1.1；`src/format/format.ts` 全文件归 1.2；`src/constants.ts`、`src/types.ts` **零改动**（本轮无类型/常量扩展需求）。
 - makeMonitor（96-120）的 sendMessageWithKeyboard stub 由 1.2 改为「返回 message_id」形态——1.3/1.4 只读该 helper 的既有参数（sendStub 签名不动），不编辑该函数。
@@ -1125,3 +1183,164 @@ export function buildQuestionKeyboard(
 - **不做多实例向导并发治理**：同记录并发点击由 mutate 幂等（同值原引用）+ 消费端 resolved 收敛，不引入认领机制（§13.6 同款）。
 - **不改 constants.ts**（OTG_Q_CB_PREFIX 放 format.ts，§13.3 决策 #9 同款）。
 - **不改 mutate/锁/缓存/serialized/PollerLock/SharedFileStore**（projects-registry.md §3/§4 保持零改动）。
+
+### 14.8 Round 2 修订：消费端 API 通道修复 + 交互修复（实机反馈，冻结 2026-09-02）
+
+> 计划: docs/todos/question-tg-wizard.md Round 2。批次 A = [2.1（消费端通道）, 2.2（交互）] 并发。
+> 背景: 用户实机测试反馈三问题——① ✏️ Custom 永不出现（真实 payload 从不带 `custom: true`）；
+> ② 汇总页无 ⬅️ Prev；③ 提交后 TUI 不动（**运行时扁平客户端无任何 question 方法**，
+> Phase 1.4 推测方法必然 not-a-function）。另有隐藏缺陷：sendRichMessage 响应形态导致
+> q_msg_id 缺失 → 自定义输入路径无法编辑原消息。
+> 本小节 supersede/修订 §14.2/§14.3/§14.4 相应条款，supersede 总表见 §11。
+
+#### 14.8.1 question reply/reject 调用通道（supersede §14.4.3 兜底形态，Phase 2.1 冻结）
+
+**实证事实（doc-prep + dev-lead 核验）**：
+
+- **运行时扁平客户端无任何 question 方法**：最新 npm `@opencode-ai/sdk` + 本机 SDK 1.17.13 均实证——
+  root 扁平客户端**唯一** question 相关方法为零（grep 实证），permission 扁平方法
+  `postSessionIdPermissionsPermissionId` 是仅有的扁平先例。→ Phase 1.4 冻结的推测方法
+  `postApiSessionSessionIDQuestionRequestIDReply / ...Reject`（§14.4.3）在运行时**必然
+  not-a-function**，§14.4.3 兜底形态**作废**，由本小节取代。
+- **HTTP body 形状（实证）**：v2 gen `buildClientParams` 把 class 方法签名参数 `questionV2Reply`
+  展开为 HTTP body **顶层** `{ answers: Array<Array<string>> }`——§14.4.3 冻结的「嵌套
+  `{ questionV2Reply: { answers } }`」表述作废（`questionV2Reply` 仅是 v2 class 方法签名参数名，
+  并非 HTTP body 字段）。即使扁平方法存在，按嵌套 body 调用也会错。
+- v2 question 路由只有两条：会话级 `POST /api/session/{sessionID}/question/{requestID}/reply`
+  与全局 `POST /question/{requestID}/reply`；reject 同构（`.../reject`，无 body）。
+
+**分层调用策略（冻结，每次按序尝试，任一成功即用；实例级缓存已成功策略）**：
+
+```ts
+private questionApplyChannel?: 1 | 2 | 3 | undefined; // 实例级缓存：某通道首次成功即记录
+```
+
+- **① 扁平方法（typeof 检查）**：`typeof (this.client as any).postApiSessionSessionIDQuestionRequestIDReply === "function"` 等——
+  未来 SDK 若有扁平方法则直用（方法名以实际存在为准，两条路由各一）；不存在 → 下一通道。
+- **② v2 会话级路由（主通道，与 permission session-scoped 先例一致）**：
+  ```ts
+  await (this.client as any)._client.post({
+    url: "/api/session/{sessionID}/question/{requestID}/reply", // reject: ".../reject"
+    path: { sessionID: record.session_id, requestID: record.request_id },
+    body: { answers: record.q_answers },                        // reject: 无 body 字段
+    headers: { "Content-Type": "application/json" },
+    throwOnError: true,
+  });
+  ```
+  已核验 v2 gen 内部即此形态（`client.post({ url, path, body, ... })`），走同一 transport，
+  自动继承 baseUrl/auth（含代理与根目录配置）。
+- **③ v2 全局路由（降级候选）**：
+  ```ts
+  await (this.client as any)._client.post({
+    url: "/question/{requestID}/reply",                         // reject: ".../reject"
+    path: { requestID: record.request_id },
+    query: { directory: this.root },
+    body: { answers: record.q_answers },                        // reject: 无 body 字段
+    headers: { "Content-Type": "application/json" },
+    throwOnError: true,
+  });
+  ```
+- **通道降级与 404 终态交互（冻结）**：某通道调用**成功** → 即用其结果并缓存该通道序号；
+  某通道抛错且判定「不存在」（§14.8.2）→ **立即终态**，不继续尝试后续通道；某通道抛错
+  非「不存在」→ 尝试下一通道；全部通道失败且非「不存在」→ logWarn + rethrow（下轮重试，
+  §14.8.2）。
+- answer 透传语义不变（§14.4.2）：`answers = record.q_answers` 原样、`sessionID/requestID`
+  取自记录；**成功路径** `mutate(markSessionResolved)`（undefined → logWarn 下轮重试，
+  既有形态不变）。
+
+#### 14.8.2 404 终态（修订 §14.4.2 失败重试，Phase 2.1 冻结）
+
+- **判定「不存在」**：applyQuestionReply/Reject 捕获错误后判定错误可识别为对象不存在——
+  `errorCategory(error, ctx)` 字符串含 `404`、`QuestionNotFound`、`SessionNotFound`，
+  或 `error` 的 `status`/`statusCode` 字段 === 404（SDK APIError 形态两者取一即可）。
+- **终态行为（冻结）**：`mutate(markSessionResolved)` + `log("info", "question no longer exists; marking resolved", { requestId, sessionId })` +
+  **不 rethrow**——本轮视为已处理，下轮 ticker 读到 resolved=true 自然跳过
+  （与双路径先到先得 §14.4.2 竞态收敛一致；事件路径或其它实例先置位时同理跳过）。
+- **非 404 错误**：维持既有行为（logWarn token 脱敏 + rethrow，scanReplyQueue 捕获不中断整轮，
+  下轮重试）。
+
+#### 14.8.3 sendRichMessage message_id 防御解析（修订 §14.2.2 sendMessageWithKeyboard 扩展，Phase 2.1 冻结）
+
+- 实机观察：非官方通道 `sendRichMessage` 响应**无 `result.message_id`**（键名形态与官方
+  sendMessage 不同），导致所有记录 q_msg_id 缺失 → 自定义输入路径无法编辑原消息（回调路径
+  靠 `callback.message.message_id` 兜底才正常）。
+- **防御解析（冻结，替换 §14.2.2 的 `return response?.result?.message_id`）**：
+  ```ts
+  const messageID =
+    response?.result?.message_id ??
+    response?.result?.message?.message_id ??
+    (response as any)?.result?.messageId ??
+    undefined;
+  return messageID;
+  ```
+- **首次诊断（冻结）**：实例级 flag（如 `sendRichMessageKeysLogged`），首次发送成功时
+  `dline("sendMessageWithKeyboard response keys: " + Object.keys(response?.result ?? {}).join(","))`
+  ——仅键名、不含任何消息内容，天然脱敏；供后续诊断响应形态演进。
+- 语义不变：`Promise<number | undefined>`；无则 undefined（§14.2.2 步骤 4 的 logWarn 与
+  回调兜底不变）；既有调用点忽略返回值兼容。
+
+#### 14.8.4 Custom 恒显示（supersede §14.2.1 custom 行条件 + §14.3.1 custom 防御 + §14.3.3 文案行，Phase 2.2 冻结）
+
+- 实证：真实 question payload **从不带 `custom: true`**（projects.json 全部真实记录零条
+  有此字段），而 ✏️ Custom 仅在 `custom === true` 时渲染 → 永不出现。用户确认：✏️ Custom
+  **每题恒显示**（任何题都可回复文本作答——服务端接受纯文本答案）。
+- **§14.2.1 键盘行序第 2 条修订（supersede）**：custom 行**无条件渲染**
+  （有 `current` 即渲染 `[{ text: "✏️ Custom", callback_data: ...:custom }]`）——
+  移除 `questions[stage].custom === true` 条件；单问题单选/多选形态、行序其余不变。
+- **§14.3.1 custom 动作修订（supersede）**：移除「`questions[stage].custom !== true` →
+  answer「该题不支持自定义输入」return」防御——custom 动作恒可用；
+  `current` 判空保留为失效兜底（state 重建已钳制，理论不可达）。
+- **§14.3.3 文案表修订**：删除「custom 但该题不支持 → `该题不支持自定义输入`」行（恒显示后
+  该路径不存在）。
+- **测试影响**：API-203-4（现 2437-2458 区）断言「该题不支持自定义输入」——**由 2.2 最小改判**
+  为「custom 恒可用 → 进入输入模式（q_input 落盘 + 提示 + 编辑键盘保留）」并注明。
+
+#### 14.8.5 汇总阶段 Prev（修订 §14.2.1 导航行，Phase 2.2 冻结）
+
+- 实机反馈：总结阶段键盘只有 [✅ Submit] [❌ Cancel]，想改答案必须先取消再从头点。
+- **§14.2.1 导航/提交行第 3 条修订（supersede）**：多问题请求总结阶段
+  （`stage === questions.length`）导航行 = `[⬅️ Prev](:prev) [✅ Submit](:submit) [❌ Cancel](:cancel)`。
+- 回调逻辑**零改动**：`prev` 的 clamp（§14.3.1 `clamp(stage - 1, 0, questions.length)`）
+  已支持从 stage=length 回最后一题（length-1）；答案保留语义不变。
+
+#### 14.8.6 输入兜底：无 q_msg_id 发新向导消息（修订 §14.3.2 第 5 步，Phase 2.2 冻结）
+
+- 背景：q_msg_id 缺失（§14.8.3 未修复前的历史记录、或 sendRichMessage 响应形态异常）时，
+  自定义输入纯文本路径**无法编辑原消息**——既有行为 logWarn 跳过导致画面停留在旧阶段，
+  用户看不到推进结果。用户确认：**发新向导消息继续**，旧消息不动（按钮仍可用、状态在盘上）。
+- **§14.3.2 第 5 步修订（supersede）**：`record.q_msg_id !== undefined` 的 else
+  （logWarn 跳过编辑）分支改为**发送新消息兜底**：
+  - **多问题推进**：`text = buildQuestionStageText(...newStage...)` +
+    `keyboard = buildQuestionKeyboard(entryID, questions, newStage, draft)` →
+    `const newMsgID = await this.sendMessageWithKeyboard(text, keyboard)`（含键盘）；
+    `newMsgID !== undefined` → `registry.mutate((reg) => setQuestionMessageID(reg,
+    requestID, newMsgID))` 回写（后续编辑/回调指向新消息）；undefined → logWarn（答案已
+    落盘，不影响正确性）；`entryID = this.questionEntryID(requestID)`；undefined（超限
+    兜底）→ 退化为 `this.sendMessage(text)` 无键盘（§14.2.2 步骤 3 同款）。
+  - **单问题直接提交**：`text = buildQuestionStageText(...index...) + "\n✅ Submitted"`
+    （终态文本，**无键盘**）→ `sendMessageWithKeyboard(text)` 或 `sendMessage(text)`
+    （entryID 无关，无键盘形态直接文本发送；统一走 sendMessageWithKeyboard 亦可，仅传文本）；
+    同样回写新消息 id。
+  - 失败（抛错）→ logWarn 不中断，答案已落盘下轮无需重试（消费端照常 apply）。
+- 编辑失败路径保持（§14.3.1 编辑消息 logWarn 不中断）；q_msg_id 存在时既有编辑路径**零改动**。
+
+#### 14.8.7 测试编号与锚点契约（supersede §14.5 新增编号，Phase 2.1/2.2 冻结）
+
+| 编号 | 定义 | 文件 | 维护 phase |
+|---|---|---|---|
+| API-206 | 消费端通道：分层策略命中通道②（`_client.post` 断言 url/path/body **顶层 `{answers}` 且不含 questionV2Reply 嵌套**）；① 扁平方法存在时直用（用例内临时挂方法）；404 → resolved 终态不再重试；非 404 失败仍重试（通道② 失败降级通道③ 后仍失败）；reject 同构（无 body） | `tests/sessions-poller.test.mjs`（API-205 区块 657 行 `);` 后、`// API-006-3` 之前） | 2.1 |
+| API-207 | 交互：任意题键盘恒含 ✏️ Custom（payload 无 custom 字段也含）；汇总页导航含 ⬅️ Prev 且点击回最后一题（q_stage=length→prev→length-1）；自定义输入后无 q_msg_id → 新消息收发断言（stub 捕获新文本+键盘 + 新消息 id 回写）；单问题直接提交新消息含 ✅ Submitted | 同上（文件尾 2682 后） | 2.2 |
+
+- **fakeClient stub 调整（2.1 独占，冻结）**：运行时实证无扁平 question 方法 → 删除
+  `postApiSessionSessionIDQuestionRequestIDReply/...Reject` 两个 stub（现 71-87 区）与
+  `questionReplyCalls/questionRejectCalls/questionReplyError/questionRejectError` 四个成员
+  （现 90-93 区）；新增 `fakeClient._client = { post: async (options) => {...} }`——
+  `postCalls` 数组记录 `{ url, path, query, body, headers, throwOnError }`、`postError`
+  控制失败（可置 Error/含 status 对象模拟 404）。typeof 检查对假 client 自然失败 → 走通道②。
+- **API-205 三个用例断言最小改判（2.1 独占，冻结）**：透传断言改 `_client.post` 形态
+  （postCalls 的 url 含 `/api/session/.../reply`、path.sessionID/requestID、body.answers 顶层）；
+  失败重引用例改 `postError`；已 resolved 跳过断言改 `postCalls.length === 0`。改判于任务报告注明。
+- **API-203-4 最小改判（2.2 独占，冻结）**：见 §14.8.4 测试影响。
+- 既有断言不受影响核验：API-201-1 的 custom 行断言为正向（Q1 构造 custom:true），恒显示后仍成立；
+  API-202-1 总结键盘断言用 `some()` 非硬编码行数，加 Prev 后仍成立；API-201-2/3/4 无 custom/总结断言。
+- 用例纪律（§14.5 沿用）：终态 = resolved=true 或 send=true；不得遗留 q_answers/q_reject 未闭环记录。
