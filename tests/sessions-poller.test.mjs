@@ -1395,9 +1395,16 @@ async function main() {
         );
       }
       const editCall = editCalls[0];
-      if (editCall.body.text !== `ORIGINAL\n${expectedResultLine}`) {
+      const editText = editCall.body.rich_message?.html;
+      if (
+        !editText ||
+        !editText.endsWith(`
+${expectedResultLine}`) ||
+        !editText.includes("<table compact>") ||
+        editText.includes("ORIGINAL")
+      ) {
         throw new Error(
-          `unexpected edit text for ${value}: ${JSON.stringify(editCall.body.text)}`,
+          `unexpected edit text for ${value}: ${JSON.stringify(editCall.body)}`,
         );
       }
       if (editCall.body.reply_markup !== undefined) {
@@ -2076,7 +2083,15 @@ async function main() {
   }
   function lastEdit(fetches) {
     const edits = fetches.filter((call) => call.url.includes("editMessageText"));
-    return edits[edits.length - 1];
+    const edit = edits[edits.length - 1];
+    if (!edit) return undefined;
+    return {
+      ...edit,
+      body: {
+        ...edit.body,
+        text: edit.body.rich_message?.html ?? edit.body.text,
+      },
+    };
   }
   function editCount(fetches) {
     return fetches.filter((call) => call.url.includes("editMessageText")).length;
@@ -2358,7 +2373,7 @@ async function main() {
           throw new Error(`submit confirm expected: ${JSON.stringify(fetches)}`);
         }
         const edit = lastEdit(fetches);
-        if (!edit || edit.body.text !== "ORIGINAL\n✅ Submitted") {
+        if (!edit || !edit.body.text.endsWith("\n✅ Submitted") || edit.body.text.includes("ORIGINAL")) {
           throw new Error(`submit edit must append ✅ Submitted: ${JSON.stringify(fetches)}`);
         }
         if (edit.body.reply_markup !== undefined) {
@@ -2400,7 +2415,7 @@ async function main() {
           throw new Error(`direct submit confirm expected: ${JSON.stringify(fetches)}`);
         }
         const edit = lastEdit(fetches);
-        if (!edit || edit.body.text !== "ORIGINAL\n✅ Submitted" || edit.body.reply_markup !== undefined) {
+        if (!edit || !edit.body.text.endsWith("\n✅ Submitted") || edit.body.text.includes("ORIGINAL") || edit.body.reply_markup !== undefined) {
           throw new Error(`direct submit edit must be ✅ without keyboard: ${JSON.stringify(fetches)}`);
         }
       } finally {
@@ -2528,7 +2543,7 @@ async function main() {
           throw new Error(`resumed submit failed: ${JSON.stringify(persisted2)}`);
         }
         const edit = lastEdit(fetches2);
-        if (!edit || edit.body.text !== "ORIGINAL\n✅ Submitted") {
+        if (!edit || !edit.body.text.endsWith("\n✅ Submitted") || edit.body.text.includes("ORIGINAL")) {
           throw new Error(`resumed submit edit expected: ${JSON.stringify(fetches2)}`);
         }
       } finally {
@@ -2833,7 +2848,7 @@ async function main() {
           throw new Error(`cancel answer expected: ${JSON.stringify(fetches)}`);
         }
         const edit = lastEdit(fetches);
-        if (!edit || edit.body.text !== "ORIGINAL\n❌ Cancelled") {
+        if (!edit || !edit.body.text.endsWith("\n❌ Cancelled") || edit.body.text.includes("ORIGINAL")) {
           throw new Error(`cancel edit must append ❌ Cancelled: ${JSON.stringify(fetches)}`);
         }
         if (edit.body.reply_markup !== undefined) {
@@ -3001,7 +3016,7 @@ async function main() {
           throw new Error(`submit confirm expected: ${JSON.stringify(fetches)}`);
         }
         const edit = lastEdit(fetches);
-        if (!edit || edit.body.text !== "ORIGINAL\n✅ Submitted") {
+        if (!edit || !edit.body.text.endsWith("\n✅ Submitted") || edit.body.text.includes("ORIGINAL")) {
           throw new Error(`submit edit must append ✅ Submitted: ${JSON.stringify(fetches)}`);
         }
         if (edit.body.reply_markup !== undefined) {
@@ -3309,6 +3324,223 @@ async function main() {
         }
       } finally {
         await registry.mutate((reg) => markSessionResolved(reg, "req-207d"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // ---- Phase 1.1 (API-301~304): rich message edit unified ----
+  // 契约 docs/modules/sessions-relay.md §15: 探测赢家 editMessageText + rich_message.html
+  //
+  // API-301: question 向导编辑统一形态
+  //   - next/prev/option/custom 刷新编辑 = editMessageText + rich_message.html 且键盘保留
+  //   - submit/cancel/单问题直接提交终态编辑 = 同形态 + 键盘移除 + 结果行
+  //   - 终态文本 = 服务器侧重建（构造 callback.message.text = "PLAIN-LEAK"，断言编辑 payload 不含该原文、含富文本表格结构）
+  await runCase(
+    "API-301 question wizard edits use winner rich wire format and server-side text reconstruction",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-301a", [
+            { question: "第一题", options: [{ label: "选项A" }, { label: "选项B" }] },
+            { question: "第二题", options: [{ label: "选项C" }, { label: "选项D" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        // 1. option 刷新：携带 rich_message.html，保留 keyboard
+        const fetches1 = await runQCallback(monitor, "otg:q:req-301a:o0", "PLAIN-LEAK");
+        const rawEdit1 = fetches1.filter((c) => c.url.includes("editMessageText"))[0];
+        if (!rawEdit1) throw new Error("expected edit call on option click");
+        if (!rawEdit1.body.rich_message?.html) {
+          throw new Error(`option edit must have rich_message.html: ${JSON.stringify(rawEdit1.body)}`);
+        }
+        if (rawEdit1.body.text !== undefined) {
+          throw new Error(`option edit must not have bare text: ${JSON.stringify(rawEdit1.body)}`);
+        }
+        const edit1 = lastEdit(fetches1);
+        if (!edit1.body.rich_message.html.includes("<table compact>")) {
+          throw new Error(`option edit rich_message must contain table: ${edit1.body.rich_message.html}`);
+        }
+        if (!edit1.body.reply_markup || !edit1.body.reply_markup.inline_keyboard) {
+          throw new Error(`option edit must retain keyboard: ${JSON.stringify(edit1.body)}`);
+        }
+
+        // 2. submit 终态：构造 callback.message.text = "PLAIN-LEAK"，断言不含该原文，含表格，结果行结尾，无 keyboard
+        await runQCallback(monitor, "otg:q:req-301a:o0", "PLAIN-LEAK");
+        const fetchesSubmit = await runQCallback(monitor, "otg:q:req-301a:submit", "PLAIN-LEAK");
+        const editSubmit = lastEdit(fetchesSubmit);
+        if (!editSubmit) throw new Error("expected edit call on submit");
+        if (!editSubmit.body.rich_message?.html) {
+          throw new Error(`submit edit must have rich_message.html: ${JSON.stringify(editSubmit.body)}`);
+        }
+        if (editSubmit.body.rich_message.html.includes("PLAIN-LEAK")) {
+          throw new Error(`submit edit must not leak callback plain text: ${editSubmit.body.rich_message.html}`);
+        }
+        if (!editSubmit.body.rich_message.html.includes("<table compact>")) {
+          throw new Error(`submit edit must contain table: ${editSubmit.body.rich_message.html}`);
+        }
+        if (!editSubmit.body.rich_message.html.endsWith(String.fromCharCode(10) + "✅ Submitted")) {
+          throw new Error(`submit edit must end with Submitted: ${editSubmit.body.rich_message.html}`);
+        }
+        if (editSubmit.body.reply_markup !== undefined) {
+          throw new Error(`submit edit must drop keyboard: ${JSON.stringify(editSubmit.body)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-301a"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-302: permission 结果编辑
+  //   - 编辑 = editMessageText + rich_message.html
+  //   - 文本 = 记录重渲染富文本 + 结果行（不含 callback.message.text）
+  //   - reply_markup 省略 → 键盘移除
+  //   - 失败 logWarn 不抛错
+  await runCase(
+    "API-302 permission result edit uses rich_message and reconstructed text without plain callback text",
+    async () => {
+      const requestId = "req-302a";
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: requestId,
+            session_id: "ses-302",
+            session_name: "Session 302",
+            type: "permission",
+            message: JSON.stringify({
+              permission: "bash",
+              pattern: "npm test",
+            }),
+          }),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const fetches = [];
+      await stubFetch(fetches);
+      try {
+        await monitor.handleCallback({
+          id: "cb-302",
+          from: { id: 123 },
+          message: { message_id: 10, chat: { id: 123 }, text: "PLAIN-LEAK" },
+          data: `otg:perm:${requestId}:once`,
+        });
+        const editCalls = fetches.filter((call) => call.url.includes("editMessageText"));
+        if (editCalls.length !== 1) {
+          throw new Error(`expected 1 edit call, got ${editCalls.length}`);
+        }
+        const edit = editCalls[0];
+        if (!edit.body.rich_message?.html) {
+          throw new Error(`permission edit must have rich_message.html: ${JSON.stringify(edit.body)}`);
+        }
+        if (edit.body.rich_message.html.includes("PLAIN-LEAK")) {
+          throw new Error(`permission edit must not contain callback text: ${edit.body.rich_message.html}`);
+        }
+        if (!edit.body.rich_message.html.includes("<table compact>")) {
+          throw new Error(`permission edit must contain rich table: ${edit.body.rich_message.html}`);
+        }
+        if (!edit.body.rich_message.html.endsWith(String.fromCharCode(10) + "✅ Allowed once")) {
+          throw new Error(`permission edit must end with result line: ${edit.body.rich_message.html}`);
+        }
+        if (edit.body.reply_markup !== undefined) {
+          throw new Error(`permission edit must omit reply_markup: ${JSON.stringify(edit.body)}`);
+        }
+      } finally {
+        restoreFetch();
+        await registry.mutate((reg) => markSessionResolved(reg, requestId));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-303: menu 刷新（otg:refresh）
+  //   - 编辑 = editMessageText + rich_message.html
+  //   - text 载体含 <p>📋 项目监控列表</p> 的 HTML（富文本载体承载标签，非纯文本 text 字段泄漏字面标签）
+  //   - keyboard = buildMenuKeyboard 保留
+  await runCase(
+    "API-303 menu refresh uses rich_message with HTML paragraph and retains menu keyboard",
+    async () => {
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const fetches = [];
+      await stubFetch(fetches);
+      try {
+        await monitor.handleCallback({
+          id: "cb-303",
+          from: { id: 123 },
+          message: { message_id: 20, chat: { id: 123 }, text: "Old menu" },
+          data: "otg:refresh",
+        });
+        const editCalls = fetches.filter((call) => call.url.includes("editMessageText"));
+        if (editCalls.length !== 1) {
+          throw new Error(`expected 1 edit call, got ${editCalls.length}`);
+        }
+        const edit = editCalls[0];
+        if (!edit.body.rich_message?.html) {
+          throw new Error(`menu edit must have rich_message.html: ${JSON.stringify(edit.body)}`);
+        }
+        if (edit.body.text !== undefined) {
+          throw new Error(`menu edit must not have bare text: ${JSON.stringify(edit.body)}`);
+        }
+        if (!edit.body.rich_message.html.includes("<p>📋 项目监控列表</p>")) {
+          throw new Error(`menu edit must contain rich paragraph: ${edit.body.rich_message.html}`);
+        }
+        if (!edit.body.reply_markup?.inline_keyboard) {
+          throw new Error(`menu edit must retain keyboard: ${JSON.stringify(edit.body)}`);
+        }
+      } finally {
+        restoreFetch();
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-304: 首次发送形态回归：sendMessage / sendMessageWithKeyboard
+  // 仍 sendRichMessage + rich_message.html + limitMessage（body 零变化）
+  await runCase(
+    "API-304 initial send wire format regression: sendRichMessage + rich_message.html unchanged",
+    async () => {
+      const requestId = "req-304a";
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: requestId,
+            session_id: "ses-304",
+            session_name: "Session 304",
+            type: "permission",
+            message: JSON.stringify({
+              permission: "read",
+              path: "/tmp/foo",
+            }),
+          }),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const fetches = [];
+      await stubFetch(fetches);
+      try {
+        await monitor.scanSessionQueue();
+        const sendCalls = fetches.filter((call) => call.url.includes("sendRichMessage"));
+        if (sendCalls.length !== 1) {
+          throw new Error(`expected 1 sendRichMessage call, got ${sendCalls.length}`);
+        }
+        const send = sendCalls[0];
+        if (!send.body.rich_message?.html) {
+          throw new Error(`sendRichMessage must have rich_message.html: ${JSON.stringify(send.body)}`);
+        }
+        if (!send.body.reply_markup?.inline_keyboard) {
+          throw new Error(`permission send must retain 3-button keyboard: ${JSON.stringify(send.body)}`);
+        }
+      } finally {
+        restoreFetch();
+        await registry.mutate((reg) => markSessionResolved(reg, requestId));
         await monitor.dispose();
       }
     },
