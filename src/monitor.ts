@@ -14,6 +14,7 @@ import type { PluginInput } from "@opencode-ai/plugin";
 import type {
   AssistantMessage,
   Part,
+  QuestionV2Info,
   Session,
   SessionStatus,
   Todo,
@@ -47,7 +48,10 @@ import {
 import { dline } from "./diagnostics";
 import {
   buildMenuKeyboard,
+  buildQuestionKeyboard,
+  buildQuestionStageText,
   buildSessionPermissionKeyboard,
+  OTG_Q_CB_PREFIX,
   PERM_CB_PREFIX,
   childSessions,
   displayState,
@@ -80,6 +84,7 @@ import {
   string,
   summarizeError,
   titleLine,
+  type FormatContext,
 } from "./format";
 import { PollerLock } from "./infra/poller-lock";
 import {
@@ -91,6 +96,7 @@ import {
   markSessionSent,
   registerProject,
   setProjectEnabled,
+  setQuestionMessageID,
   setSessionReply,
   type ProjectRegistry,
   type ProjectRegistryStore,
@@ -1685,9 +1691,18 @@ export class TelegramSessionMonitor {
       if (!sessions) continue;
       const projectLabel = basename(entry.path) || this.projectLabel;
       for (const record of sessions) {
-        // 契约 §13.3（决策 #6 防御）：reply != null 的记录永不发送——已写
-        // reply 走消费端 apply 路径；对 question 记录恒真（无 reply 键）。
-        if (record.send || record.resolved || record.reply != null) continue;
+        // 契约 §13.3 + §14.2.2（决策 #6 防御）：reply != null 的记录永不发送
+        // ——已写 reply 走消费端 apply 路径；question 已提交（q_answers）/已放弃
+        // （q_reject）的未发送记录永不发送初始消息（走消费端 apply，§14.4）。
+        // 对 permission 记录 q_* 恒空（无键 → == null / !== true），语义零变化。
+        if (
+          record.send ||
+          record.resolved ||
+          record.reply != null ||
+          record.q_answers != null ||
+          record.q_reject === true
+        )
+          continue;
         try {
           const text = this.formatSessionRecordMessage(record, projectLabel);
           if (record.type === "permission") {
@@ -1704,8 +1719,11 @@ export class TelegramSessionMonitor {
               );
             }
           } else {
-            // question 记录维持无键盘发送（决策 #2）。
-            await this.sendMessage(text);
+            // question 记录改走向导发送（契约 §14.2.2）：解析 message JSON 的
+            // questions → Q1 阶段结构化渲染 + 选项键盘；解析失败 / 非对象 /
+            // questions 非数组 / 空数组 / 首元素缺 string 型 question → 退化
+            // 原文节选无键盘发送（防御，question 记录永远可达、不中断）。
+            await this.sendQuestionRecord(record, projectLabel, text);
           }
         } catch (error) {
           // 发送失败：不置位、记录日志（token 脱敏），下轮 ticker 自然重试。
@@ -1737,6 +1755,97 @@ export class TelegramSessionMonitor {
       }
     }
     return handled;
+  }
+
+  /**
+   * question 记录向导发送（契约 sessions-relay.md §14.2.2，Round 4）：解析
+   * record.message JSON 的 questions → Q1 阶段（stage 0）结构化渲染 +
+   * 选项键盘（buildQuestionStageText/buildQuestionKeyboard）→
+   * sendMessageWithKeyboard；返回 message_id 非 undefined → 回写 q_msg_id
+   * （mutate setQuestionMessageID，undefined 静默容忍下轮不补——编辑退化为
+   * callback.message.message_id 兜底，§14.3.1）。宽松防御：解析抛错 / parsed
+   * 非对象 / questions 非数组 / 空数组 / 首元素缺 string 型 question，或
+   * questionEntryID 超限返回 undefined → 退化为原文节选无键盘发送（fallbackText，
+   * 同 formatSessionRecordMessage 的 question 路径），question 记录永远可达、
+   * 不中断。抛错向上传播——scanSessionQueue 既有 try/catch 处理（不置位下轮重试）。
+   */
+  private async sendQuestionRecord(
+    record: SessionRecord,
+    projectLabel: string,
+    fallbackText: string,
+  ): Promise<void> {
+    const ctx: FormatContext = {
+      root: this.root,
+      botToken: this.config.botToken,
+      projectLabel,
+      sessions: this.sessions,
+      sessionInfo: this.sessionInfo,
+    };
+    let questions: Array<QuestionV2Info> | undefined;
+    try {
+      const parsed = JSON.parse(record.message) as unknown;
+      const parsedQuestions =
+        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>).questions
+          : undefined;
+      if (
+        Array.isArray(parsedQuestions) &&
+        parsedQuestions.length > 0 &&
+        typeof (parsedQuestions[0] as { question?: unknown })?.question ===
+          "string"
+      ) {
+        questions = parsedQuestions as Array<QuestionV2Info>;
+      }
+    } catch {
+      questions = undefined;
+    }
+    if (!questions) {
+      await this.sendMessage(fallbackText);
+      return;
+    }
+    const draft0 = questions.map(() => [] as string[]);
+    const sessionLabel = safeText(
+      record.session_name || shortID(record.session_id),
+      100,
+      ctx,
+    );
+    const text = buildQuestionStageText(
+      projectLabel,
+      "question",
+      sessionLabel,
+      questions,
+      0,
+      draft0,
+      false,
+      ctx,
+    );
+    const entryID = this.questionEntryID(record.request_id);
+    if (entryID === undefined) {
+      // 多字节超限兜底（契约 §14.2.3）：退化为无键盘普通消息。
+      await this.sendMessage(fallbackText);
+      return;
+    }
+    const keyboard = buildQuestionKeyboard(entryID, questions, 0, draft0);
+    const messageID = await this.sendMessageWithKeyboard(text, keyboard);
+    if (messageID === undefined) {
+      await this.log(
+        "warn",
+        "Question wizard send returned no message_id; edits will fall back to callback message id",
+        { requestId: record.request_id },
+      );
+      return;
+    }
+    const next = await this.registry.mutate((reg) =>
+      setQuestionMessageID(reg, record.request_id, messageID),
+    );
+    if (next === undefined) {
+      // 抢锁超时或记录已被删除：q_msg_id 未回写属安全重试态，静默容忍。
+      await this.log(
+        "warn",
+        "setQuestionMessageID skipped (no match or lock timeout)",
+        { requestId: record.request_id },
+      );
+    }
   }
 
   /**
@@ -1779,6 +1888,48 @@ export class TelegramSessionMonitor {
       );
     }
     this.permShortMap.set(shortID, requestID);
+    return shortID;
+  }
+
+  /**
+   * question 向导的短 ID → 完整 requestID 内存映射（契约 sessions-relay.md
+   * §14.2.3）：与 permShortMap（§13.4）独立，不得混用。只存 poller 实例内存、
+   * 不持久化；进程重启后旧按钮点击 → 还原为 raw 找不到记录 → §14.3.1 失效
+   * 分支，可接受降级。字段放 1.2 区间（契约 §14.6），不占用 140-146 字段区。
+   */
+  private readonly qShortMap = new Map<string, string>();
+
+  /**
+   * question 向导进入键盘的 entryID 换算（契约 sessions-relay.md §14.2.3）：
+   * callback_data `otg:q:<entryID>:<o<idx>|prev|next|cancel|custom|submit>`
+   * 上限 64 字节（UTF-8），`:submit` 为最长后缀（7 字节）。全量 ≤ 64 → 原样
+   * 返回；超限 → 截 44 字符 + qShortMap 登记（44 + 6 + 7 = 57 ≤ 64，ASCII
+   * 假设）；多字节字符致 44 字符仍超限 → logError + undefined（无键盘退化）。
+   * 禁止静默截断 callback_data。与 permissionEntryID 同构。
+   */
+  private questionEntryID(requestID: string): string | undefined {
+    const ctx = { root: this.root, botToken: this.config.botToken };
+    const full = OTG_Q_CB_PREFIX + requestID + ":submit";
+    if (Buffer.byteLength(full, "utf8") <= 64) return requestID;
+    const shortID = requestID.slice(0, 44);
+    const shortFull = OTG_Q_CB_PREFIX + shortID + ":submit";
+    if (Buffer.byteLength(shortFull, "utf8") > 64) {
+      void this.log(
+        "error",
+        "Question callback_data exceeds 64 bytes; sending without buttons",
+        { requestId: safeText(requestID, 100, ctx) },
+      );
+      return undefined;
+    }
+    const previous = this.qShortMap.get(shortID);
+    if (previous !== undefined && previous !== requestID) {
+      void this.log(
+        "warn",
+        "Question short ID collision; overwriting qShortMap",
+        { requestId: safeText(requestID, 100, ctx) },
+      );
+    }
+    this.qShortMap.set(shortID, requestID);
     return shortID;
   }
 
@@ -2328,13 +2479,18 @@ export class TelegramSessionMonitor {
   private async sendMessageWithKeyboard(
     text: string,
     replyMarkup: TelegramInlineKeyboard,
-  ) {
-    if (this.abortController.signal.aborted) return;
-    await telegramWithRetry("sendRichMessage", {
+  ): Promise<number | undefined> {
+    if (this.abortController.signal.aborted) return undefined;
+    const response = await telegramWithRetry<{
+      result?: { message_id?: number };
+    }>("sendRichMessage", {
       chat_id: this.config.chatId,
       rich_message: { html: limitMessage(text) },
       reply_markup: replyMarkup,
     }, { config: this.config, signal: this.abortController.signal });
+    // 契约 §14.2.2 最小扩展：返回响应 result.message_id（无则 undefined）。
+    // 既有调用点（permission 键盘发送）忽略返回值，兼容。
+    return response?.result?.message_id;
   }
 
   private async sleep(ms: number) {
