@@ -1,10 +1,12 @@
 # sessions-relay 模块契约（等待状态落盘 + poller 扫描中继）
 
 > 冻结: 2026-09-02（Round 1 / sessions-tg-relay；**Round 2 / tg-permission-buttons 扩展见 §13**；
-> Round 2.1 / 结构化渲染修订见 §13.11；**Round 3 / 单表渲染修订见 §13.12**）
+> Round 2.1 / 结构化渲染修订见 §13.11；**Round 3 / 单表渲染修订见 §13.12**；
+> Round 4 / question 向导见 §14；**Round 5 / 富文本编辑统一见 §15**）
 > 文件: `src/registry/index.ts`（记录类型与纯函数）、
 > `src/monitor.ts`（写入端 Phase 1.2 / 扫描端 Phase 1.3）、`src/constants.ts`（扫描间隔常量，仅 Phase 1.3）
-> 计划: docs/todos/sessions-tg-relay.md（Round 1）、docs/todos/tg-permission-buttons.md（Round 2）
+> 计划: docs/todos/sessions-tg-relay.md（Round 1）、docs/todos/tg-permission-buttons.md（Round 2）、
+> docs/todos/question-tg-wizard.md（Round 4）、docs/todos/telegram-rich-message-edit.md（Round 5）
 > 关联: docs/modules/projects-registry.md（`mutate()` 锁语义只消费不修改，§3/§4 零触碰）
 > 本文件是 sessions 落盘 → Telegram 中继的**唯一权威契约**；与 projects-registry.md §2.1
 > 「纯函数区零改动」冲突处，以本文件 §3/§4 为准（projects-registry.md §10 记录差异）。
@@ -337,6 +339,10 @@ export function markSessionSent(
 | 本文件 §14.2.1 custom 行条件 | custom 行仅当 `questions[stage].custom === true` 渲染 | **Round 2（修复轮）supersede**：✏️ Custom 恒显示（真实 payload 从不带 custom 标志）；§14.3.1 custom 防御同步移除、§14.3.3 文案行删除（§14.8.4） |
 | 本文件 §14.2.1 总结阶段导航行 | `[✅ Submit] [❌ Cancel]` | **Round 2（修复轮）supersede**：多问题请求总结阶段 = `[⬅️ Prev] [✅ Submit] [❌ Cancel]`；回调 clamp 已支持 prev 从 stage=length 回最后一题，零回调改动（§14.8.5） |
 | 本文件 §14.3.2 第 5 步（纯文本编辑） | q_msg_id 缺失 → logWarn 跳过编辑（答案已落盘） | **Round 2（修复轮）supersede**：q_msg_id 缺失 → 发一条新的当前阶段向导消息（多问题含键盘并回写新 q_msg_id；单问题 ✅ Submitted 终态无键盘），旧消息不动（§14.8.6） |
+| 本文件 §13.5 第 6 步（editPermissionResultMessage） | originalText = `callback.message.text`（网关纯文本视图）原样拼接结果行；wire 形态 = 官方 `editMessageText` | **Round 5（telegram-rich-message-edit）supersede**：originalText 改为服务器侧记录重渲染（`formatSessionRecordMessage`）+ 结果行（§15.4）；wire 形态统一走 `richEditMessage`（§15.3），内部 = probe gate 赢家富文本形态（§15.2）；结果行文案/键盘移除/失败容忍不变 |
+| 本文件 §14.3.1（editQuestionWizardMessage 终态编辑） | 终态文本 = `${message.text ?? ""} + 结果行`（callback.message.text 依赖）；wire 形态 = 官方 `editMessageText` | **Round 5 supersede**：终态文本 = 当前阶段服务器侧重渲染 + 结果行（§15.4，与纯文本输入路径同源）；wire 形态统一走 `richEditMessage`（§15.3）探针赢家形态；重渲染/键盘两态不变 |
+| 本文件 §13.5/§14.3.1 编辑 wire 形态 + editMenuMessage | 三条编辑路径各自 `telegramWithRetry("editMessageText", { chat_id, message_id, text, reply_markup? })` | **Round 5 supersede**：三条路径全部迁移到统一 `richEditMessage`（§15.3）；wire 形态 = probe gate 赢家（§15.2，候选 A 对称 `editRichMessage`+`rich_message.html` 优先）；menu 刷新 `<p>` 泄漏随富文本载体修复（§15.1/§15.3） |
+| 本文件 §8/§13.9/§14.5 测试编号 | API-001~207 / REG-101~301 / REDACT / LOCK / BUILD；real 探针 E2E-20x | **Round 5 新增** REAL-RICH-EDIT-001~005（探针，§15.2）与 API-301~304（编辑统一形态/终态文本源/菜单/menu/首发达标回归，§15.5） |
 
 ## 12. 变更记录
 
@@ -384,6 +390,19 @@ export function markSessionSent(
   ⬅️ Prev；输入兜底——q_msg_id 缺失改发新向导消息（多问题含键盘+回写新 id / 单问题
   ✅ Submitted 无键盘）；fakeClient 调整（删扁平 stub → `_client.post`）+ API-205 改判（2.1）+
   API-203-4 改判（2.2）；测试编号 API-206/207 与锚点、Round 2 编辑区间（零交集）。
+  supersede 记录见 §11。
+- 2026-09-03 冻结（Round 5 / telegram-rich-message-edit，见 §15）：**编辑刷新持续富文本渲染**
+  统一契约——首次发送 `sendRichMessage`+`rich_message.html` 零改动；三条编辑路径
+  （permission 结果 / question 向导 / menu 刷新）从官方 `editMessageText` 纯文本统一迁移到
+  probe gate 赢家富文本形态的 `richEditMessage` helper（§15.3）；探针契约
+  REAL-RICH-EDIT-001~005（对称候选 A `editRichMessage`+`rich_message.html` → B
+  `editMessageText`+`rich_message.html` → C `editMessageText`+`parse_mode:"HTML"`，同一
+  message_id 顺序编辑、键盘两态、全部候选失败**不得假装修复**须上报进入后续设计决策轮，§15.2）；
+  终态文本脱离 `callback.message.text` 改服务器侧重建（permission = `formatSessionRecordMessage`
+  重渲染 + 结果行；question = 当前阶段重渲染 + 结果行，§15.4，supersede §13.5/§14.3.1 文本来源）；
+  menu `<p>` 泄漏随富文本载体修复；helper 内 `limitMessage` 补全；错误语义
+  （logWarn + errorCategory 脱敏 + 不抛错）与键盘两态不变；测试编号 API-301~304 与既有
+  `editMessageText` 断言最小改判锚点（§15.5）；编辑区间单 phase 零交集（§15.6）。
   supersede 记录见 §11。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
@@ -1344,3 +1363,159 @@ private questionApplyChannel?: 1 | 2 | 3 | undefined; // 实例级缓存：某�
 - 既有断言不受影响核验：API-201-1 的 custom 行断言为正向（Q1 构造 custom:true），恒显示后仍成立；
   API-202-1 总结键盘断言用 `some()` 非硬编码行数，加 Prev 后仍成立；API-201-2/3/4 无 custom/总结断言。
 - 用例纪律（§14.5 沿用）：终态 = resolved=true 或 send=true；不得遗留 q_answers/q_reject 未闭环记录。
+
+## 15. Round 5 扩展：Telegram 富文本消息编辑统一（probe gate 驱动的富文本 edit 契约）（冻结 2026-09-03）
+
+> 计划: docs/todos/telegram-rich-message-edit.md（其 Round 1；本模块契约序列 Round 5）。
+> 本章在 §13.5（permission 结果编辑）、§14.3.1（question 向导编辑）之上追加统一富文本编辑契约；
+> **首次发送（§13.3 发送链 / sendMessage / sendMessageWithKeyboard）与全部按钮 callback 业务、
+> 审批/回答语义零变化**。supersede 记录见 §11。
+> **不做 API 形态虚构**：本章冻结的是「由 probe gate 选择、实现与测试必须一致」的判定契约；
+> 具体 wire 方法名由编码 phase 首任务实测后按 §15.2 判定规则回填，dev-lead 终验时回写结论。
+
+### 15.1 现状事实与动机（冻结）
+
+- 首次发送 = **非官方**通道 `sendRichMessage` + `rich_message.html`（src/monitor.ts `sendMessage`
+  3380-3386 / `sendMessageWithKeyboard` 3391-3426，`limitMessage` 已应用；real-keyboard-channel
+  探针实证生产可用）。
+- 三条**编辑**路径全部为**官方** `editMessageText` + 纯文本 `text`：
+  - `editMenuMessage`（3332-3343）：`text = menuText()`——`menuText()` 本身是 HTML
+    （`paragraph("📋 项目监控列表")` = `<p>…</p>`，src/format/format.ts 253-256）→ 纯文本编辑
+    下 `<p>` 标签泄漏；
+  - `editPermissionResultMessage`（3264-3295）：`text = originalText + 结果行`，originalText 由
+    调用方传 `message.text ?? ""`（2764，= callback.message.text 纯文本视图）→ 富文本/表格丢失；
+  - `editQuestionWizardMessage`（3305-3330）：`text = 完整重渲染 或 ${message.text ?? ""} + 结果行`
+    （3010、3124、3142 三处终态编辑依赖 callback.message.text）→ 富文本/表格丢失。
+- 实机症状（用户报告）：编辑刷新后表格/富文本丢失、menu 泄漏 `<p>`。修复必须**先经真实网关
+  探测证实**可用形态，不得凭推断直接改代码。
+
+### 15.2 探针契约（probe gate，冻结；Phase 1.1 首任务）
+
+**探针文件**：`tests/e2e/real-rich-edit.test.mjs`（新建，入库）。
+**纪律**（沿用 real-keyboard-channel.test.mjs / real-keyboard-channel-diag.test.mjs）：
+读 `~/.otg/telegram.json` 真实凭据（botToken 打码输出、凭据不落盘不写入任何输出之外的介质）、
+经 `telegramRequest` 统一传输入口（proxy 直连分支，测试进程内隧道不可用的既有结论）、
+**禁止 getUpdates / answerCallbackQuery**（老插件持锁轮询中，并发 getUpdates 409 冲突）、
+逐候选独立 try/catch 收口、退出码反映 HTTP 断言失败；测试进程退出即释放全部资源（单次请求
+序列、无守卫生效）。**实机探针会真实推送消息到 chatId 会话**（历轮 real-* 测试既有授权约定）。
+
+**流程（冻结）**：发送一条含 table + inline keyboard 的富文本消息（`sendRichMessage` +
+`rich_message.html`）→ 取 message_id → 在**同一 message_id** 上依序执行候选编辑：
+
+| 探针 ID | wire 形态（候选） | reply_markup | 验证点 |
+|---|---|---|---|
+| REAL-RICH-EDIT-001 | `sendRichMessage` + `rich_message.html`（**基线发送**，非编辑） | 含测试按钮 | message_id 数值；表格 + 键盘基线可用 |
+| REAL-RICH-EDIT-002 | `editRichMessage` + `rich_message.html`（对称候选 **A**） | **携带** | 同 message_id 编辑后表格仍渲染 + 键盘保留 |
+| REAL-RICH-EDIT-003 | `editRichMessage` + `rich_message.html`（对称候选 A） | **省略** | 键盘被移除（两态验证） |
+| REAL-RICH-EDIT-004 | `editMessageText` + `rich_message.html`（候选 **B**） | 携带 | 表格 / 键盘行为 |
+| REAL-RICH-EDIT-005 | `editMessageText` + `parse_mode: "HTML"`（候选 **C**） | 省略 | 表格 / 键盘行为 |
+
+**判定规则（冻结，supersede 一切早稿形态）**：
+
+1. 依候选 A → B → C 顺序评估；首个「HTTP 成功（envelope `ok` 且 result 含数值 message_id）
+   **且**同一 message_id 编辑后表格仍按富文本渲染」的候选 = **赢家形态**。表格保留判定含
+   人眼确认项（API 响应无法断言渲染本身，探针打印各步结果供人确认）。
+2. 等价成立时**对称候选 A 优先**（与首次发送载体一致，最稳）。
+3. 赢家形态 = **唯一**允许写进 `src/monitor.ts` 富文本编辑实现与单元测试断言的形态；
+   编码工人不得偏离（§15.3 helper 内部 wire 形态即此结论）。
+4. **全部候选失败（HTTP 失败，或仅成功但表格丢失）→ 不得假装修复**——不得用纯文本
+   `editMessageText` 冒充富文本修复；Phase 1.1 如实上报【阻塞】，dev-lead 进入后续设计决策轮。
+5. **键盘两态契约（与赢家形态无关，恒成立）**：编辑请求携带 reply_markup → 键盘保留；
+   省略 reply_markup → 键盘移除。探针两态均须验证；单元测试两态断言与探针结论一致。
+6. 探针结论（赢家形态 + 键盘行为）必须写入 Phase 1.1 任务报告；dev-lead 终验后回写本章
+   判定结果占位（§15.2 结论行）。
+
+### 15.3 统一富文本编辑 helper（Phase 1.1 冻结）
+
+新增 `src/monitor.ts` 私有方法（放 `editPermissionResultMessage` 近旁，3246-3343 helper 区内）：
+
+```ts
+private async richEditMessage(
+  chatID: number | string,
+  messageID: number,
+  text: string,
+  keyboard?: TelegramInlineKeyboard,
+): Promise<void>
+```
+
+- **内部 wire 形态 = §15.2 探针赢家形态**（方法名与 body 载体字段由编码 phase 首任务按判定
+  规则回填；实现与单元测试必须一致）。`telegramWithRetry(wireMethod, { chat_id, message_id,
+  ...载体字段, ...(keyboard ? { reply_markup: keyboard } : {}) }, ctx)`。
+- `text` 先经 `limitMessage`（与首次发送同款限长平价——现三条编辑路径未限长，统一后在 helper
+  内补齐；行为只收窄不放大，终态文本/菜单文本均远低于上限，无截断风险）。
+- `keyboard` 不传/undefined → **不携带 reply_markup**（键盘移除，§13.5 决策 #4 语义保持）；
+  传入 → 原样携带。
+- **错误语义（与现状三个 helper 一致，勿回退）**：失败 `await this.log("warn", …)`，error 经
+  `errorCategory(error, { root, botToken })` 脱敏，**不抛错**（answer 已发出视为已处理；
+  menu 编辑失败同样 logWarn 不中断调用链）。
+- 三条编辑路径全部迁移到 `richEditMessage`，**各自外层语义零变化**：
+  - `editPermissionResultMessage`：文本来源按 §15.4 修正；结果行文案 / 键盘移除 / 失败容忍不变；
+  - `editQuestionWizardMessage`：text = 完整重渲染 或 服务器侧终态重建文本（§15.4）；keyboard
+    有/无两态与既有冻结签名不变；
+  - `editMenuMessage`：text = `menuText()`（HTML 载体承载，不泄漏字面 `<p>`），keyboard =
+    `buildMenuKeyboard(registry)`。
+- **首次发送 `sendMessage` / `sendMessageWithKeyboard`（3380-3426）零改动**（body 与语义冻结）。
+
+### 15.4 终态文本来源（supersede §13.5 originalText / §14.3.1 结果行文本依赖，冻结）
+
+**动机**：`callback.message.text` 是网关回传的纯文本视图（富文本丢失后用它编辑即损坏）。
+终态文本一律改为**服务器侧重建**：
+
+- **permission 结果编辑（supersede §13.5 第 6 步 originalText 来源）**：
+  `editPermissionResultMessage` 调用点（2761-2766）不再传 `message.text ?? ""`；改为编辑前用
+  `formatSessionRecordMessage(record, …)`（或等价服务器侧格式化输出）重建富文本原文，
+  `text = 重建原文 + "\n" + 结果行`。结果行文案、键盘移除、失败容忍全部不变。
+- **question 终态编辑（supersede §14.3.1 「原文本 + 结果行」的文本来源）**：submit /
+  cancel / 单问题直接提交三处 `${message.text ?? ""}\n✅ Submitted / ❌ Cancelled`
+  （3010、3124、3142）改为**当前阶段服务器侧重渲染文本 + 结果行**（复用
+  renderQuestionStage / questionStageText 构建路径，与纯文本输入路径 2393-2401 同源）；
+  单问题直接提交的 base = `questionStageText(record, projectLabel, questions, index, draft,
+  false)`。结果行与键盘移除语义不变。
+- **menu**：`menuText()` 本身就是服务器侧 HTML 文本，来源不变，仅载体改富文本编辑（§15.3）。
+- **非终态 question 编辑**（选项 / 导航 / custom 刷新）已是完整重渲染（renderQuestionStage），
+  仅载体变更，文本来源零改动。
+
+### 15.5 测试编号与锚点契约（新增，supersede §13.9/§14.5 维护归属）
+
+| 编号 | 定义 | 文件 | 维护 phase |
+|---|---|---|---|
+| REAL-RICH-EDIT-001~005 | §15.2 探针五步（基线发送 + 对称候选 A 键盘两态 + 候选 B + 候选 C） | `tests/e2e/real-rich-edit.test.mjs`（新建） | 1.1（首任务） |
+| API-301 | question 向导编辑统一形态：next/prev/option/custom 刷新编辑 = 探针赢家形态（wire 方法名 + body 载体字段断言）且**键盘保留**；submit/cancel/单问题直接提交终态编辑 = 同形态 + **键盘移除** + 结果行；终态文本 = 服务器侧重建（构造 `callback.message.text = "PLAIN-LEAK"`，断言编辑 payload **不含**该原文、含富文本表格结构） | `tests/sessions-poller.test.mjs`（文件尾追加） | 1.1 |
+| API-302 | permission 结果编辑：编辑 = 探针赢家形态；文本 = 记录重渲染富文本 + 结果行（不含 callback.message.text）；reply_markup 省略 → 键盘移除；失败 logWarn 不抛错 | 同上 | 1.1 |
+| API-303 | menu 刷新（otg:refresh）：编辑 = 探针赢家形态；text 载体含 `<p>📋 项目监控列表</p>` 的 HTML（富文本载体承载标签，非纯文本 text 字段泄漏字面标签）；keyboard = buildMenuKeyboard 保留 | 同上 | 1.1 |
+| API-304 | 首次发送形态回归：sendMessage / sendMessageWithKeyboard 仍 `sendRichMessage` + `rich_message.html` + `limitMessage`（body 零变化；既有 API-006/101/201 断言原样成立，本号显式覆盖） | 同上 | 1.1 |
+
+- **既有断言最小改判（冻结）**：`tests/sessions-poller.test.mjs` 中所有以
+  `call.url.includes("editMessageText")` 过滤编辑 payload 的断言（API-102 区 1389-1407、
+  q 向导编辑断言 2044-2090 的 `edits`/`editCount` 辅助）随探针赢家形态**最小改判** wire 方法名
+  （filter 与 body 载体断言），其余断言（文本 / 键盘 / answer 文案 / chat_id / message_id）
+  零改动；改判清单写入任务报告。
+- 用例纪律（§13.9/§14.5 沿用）：自包含 + 终态（resolved=true 或 send=true）；不得遗留
+  q_answers/q_reject 未闭环记录。
+- 本 phase 单 worker（批次 A），同文件多区块追加无并发冲突顾虑；锚点以「既有用例收尾 `);` +
+  区块头注释」定位（沿用 §13.9 实测经验：同锚点追加 ⇒ CONFLICT，不同锚点 ⇒ 自动干净合并）。
+
+### 15.6 编辑区间分配（冻结；单 phase，无 cross-phase 冲突）
+
+| 文件 | 区间 | 内容 |
+|---|---|---|
+| `tests/e2e/real-rich-edit.test.mjs`（新建） | 全文件 | 探针五步（§15.2） |
+| `src/monitor.ts` | 3246-3343 区（三个 edit helper + 相邻空白） | `richEditMessage` 新增 + 三路径迁移 |
+| `src/monitor.ts` | 2761-2766（perm 编辑调用点）/ 3007-3011、3121-3125、3139-3143（q 终态编辑调用点） | 终态文本来源修正（§15.4） |
+| `tests/sessions-poller.test.mjs` | `editMessageText` 过滤断言各点 + 文件尾 | 最小改判 + API-301~304 追加 |
+
+- 行号为冻结时参考，以函数名/区块界定为准。
+- **不得触碰**：`sendMessage`/`sendMessageWithKeyboard`（3380-3426，首次发送零改动）、
+  `src/registry/*`、`src/format/*`（menuText 保持）、`src/constants.ts`、`src/types.ts`、
+  `src/telegram/client.ts`（传输层）、根 `monitor.ts` 构建产物。
+
+### 15.7 明确不做（防过度实现）
+
+- 不改首次发送通道/body（`sendRichMessage` 沿用，保持生产可用现状）；不切换官方 `sendMessage`。
+- 不改任何 callback 业务 / 审批 / 回答语义（§13/§14 全部行为冻结，仅编辑载体与终态文本来源变更）。
+- 不新增 Telegram 方法封装进 `src/telegram/client.ts`（wire 调用继续走 `telegramWithRetry`
+  泛型通道，`method` 为字符串参数，零传输层改动）。
+- 不引入网关能力缓存/降级开关（赢家形态 HTTP 偶发失败沿用 `telegramWithRetry` 既有重试）。
+- 不做权限/向导之外的富文本改造（/help 等 terminal 通知首次发送已达标，本轮不碰）。
+- 不把探针结论提前写死为契约正文（§15.2 判定规则是契约；赢家形态是探针结果，由任务报告与
+  dev-lead 回写）。
