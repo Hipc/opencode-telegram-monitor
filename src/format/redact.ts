@@ -21,17 +21,15 @@ function number(value: unknown): number | undefined {
     : undefined;
 }
 
-export function safeText(
-  value: string,
-  limit: number,
-  ctx: RedactionContext,
-): string {
-  const redacted = value
+// 密钥/token 脱敏链（契约 §13.12.1 规则 1-12，safeText 与 safeTextKeepPaths 共用）。
+// 规则与顺序冻结：任何改动必须同时保持两导出行为一致。
+function redactSecrets(value: string, botToken: string): string {
+  return value
     .replace(
       /-----BEGIN [^-]*(?:PRIVATE KEY|CERTIFICATE)-----[\s\S]*?-----END [^-]+-----/gi,
       "[REDACTED_KEY]",
     )
-    .replaceAll(ctx.botToken, "[REDACTED]")
+    .replaceAll(botToken, "[REDACTED]")
     .replace(/\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g, "[REDACTED]")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [REDACTED]")
     .replace(
@@ -56,15 +54,47 @@ export function safeText(
     .replace(
       /\b(?:https?|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/\S+/gi,
       "[REDACTED_URL]",
-    )
+    );
+}
+
+// 路径类脱敏三条（§13.12.1：仅 safeText 保留；safeTextKeepPaths 跳过）。
+// 顺序保持 safeText 原链：40+ 长 blob → root 替换 → 绝对路径正则。
+function redactPaths(value: string, root: string): string {
+  return value
     .replace(/\b[A-Za-z0-9_+/=-]{40,}\b/g, "[REDACTED_VALUE]")
-    .replaceAll(ctx.root, "<project>")
-    .replace(/(^|[\s=:"'(])\/(?:[^\s/]+\/)*[^\s,;)]*/g, "$1<external-path>")
-    .replace(/\s+/g, " ")
-    .trim();
-  return redacted.length <= limit
-    ? redacted
-    : `${redacted.slice(0, limit - 3)}...`;
+    .replaceAll(root, "<project>")
+    .replace(/(^|[\s=:"'(])\/(?:[^\s/]+\/)*[^\s,;)]*/g, "$1<external-path>");
+}
+
+// 空白折叠 + trim + limit 截断（两导出共用，与 safeText 原行为一致）。
+function finishText(value: string, limit: number): string {
+  const folded = value.replace(/\s+/g, " ").trim();
+  return folded.length <= limit
+    ? folded
+    : `${folded.slice(0, limit - 3)}...`;
+}
+
+export function safeText(
+  value: string,
+  limit: number,
+  ctx: RedactionContext,
+): string {
+  return finishText(
+    redactPaths(redactSecrets(value, ctx.botToken), ctx.root),
+    limit,
+  );
+}
+
+// keep-paths 变体（契约 §13.12.1）：密钥/token 脱敏链与 safeText 完全一致，
+// 跳过三条路径类规则（root → <project>、绝对路径 → <external-path>、
+// 40+ 字符长 blob → [REDACTED_VALUE]），供 permission 详情展示真实路径。
+// 空白折叠 / trim / limit 截断与 safeText 一致。
+export function safeTextKeepPaths(
+  value: string,
+  limit: number,
+  ctx: RedactionContext,
+): string {
+  return finishText(redactSecrets(value, ctx.botToken), limit);
 }
 
 export function safePath(value: string, ctx: RedactionContext): string {
