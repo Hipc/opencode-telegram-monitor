@@ -91,6 +91,7 @@ export type TelegramCallbackQuery = {
   message?: {
     message_id: number;
     chat: { id: number | string };
+    text?: string; // Round 2：perm 回调编辑原消息用（契约 sessions-relay.md §13.5）
   };
   data?: string;
 };

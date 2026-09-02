@@ -281,6 +281,34 @@ export function buildMenuKeyboard(
   return { inline_keyboard: rows };
 }
 
+// 契约 sessions-relay.md §13.4：callback_data 前缀沿用 otg: 风格；放 format.ts
+// （constants.ts 本轮零新增，决策 #9）。
+export const PERM_CB_PREFIX = "otg:perm:";
+
+/**
+ * permission 记录的 TG 三按钮键盘（契约 sessions-relay.md §13.3，Round 2）：
+ * 一行三按钮 Allow once / Allow always / Deny，callback_data
+ * `otg:perm:<entryID>:<once|always|reject>`。entryID 由调用方（monitor）
+ * 保证每个 callback_data ≤ 64 字节（契约 §13.4 缩短方案）；本函数为纯函数，
+ * 不做长度断言。只加在 type === "permission" 记录；question 记录无键盘。
+ */
+export function buildSessionPermissionKeyboard(
+  entryID: string,
+): TelegramInlineKeyboard {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Allow once", callback_data: `${PERM_CB_PREFIX}${entryID}:once` },
+        {
+          text: "Allow always",
+          callback_data: `${PERM_CB_PREFIX}${entryID}:always`,
+        },
+        { text: "Deny", callback_data: `${PERM_CB_PREFIX}${entryID}:reject` },
+      ],
+    ],
+  };
+}
+
 export function helpText(): string {
   const commands = [
     "/menu - Manage monitored projects",
@@ -305,7 +333,7 @@ export function helpText(): string {
     `<ul>${listItems}</ul>`,
     "<p>Planned (not available yet):</p>",
     `<ul>${plannedItems}</ul>`,
-    "<p>This bot is read-only. Approvals and answers must be handled in OpenCode.</p>",
+    "<p>Read-only by default: since 2026-09-02 permission prompts can be answered with inline buttons (Allow once / Allow always / Deny) — only when you explicitly tap one. Questions and everything else are always handled in OpenCode.</p>",
   ].join("\n");
 }
 
