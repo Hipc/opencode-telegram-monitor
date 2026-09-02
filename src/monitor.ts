@@ -89,15 +89,20 @@ import {
 import { PollerLock } from "./infra/poller-lock";
 import {
   appendSessionRecord,
+  clearQuestionInputs,
   deleteProjectByPath,
   findEntryByToken,
   findRegistryEntry,
   markSessionResolved,
   markSessionSent,
   registerProject,
+  rejectQuestion,
   setProjectEnabled,
+  setQuestionDraft,
+  setQuestionInput,
   setQuestionMessageID,
   setSessionReply,
+  submitQuestionAnswers,
   type ProjectRegistry,
   type ProjectRegistryStore,
   type SessionRecord,
@@ -2170,7 +2175,12 @@ export class TelegramSessionMonitor {
     const match = message.text
       .trim()
       .match(/^\/([a-zA-Z]+)(?:@\S+)?(?:\s+(.+))?$/);
-    if (!match) return;
+    if (!match) {
+      // 命令正则不匹配 = 纯文本（契约 §14.3.2）：自定义输入捕获；无输入态
+      // 记录时静默忽略。chatId 匹配校验已在上方完成。
+      await this.handleQuestionTextInput(message.text);
+      return;
+    }
     const command = match[1]?.toLowerCase();
     const argument = match[2]?.trim();
 
@@ -2188,11 +2198,163 @@ export class TelegramSessionMonitor {
       case "help":
         this.enqueueMessage(helpText());
         return;
+      case "cancel":
+        // 取消自定义输入模式（契约 §14.3.2）：clearQuestionInputs 批量清除
+        // 全部记录的 q_input；无输入态时为幂等空操作。
+        await this.registry.mutate((reg) => clearQuestionInputs(reg));
+        this.enqueueMessage(paragraph("已取消输入模式"));
+        return;
       default:
         this.enqueueMessage(
           `Unknown command: /${escapeHtml(command)}\n\n${helpText()}`,
         );
     }
+  }
+
+  /**
+   * 纯文本自定义输入捕获（契约 §14.3.2，命令正则不命中分支）：全局找第一条
+   * `type==="question" && resolved===false && q_answers==null && q_input!=null`
+   * 的记录（跨全部条目，顺序 = projects 数组序 + sessions 数组序）→ 覆盖式
+   * 写入 draft[q_input] → 串行落盘（先清输入态、再推进：多问题 stage+1 /
+   * 单问题直接提交）→ 编辑向导消息（**仅** record.q_msg_id；缺失 logWarn
+   * 跳过编辑，答案已落盘不受影响）→ enqueueMessage 确认文案
+   * `已记录第 {n} 题答案`（n = q_input + 1）。找不到输入态记录 → 静默
+   * return（非命令文本保持忽略）。
+   */
+  private async handleQuestionTextInput(text: string): Promise<void> {
+    const reg = await this.registry.read();
+    let found: { record: SessionRecord; projectLabel: string } | undefined;
+    outer: for (const entry of reg.projects) {
+      const entrySessions = entry.sessions ?? [];
+      for (const record of entrySessions) {
+        if (
+          record.type !== "question" ||
+          record.resolved === true ||
+          record.q_answers != null ||
+          record.q_input == null
+        ) {
+          continue;
+        }
+        found = {
+          record,
+          projectLabel: basename(entry.path) || this.projectLabel,
+        };
+        break outer;
+      }
+    }
+    if (!found) return;
+    const { record, projectLabel } = found;
+    const requestID = record.request_id;
+    const ctx: FormatContext = {
+      root: this.root,
+      botToken: this.config.botToken,
+      projectLabel,
+      sessions: this.sessions,
+      sessionInfo: this.sessionInfo,
+    };
+    const questions = this.parseQuestionPayload(record.message);
+    if (!questions) {
+      await this.log("warn", "Question text input: cannot parse questions", {
+        requestId: safeText(requestID, 100, ctx),
+      });
+      return;
+    }
+    const index = record.q_input;
+    if (index === null || index < 0 || index >= questions.length) {
+      // 防御：parse 只保证 q_input 为 number，范围在此校验。
+      await this.log("warn", "Question text input: q_input out of range", {
+        requestId: safeText(requestID, 100, ctx),
+      });
+      return;
+    }
+    const rawDraft = record.q_draft ?? [];
+    const draft: Array<Array<string>> = questions.map((_, i) =>
+      Array.isArray(rawDraft[i]) ? [...rawDraft[i]!] : [],
+    );
+    draft[index] = [text.trim()]; // 覆盖式：每次回复覆盖该题草稿（TUI 同款）。
+    const answerNumber = index + 1;
+    // 落盘顺序冻结（契约 §14.3.2）：先清输入态 → 再推进/提交。
+    const cleared = await this.registry.mutate((rec) =>
+      setQuestionInput(rec, requestID, null),
+    );
+    if (cleared === undefined) {
+      await this.log(
+        "warn",
+        "Question text input: clear input skipped (no match)",
+        { requestId: safeText(requestID, 100, ctx) },
+      );
+      return;
+    }
+    if (questions.length === 1) {
+      // 单问题请求：直接提交。
+      const next = await this.registry.mutate((rec) =>
+        submitQuestionAnswers(rec, requestID, draft),
+      );
+      if (next === undefined) {
+        await this.log(
+          "warn",
+          "Question text input: submit skipped (no match)",
+          { requestId: safeText(requestID, 100, ctx) },
+        );
+        return;
+      }
+      if (record.q_msg_id !== undefined) {
+        const resultText =
+          this.questionStageText(
+            record,
+            projectLabel,
+            questions,
+            index,
+            draft,
+            false,
+          ) + "\n✅ Submitted";
+        await this.editQuestionWizardMessage(
+          this.config.chatId,
+          record.q_msg_id,
+          resultText,
+        );
+      } else {
+        await this.log(
+          "warn",
+          "Question text input: no q_msg_id, skip edit",
+          { requestId: safeText(requestID, 100, ctx) },
+        );
+      }
+    } else {
+      // 多问题：推进（=length 自然进总结）。
+      const newStage = Math.min(index + 1, questions.length);
+      const next = await this.registry.mutate((rec) =>
+        setQuestionDraft(rec, requestID, draft, newStage),
+      );
+      if (next === undefined) {
+        await this.log(
+          "warn",
+          "Question text input: advance skipped (no match)",
+          { requestId: safeText(requestID, 100, ctx) },
+        );
+        return;
+      }
+      if (record.q_msg_id !== undefined) {
+        await this.renderQuestionStage(
+          record,
+          projectLabel,
+          requestID,
+          questions,
+          newStage,
+          draft,
+          false,
+          this.config.chatId,
+          record.q_msg_id,
+        );
+      } else {
+        await this.log(
+          "warn",
+          "Question text input: no q_msg_id, skip edit",
+          { requestId: safeText(requestID, 100, ctx) },
+        );
+      }
+    }
+    this.enqueueMessage(paragraph(`已记录第 ${answerNumber} 题答案`));
   }
 
   private async commandStart() {
@@ -2436,6 +2598,37 @@ export class TelegramSessionMonitor {
       }
       return;
     }
+    // ---- q 前置分支（契约 §14.3.1，perm 分支后、通用正则前）----
+    if (data.startsWith(OTG_Q_CB_PREFIX)) {
+      const qMatch = data.match(
+        /^otg:q:(.+):(o\d+|prev|next|cancel|custom|submit)$/,
+      );
+      if (!qMatch) {
+        await this.answerCallback(id, "Unknown action", false);
+        return;
+      }
+      const entryID = qMatch[1]!;
+      const qAction = qMatch[2]!;
+      // 还原 requestID：qShortMap 只存 poller 实例内存（§14.2.3）；进程重启后
+      // 旧按钮点击 → 还原为 raw 找不到记录 → handleQuestionCallback 失效分支，
+      // 可接受降级。
+      const requestID = this.qShortMap.get(entryID) ?? entryID;
+      try {
+        await this.handleQuestionCallback(callback, id, requestID, qAction);
+      } catch (error) {
+        await this.answerCallback(id, "操作失败，请重试", true).catch(
+          () => undefined,
+        );
+        await this.log("error", "Question callback handling failed", {
+          error: errorCategory(error, {
+            root: this.root,
+            botToken: this.config.botToken,
+          }),
+        });
+        return;
+      }
+      return; // q 分支自行结束，不得落入末尾 editMenuMessage 菜单刷新（§14.3.1）。
+    }
     const match = data.match(/^otg:([a-z]+)(?::([0-9a-f]{12}))?(?::([01]))?$/);
     if (!match) {
       await this.answerCallback(id, "Unknown action", false);
@@ -2500,6 +2693,379 @@ export class TelegramSessionMonitor {
     }
   }
 
+  /**
+   * question 向导回调状态机（契约 sessions-relay.md §14.3.1，Round 4）：
+   * 无内存状态——每次回调从盘上 registry 重建 q_draft/q_stage（进程重启后
+   * 点旧按钮天然恢复）。流程：全局线性扫描找记录（projects 数组序 + sessions
+   * 数组序，与纯函数全局匹配同序）→ 失效/解析防御 → 重建状态（stage 钳制
+   * 0..questions.length）→ 按动作分派。每步先 mutate 落盘；返回 undefined
+   * → 失效 answer + 不编辑；成功 → answer 文案（§14.3.3）+ 编辑向导消息
+   * （q_msg_id ?? 回调消息自身 id；编辑失败 logWarn 不中断）。终态编辑
+   * 不传键盘 ⇒ 键盘移除。
+   */
+  private async handleQuestionCallback(
+    callback: TelegramCallbackQuery,
+    callbackID: string,
+    requestID: string,
+    action: string,
+  ): Promise<void> {
+    const message = callback.message!; // handleCallback 已保证 message 存在
+    const ctx: FormatContext = {
+      root: this.root,
+      botToken: this.config.botToken,
+      projectLabel: this.projectLabel,
+      sessions: this.sessions,
+      sessionInfo: this.sessionInfo,
+    };
+    const reg = await this.registry.read();
+    let found: { record: SessionRecord; projectLabel: string } | undefined;
+    outer: for (const entry of reg.projects) {
+      const entrySessions = entry.sessions ?? [];
+      for (const record of entrySessions) {
+        if (record.request_id !== requestID) continue;
+        found = {
+          record,
+          projectLabel: basename(entry.path) || this.projectLabel,
+        };
+        break outer;
+      }
+    }
+    if (!found) {
+      await this.answerCallback(callbackID, "记录不存在或已失效", true);
+      await this.log("warn", "Question callback: no matching session record", {
+        requestId: safeText(requestID, 100, ctx),
+      });
+      return;
+    }
+    const { record, projectLabel } = found;
+    // 失效判定：已 resolved / 已提交（q_answers）/ 已放弃（q_reject）→ 不编辑。
+    if (
+      record.resolved === true ||
+      record.q_answers != null ||
+      record.q_reject === true
+    ) {
+      await this.answerCallback(callbackID, "记录不存在或已失效", true);
+      await this.log("warn", "Question callback: record already terminal", {
+        requestId: safeText(requestID, 100, ctx),
+      });
+      return;
+    }
+    const questions = this.parseQuestionPayload(record.message);
+    if (!questions) {
+      await this.answerCallback(callbackID, "记录不存在或已失效", true);
+      await this.log("warn", "Question callback: cannot parse questions", {
+        requestId: safeText(requestID, 100, ctx),
+      });
+      return;
+    }
+    // 状态重建：draft 归一化到 questions 长度（防长度不符的脏数据）；stage
+    // 钳制 0..questions.length（=length 为总结阶段）。
+    const rawDraft = record.q_draft ?? [];
+    const draft: Array<Array<string>> = questions.map((_, index) =>
+      Array.isArray(rawDraft[index]) ? [...rawDraft[index]!] : [],
+    );
+    const stage =
+      typeof record.q_stage === "number"
+        ? Math.min(Math.max(record.q_stage, 0), questions.length)
+        : 0;
+    const chatID = message.chat.id;
+    const messageID = record.q_msg_id ?? message.message_id;
+
+    // o<idx>：选项点击（单选直接覆盖；多选题 toggle）。
+    const optionMatch = action.match(/^o(\d+)$/);
+    if (optionMatch) {
+      const index = Number(optionMatch[1]);
+      const current = questions[stage];
+      const options =
+        current && Array.isArray(current.options) ? current.options : [];
+      const option = options[index];
+      if (!option || typeof option.label !== "string") {
+        await this.answerCallback(callbackID, "选项无效", false);
+        return;
+      }
+      const label = option.label;
+      const nextDraft = draft.slice();
+      if (current.multiple === true) {
+        // 多选：toggle label（保持数组顺序）→ 同 stage 落盘 → 编辑（✓ 刷新）。
+        const selected = draft[stage] ?? [];
+        nextDraft[stage] = selected.includes(label)
+          ? selected.filter((item) => item !== label)
+          : [...selected, label];
+        const next = await this.registry.mutate((rec) =>
+          setQuestionDraft(rec, requestID, nextDraft, stage),
+        );
+        if (next === undefined) {
+          await this.answerCallback(callbackID, "记录不存在或已失效", true);
+          return;
+        }
+        await this.answerCallback(
+          callbackID,
+          `已选 ${nextDraft[stage]!.length} 项`,
+          false,
+        );
+        await this.renderQuestionStage(
+          record,
+          projectLabel,
+          requestID,
+          questions,
+          stage,
+          nextDraft,
+          false,
+          chatID,
+          messageID,
+        );
+        return;
+      }
+      // 单选：覆盖式写入。
+      nextDraft[stage] = [label];
+      if (questions.length === 1) {
+        // 单问题请求：点选项直接提交（决策 #6）。
+        const next = await this.registry.mutate((rec) =>
+          submitQuestionAnswers(rec, requestID, nextDraft),
+        );
+        if (next === undefined) {
+          await this.answerCallback(callbackID, "记录不存在或已失效", true);
+          return;
+        }
+        await this.answerCallback(callbackID, "已提交", false);
+        await this.editQuestionWizardMessage(
+          chatID,
+          messageID,
+          `${message.text ?? ""}\n✅ Submitted`,
+        );
+        return;
+      }
+      // 多问题单选：自动跳下一题（=length 自然进总结）。
+      const newStage = Math.min(stage + 1, questions.length);
+      const next = await this.registry.mutate((rec) =>
+        setQuestionDraft(rec, requestID, nextDraft, newStage),
+      );
+      if (next === undefined) {
+        await this.answerCallback(callbackID, "记录不存在或已失效", true);
+        return;
+      }
+      await this.answerCallback(callbackID, `已选「${label}」`, false);
+      await this.renderQuestionStage(
+        record,
+        projectLabel,
+        requestID,
+        questions,
+        newStage,
+        nextDraft,
+        false,
+        chatID,
+        messageID,
+      );
+      return;
+    }
+
+    // prev / next：阶段钳制跳转（next 上限=总结阶段；prev 下限 0；答案保留）。
+    if (action === "prev" || action === "next") {
+      const delta = action === "next" ? 1 : -1;
+      const newStage = Math.min(Math.max(stage + delta, 0), questions.length);
+      const next = await this.registry.mutate((rec) =>
+        setQuestionDraft(rec, requestID, draft, newStage),
+      );
+      if (next === undefined) {
+        await this.answerCallback(callbackID, "记录不存在或已失效", true);
+        return;
+      }
+      await this.answerCallback(callbackID, "已跳转", false);
+      await this.renderQuestionStage(
+        record,
+        projectLabel,
+        requestID,
+        questions,
+        newStage,
+        draft,
+        false,
+        chatID,
+        messageID,
+      );
+      return;
+    }
+
+    // custom：进入输入模式（键盘保留 + 追加输入提示行）。
+    if (action === "custom") {
+      const current = questions[stage];
+      if (!current || current.custom !== true) {
+        await this.answerCallback(callbackID, "该题不支持自定义输入", false);
+        return;
+      }
+      const next = await this.registry.mutate((rec) =>
+        setQuestionInput(rec, requestID, stage),
+      );
+      if (next === undefined) {
+        await this.answerCallback(callbackID, "记录不存在或已失效", true);
+        return;
+      }
+      await this.answerCallback(
+        callbackID,
+        "直接回复文本作为答案，/cancel 取消",
+        false,
+      );
+      await this.renderQuestionStage(
+        record,
+        projectLabel,
+        requestID,
+        questions,
+        stage,
+        draft,
+        true,
+        chatID,
+        messageID,
+      );
+      return;
+    }
+
+    // submit：仅总结阶段可用（守卫）；未全答 → 提示题号、不提交不编辑。
+    if (action === "submit") {
+      if (stage !== questions.length) {
+        await this.answerCallback(callbackID, "Unknown action", false);
+        return;
+      }
+      const emptyIndex = draft.findIndex((answers) => answers.length === 0);
+      if (emptyIndex !== -1) {
+        await this.answerCallback(
+          callbackID,
+          `第 ${emptyIndex + 1} 题未作答，请先作答`,
+          false,
+        );
+        return;
+      }
+      const next = await this.registry.mutate((rec) =>
+        submitQuestionAnswers(rec, requestID, draft),
+      );
+      if (next === undefined) {
+        await this.answerCallback(callbackID, "记录不存在或已失效", true);
+        return;
+      }
+      await this.answerCallback(callbackID, "已提交", false);
+      await this.editQuestionWizardMessage(
+        chatID,
+        messageID,
+        `${message.text ?? ""}\n✅ Submitted`,
+      );
+      return;
+    }
+
+    // cancel：任意阶段放弃整个向导。
+    if (action === "cancel") {
+      const next = await this.registry.mutate((rec) =>
+        rejectQuestion(rec, requestID),
+      );
+      if (next === undefined) {
+        await this.answerCallback(callbackID, "记录不存在或已失效", true);
+        return;
+      }
+      await this.answerCallback(callbackID, "已取消", false);
+      await this.editQuestionWizardMessage(
+        chatID,
+        messageID,
+        `${message.text ?? ""}\n❌ Cancelled`,
+      );
+      return;
+    }
+
+    // 正则已收窄到 o\d+|prev|next|cancel|custom|submit，理论不可达。
+    await this.answerCallback(callbackID, "Unknown action", false);
+  }
+
+  /**
+   * 解析 question 记录 message JSON 的 questions（契约 §14.3.1 同款防御：
+   * 解析抛错 / parsed 非对象 / questions 非数组 / 空数组 / 首元素缺 string 型
+   * question → undefined。与发送端 sendQuestionRecord 的校验完全一致）。
+   */
+  private parseQuestionPayload(
+    message: string,
+  ): Array<QuestionV2Info> | undefined {
+    try {
+      const parsed = JSON.parse(message) as unknown;
+      const parsedQuestions =
+        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>).questions
+          : undefined;
+      if (
+        Array.isArray(parsedQuestions) &&
+        parsedQuestions.length > 0 &&
+        typeof (parsedQuestions[0] as { question?: unknown })?.question ===
+          "string"
+      ) {
+        return parsedQuestions as Array<QuestionV2Info>;
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * question 阶段文本（ctx/sessionLabel 组装；回调与纯文本路径重渲染共用）。
+   */
+  private questionStageText(
+    record: SessionRecord,
+    projectLabel: string,
+    questions: Array<QuestionV2Info>,
+    stage: number,
+    draft: Array<Array<string>>,
+    inputPending: boolean,
+  ): string {
+    const ctx: FormatContext = {
+      root: this.root,
+      botToken: this.config.botToken,
+      projectLabel,
+      sessions: this.sessions,
+      sessionInfo: this.sessionInfo,
+    };
+    const sessionLabel = safeText(
+      record.session_name || shortID(record.session_id),
+      100,
+      ctx,
+    );
+    return buildQuestionStageText(
+      projectLabel,
+      "question",
+      sessionLabel,
+      questions,
+      stage,
+      draft,
+      inputPending,
+      ctx,
+    );
+  }
+
+  /**
+   * 非终态编辑：完整重渲染当前阶段文本 + 键盘（契约 §14.3.1 末）。键盘经
+   * questionEntryID 重建（与发送端同源；超限 undefined → 无键盘纯文本编辑，
+   * 对应发送端无键盘退化，可接受）。编辑失败 logWarn 不中断。
+   */
+  private async renderQuestionStage(
+    record: SessionRecord,
+    projectLabel: string,
+    requestID: string,
+    questions: Array<QuestionV2Info>,
+    stage: number,
+    draft: Array<Array<string>>,
+    inputPending: boolean,
+    chatID: number | string,
+    messageID: number,
+  ): Promise<void> {
+    const text = this.questionStageText(
+      record,
+      projectLabel,
+      questions,
+      stage,
+      draft,
+      inputPending,
+    );
+    const entryID = this.questionEntryID(requestID);
+    const keyboard =
+      entryID === undefined
+        ? undefined
+        : buildQuestionKeyboard(entryID, questions, stage, draft);
+    await this.editQuestionWizardMessage(chatID, messageID, text, keyboard);
+  }
+
   private async answerCallback(
     callbackQueryID: string,
     text: string,
@@ -2548,6 +3114,41 @@ export class TelegramSessionMonitor {
           error: errorCategory(error, { root: this.root, botToken: this.config.botToken }),
         },
       );
+    }
+  }
+
+  /**
+   * 编辑向导消息（契约 §14.3.1 冻结签名）：text = 完整新渲染文本
+   * （buildQuestionStageText）或 原文本 + 结果行；keyboard 不传/undefined
+   * ⇒ 键盘移除（终态，决策 #4 同款）。内部 telegramWithRetry("editMessageText")
+   * 不传 reply_markup ⇒ 键盘被移除（同 §13.5）。编辑失败 logWarn 不抛错
+   * （answer 已发出，视为已处理，同 §13.5）。结果行冻结：submit 成功 →
+   * ✅ Submitted；cancel → ❌ Cancelled。
+   */
+  private async editQuestionWizardMessage(
+    chatID: number | string,
+    messageID: number,
+    text: string,
+    keyboard?: TelegramInlineKeyboard,
+  ) {
+    try {
+      await telegramWithRetry(
+        "editMessageText",
+        {
+          chat_id: chatID,
+          message_id: messageID,
+          text,
+          ...(keyboard ? { reply_markup: keyboard } : {}),
+        },
+        { config: this.config, signal: this.abortController.signal },
+      );
+    } catch (error) {
+      await this.log("warn", "Question wizard message edit failed", {
+        error: errorCategory(error, {
+          root: this.root,
+          botToken: this.config.botToken,
+        }),
+      });
     }
   }
 
