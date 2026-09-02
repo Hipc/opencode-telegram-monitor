@@ -2757,11 +2757,25 @@ export class TelegramSessionMonitor {
               ? "已允许总是"
               : "已拒绝";
         await this.answerCallback(id, notice, false);
-        // 编辑原消息移除按钮 + 追加结果行；失败 logWarn 不中断（§13.5）。
+        // 编辑原消息移除按钮 + 追加结果行；失败 logWarn 不中断（§13.5、§15.4）。
+        let originalText = message.text ?? "";
+        let targetRecord: SessionRecord | undefined;
+        let projectLabel = this.projectLabel;
+        for (const entry of next.projects) {
+          const matched = entry.sessions?.find((s) => s.request_id === requestID);
+          if (matched) {
+            targetRecord = matched;
+            projectLabel = basename(entry.path) || this.projectLabel;
+            break;
+          }
+        }
+        if (targetRecord) {
+          originalText = this.formatSessionRecordMessage(targetRecord, projectLabel);
+        }
         await this.editPermissionResultMessage(
           message.chat.id,
           message.message_id,
-          message.text ?? "",
+          originalText,
           value,
         );
       } catch (error) {
@@ -3004,10 +3018,18 @@ export class TelegramSessionMonitor {
           return;
         }
         await this.answerCallback(callbackID, "已提交", false);
+        const baseText = this.questionStageText(
+          record,
+          projectLabel,
+          questions,
+          stage,
+          nextDraft,
+          false,
+        );
         await this.editQuestionWizardMessage(
           chatID,
           messageID,
-          `${message.text ?? ""}\n✅ Submitted`,
+          baseText + "\x0a✅ Submitted",
         );
         return;
       }
@@ -3118,10 +3140,18 @@ export class TelegramSessionMonitor {
         return;
       }
       await this.answerCallback(callbackID, "已提交", false);
+      const baseText = this.questionStageText(
+        record,
+        projectLabel,
+        questions,
+        stage,
+        draft,
+        false,
+      );
       await this.editQuestionWizardMessage(
         chatID,
         messageID,
-        `${message.text ?? ""}\n✅ Submitted`,
+        baseText + "\x0a✅ Submitted",
       );
       return;
     }
@@ -3136,10 +3166,18 @@ export class TelegramSessionMonitor {
         return;
       }
       await this.answerCallback(callbackID, "已取消", false);
+      const baseText = this.questionStageText(
+        record,
+        projectLabel,
+        questions,
+        stage,
+        draft,
+        false,
+      );
       await this.editQuestionWizardMessage(
         chatID,
         messageID,
-        `${message.text ?? ""}\n❌ Cancelled`,
+        baseText + "\x0a❌ Cancelled",
       );
       return;
     }
@@ -3256,6 +3294,39 @@ export class TelegramSessionMonitor {
   }
 
   /**
+   * 统一富文本编辑 helper（契约 sessions-relay.md §15.3，Round 5）：
+   * 内部 wire 形态为 §15.2 探针赢家形态（editMessageText + rich_message.html）。
+   * text 经 limitMessage 限长；keyboard 可选，undefined 时不携带 reply_markup
+   * （键盘移除）；失败 logWarn 不抛错。
+   */
+  private async richEditMessage(
+    chatID: number | string,
+    messageID: number,
+    text: string,
+    keyboard?: TelegramInlineKeyboard,
+  ): Promise<void> {
+    try {
+      await telegramWithRetry(
+        "editMessageText",
+        {
+          chat_id: chatID,
+          message_id: messageID,
+          rich_message: { html: limitMessage(text) },
+          ...(keyboard ? { reply_markup: keyboard } : {}),
+        },
+        { config: this.config, signal: this.abortController.signal },
+      );
+    } catch (error) {
+      await this.log("warn", "Rich message edit failed", {
+        error: errorCategory(error, {
+          root: this.root,
+          botToken: this.config.botToken,
+        }),
+      });
+    }
+  }
+
+  /**
    * 编辑权限消息为结果态（契约 §13.5 step 6）：保留原文、追加结果行，
    * 不传 reply_markup ⇒ 键盘被移除（防重复点击，决策 #4）。编辑失败
    * logWarn 不抛错（answer 已发出，视为已处理）。结果行冻结：once →
@@ -3273,34 +3344,19 @@ export class TelegramSessionMonitor {
         : value === "always"
           ? "✅ Allowed always"
           : "❌ Rejected";
-    try {
-      await telegramWithRetry(
-        "editMessageText",
-        {
-          chat_id: chatID,
-          message_id: messageID,
-          text: `${originalText}\n${resultLine}`,
-        },
-        { config: this.config, signal: this.abortController.signal },
-      );
-    } catch (error) {
-      await this.log(
-        "warn",
-        "Permission result message edit failed",
-        {
-          error: errorCategory(error, { root: this.root, botToken: this.config.botToken }),
-        },
-      );
-    }
+    await this.richEditMessage(
+      chatID,
+      messageID,
+      originalText + "\x0a" + resultLine,
+    );
   }
 
   /**
-   * 编辑向导消息（契约 §14.3.1 冻结签名）：text = 完整新渲染文本
+   * 编辑向导消息（契约 §14.3.1 冻结签名、§15.3）：text = 完整新渲染文本
    * （buildQuestionStageText）或 原文本 + 结果行；keyboard 不传/undefined
-   * ⇒ 键盘移除（终态，决策 #4 同款）。内部 telegramWithRetry("editMessageText")
-   * 不传 reply_markup ⇒ 键盘被移除（同 §13.5）。编辑失败 logWarn 不抛错
-   * （answer 已发出，视为已处理，同 §13.5）。结果行冻结：submit 成功 →
-   * ✅ Submitted；cancel → ❌ Cancelled。
+   * ⇒ 键盘移除（终态，决策 #4 同款）。走 richEditMessage 统一富文本编辑，
+   * 不传 reply_markup ⇒ 键盘被移除。编辑失败 logWarn 不抛错。
+   * 结果行冻结：submit 成功 → ✅ Submitted；cancel → ❌ Cancelled。
    */
   private async editQuestionWizardMessage(
     chatID: number | string,
@@ -3308,25 +3364,7 @@ export class TelegramSessionMonitor {
     text: string,
     keyboard?: TelegramInlineKeyboard,
   ) {
-    try {
-      await telegramWithRetry(
-        "editMessageText",
-        {
-          chat_id: chatID,
-          message_id: messageID,
-          text,
-          ...(keyboard ? { reply_markup: keyboard } : {}),
-        },
-        { config: this.config, signal: this.abortController.signal },
-      );
-    } catch (error) {
-      await this.log("warn", "Question wizard message edit failed", {
-        error: errorCategory(error, {
-          root: this.root,
-          botToken: this.config.botToken,
-        }),
-      });
-    }
+    await this.richEditMessage(chatID, messageID, text, keyboard);
   }
 
   private async editMenuMessage(
@@ -3334,12 +3372,12 @@ export class TelegramSessionMonitor {
     messageID: number,
     registry: ProjectRegistry,
   ) {
-    await telegramWithRetry("editMessageText", {
-      chat_id: chatID,
-      message_id: messageID,
-      text: menuText(),
-      reply_markup: buildMenuKeyboard(registry),
-    }, { config: this.config, signal: this.abortController.signal });
+    await this.richEditMessage(
+      chatID,
+      messageID,
+      menuText(),
+      buildMenuKeyboard(registry),
+    );
   }
 
   private activePrimarySessions() {
