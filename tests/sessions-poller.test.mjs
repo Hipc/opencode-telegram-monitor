@@ -1358,7 +1358,10 @@ async function main() {
   );
 
   // API-201-2：单问题请求 → 键盘**无导航无 Submit**（直接提交形态）——只有
-  // 选项行 + ❌ Cancel。
+  // 选项行 + ✏️ Custom + ❌ Cancel。
+  // （Round 2 修订：契约 §14.8.4 后 ✏️ Custom 恒显示——本题 payload 无 custom
+  // 字段，键盘由「选项 + Cancel」2 行变为「选项 + Custom + Cancel」3 行，
+  // 断言最小修正：行数 2→3、cancelRow 索引 1→2；「无导航无提交」断言不变。）
   await runCase(
     "API-201-2 single-question request keyboard has options + Cancel only (no nav/no submit)",
     async () => {
@@ -1414,14 +1417,24 @@ async function main() {
         throw new Error(`missing question text: ${text}`);
       }
       const rows = calls[0].keyboard.inline_keyboard;
-      if (rows.length !== 2) {
-        throw new Error(`expected 2 keyboard rows (options + cancel), got ${rows.length}`);
+      if (rows.length !== 3) {
+        throw new Error(
+          `expected 3 keyboard rows (options + custom + cancel), got ${rows.length}`,
+        );
       }
       const optionRow = rows[0];
       if (optionRow.length !== 2) {
         throw new Error(`expected 2 option buttons, got ${optionRow.length}`);
       }
-      const cancelRow = rows[1];
+      const customRow = rows[1];
+      if (
+        customRow.length !== 1 ||
+        customRow[0].text !== "✏️ Custom" ||
+        customRow[0].callback_data !== "otg:q:req-201b:custom"
+      ) {
+        throw new Error(`unexpected custom row: ${JSON.stringify(customRow)}`);
+      }
+      const cancelRow = rows[2];
       if (
         cancelRow.length !== 1 ||
         cancelRow[0].text !== "❌ Cancel" ||
@@ -2434,9 +2447,12 @@ async function main() {
     },
   );
 
-  // API-203-4：custom 但该题不支持 → 「该题不支持自定义输入」+ 不落盘不编辑。
+  // API-203-4：Round 2 修订（契约 §14.8.4 测试影响）——custom **恒可用**：
+  // payload 无 custom 字段的普通题点 ✏️ Custom 同样进入输入模式（q_input
+  // 落盘 + 提示 + 编辑键盘保留）。原「该题不支持自定义输入 + 不落盘不编辑」
+  // 语义不再成立（真实 question payload 从不带 custom 标志）。
   await runCase(
-    "API-203-4 custom on non-custom question answers unsupported, no state change",
+    "API-203-4 custom on non-custom question enters input mode (always available)",
     async () => {
       await registry.mutate((reg) =>
         appendSessionRecord(
@@ -2451,15 +2467,22 @@ async function main() {
       try {
         const fetches = await runQCallback(monitor, "otg:q:req-203e:custom");
         const ans = answersOf(fetches);
-        if (ans.length !== 1 || ans[0].body.text !== "该题不支持自定义输入") {
-          throw new Error(`unsupported custom answer expected: ${JSON.stringify(fetches)}`);
+        if (
+          ans.length !== 1 ||
+          ans[0].body.text !== "直接回复文本作为答案，/cancel 取消"
+        ) {
+          throw new Error(`custom entry answer expected: ${JSON.stringify(fetches)}`);
         }
-        if (editCount(fetches) !== 0) {
-          throw new Error(`unsupported custom must not edit: ${JSON.stringify(fetches)}`);
+        const edit = lastEdit(fetches);
+        if (!edit || !edit.body.text.includes("✏️ 回复文本作为答案，/cancel 取消")) {
+          throw new Error(`custom edit must show input hint: ${JSON.stringify(fetches)}`);
+        }
+        if (!edit.body.reply_markup?.inline_keyboard) {
+          throw new Error(`custom edit must keep keyboard: ${JSON.stringify(edit.body)}`);
         }
         const persisted = await findRecord("req-203e");
-        if (persisted.q_input !== undefined && persisted.q_input !== null) {
-          throw new Error(`q_input must not be set: ${JSON.stringify(persisted)}`);
+        if (!persisted || persisted.q_input !== 0) {
+          throw new Error(`q_input must be set to 0: ${JSON.stringify(persisted)}`);
         }
       } finally {
         await registry.mutate((reg) => markSessionResolved(reg, "req-203e"));
@@ -2588,22 +2611,24 @@ async function main() {
         return 42;
       };
       try {
-        // 发送阶段：键盘 = 选项行 + [✅ Submit, ❌ Cancel]（单问题多选不再无提交路径）。
+        // 发送阶段：键盘 = 选项行 + ✏️ Custom + [✅ Submit, ❌ Cancel]（单问题
+        // 多选不再无提交路径；Round 2 修订：custom 恒显示后 3 行，submitRow
+        // 索引 1→2）。
         await monitor.scanSessionQueue();
         if (!sentKeyboard) {
           throw new Error("single-question multi-select must be sent via keyboard");
         }
         const rows = sentKeyboard.inline_keyboard;
-        if (rows.length !== 2) {
+        if (rows.length !== 3) {
           throw new Error(
-            `expected 2 keyboard rows (options + submit/cancel), got ${rows.length}`,
+            `expected 3 keyboard rows (options + custom + submit/cancel), got ${rows.length}`,
           );
         }
         const optionRow = rows[0];
         if (optionRow.length !== 2) {
           throw new Error(`expected 2 option buttons, got ${optionRow.length}`);
         }
-        const submitRow = rows[1];
+        const submitRow = rows[2];
         if (
           submitRow.length !== 2 ||
           submitRow[0].text !== "✅ Submit" ||
@@ -2669,6 +2694,306 @@ async function main() {
         }
       } finally {
         await registry.mutate((reg) => markSessionResolved(reg, "req-202h"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // ---- API-207: interaction fixes (round 2) ----
+  // 契约 docs/modules/sessions-relay.md §14.8.7：① 任意题键盘恒含 ✏️ Custom
+  // （payload 无 custom 字段也含，§14.8.4）；② 汇总页导航含 ⬅️ Prev 且点击回
+  // 最后一题（§14.8.5）；③ 自定义输入后无 q_msg_id → 发新向导消息（多问题含
+  // 键盘 + 新 id 回写 / 单问题 ✅ Submitted 无键盘，§14.8.6）。
+  // 每个用例自包含 + 终态（resolved=true）。
+
+  // API-207-1：payload 无 custom 字段 → 初始发送键盘也含 ✏️ Custom 行。
+  await runCase(
+    "API-207-1 any question keyboard always contains Custom even without custom flag",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-207a", [
+            {
+              question: "题一",
+              options: [{ label: "A" }, { label: "B" }],
+            },
+            {
+              question: "题二",
+              options: [{ label: "C" }],
+            },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      let sentKeyboard;
+      monitor.sendMessage = async () => {};
+      monitor.sendMessageWithKeyboard = async (text, keyboard) => {
+        sentKeyboard = keyboard;
+        return 42;
+      };
+      try {
+        await monitor.scanSessionQueue();
+        if (!sentKeyboard) {
+          throw new Error("question must be sent via keyboard");
+        }
+        const rows = sentKeyboard.inline_keyboard;
+        if (rows.length !== 3) {
+          throw new Error(
+            `expected 3 keyboard rows (options + custom + nav), got ${rows.length}`,
+          );
+        }
+        const customRow = rows[1];
+        if (
+          customRow.length !== 1 ||
+          customRow[0].text !== "✏️ Custom" ||
+          customRow[0].callback_data !== "otg:q:req-207a:custom"
+        ) {
+          throw new Error(
+            `custom row must always render without custom flag: ${JSON.stringify(customRow)}`,
+          );
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-207a"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-207-2：多问题答完进总结 → 键盘含 ⬅️ Prev/✅ Submit/❌ Cancel；点击
+  // prev 从总结回最后一题（q_stage=length → length-1 落盘，答案保留）。
+  await runCase(
+    "API-207-2 summary nav has Prev and prev click returns to last question",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-207b", [
+            { question: "题一", options: [{ label: "A" }, { label: "B" }] },
+            { question: "题二", options: [{ label: "C" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      monitor.sendMessage = async () => {};
+      try {
+        // Q1 单选 → 自动跳 Q2。
+        await runQCallback(monitor, "otg:q:req-207b:o0");
+        // Q2 单选 → 自动进总结（stage=2）；编辑渲染总结键盘。
+        const fetches = await runQCallback(monitor, "otg:q:req-207b:o0");
+        const edit = lastEdit(fetches);
+        const rows = edit?.body?.reply_markup?.inline_keyboard ?? [];
+        const navRow = rows[rows.length - 1];
+        const navTexts = (navRow ?? []).map((button) => button.text).join("|");
+        if (navTexts !== "⬅️ Prev|✅ Submit|❌ Cancel") {
+          throw new Error(
+            `summary nav must be Prev/Submit/Cancel: ${navTexts} (${JSON.stringify(rows)})`,
+          );
+        }
+        // 总结点 prev → 回最后一题（stage=1），答案保留。
+        const prevFetches = await runQCallback(monitor, "otg:q:req-207b:prev");
+        const ans = answersOf(prevFetches);
+        if (ans.length !== 1 || ans[0].body.text !== "已跳转") {
+          throw new Error(`prev answer expected: ${JSON.stringify(prevFetches)}`);
+        }
+        const persisted = await findRecord("req-207b");
+        if (!persisted || persisted.q_stage !== 1) {
+          throw new Error(
+            `q_stage must return to 1 after summary prev: ${JSON.stringify(persisted)}`,
+          );
+        }
+        if (
+          !persisted ||
+          JSON.stringify(persisted.q_draft) !== JSON.stringify([["A"], ["C"]])
+        ) {
+          throw new Error(
+            `answers must be preserved: ${JSON.stringify(persisted)}`,
+          );
+        }
+        const prevEdit = lastEdit(prevFetches);
+        if (!prevEdit || !prevEdit.body.text.includes("Question 2/2")) {
+          throw new Error(
+            `prev must render last question: ${JSON.stringify(prevFetches)}`,
+          );
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-207b"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-207-3：多问题自定义输入后 q_msg_id 缺失 → 发一条新的当前阶段向导消息
+  // （含键盘）→ 新 message_id 回写；旧消息不动（无 editMessageText）。
+  await runCase(
+    "API-207-3 multi-question custom text without q_msg_id sends new wizard message with keyboard and writeback",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-207c", [
+            { question: "题一", options: [{ label: "A" }, { label: "B" }] },
+            { question: "题二", options: [{ label: "C" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      let sentKeyboard;
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
+      monitor.sendMessageWithKeyboard = async (text, keyboard) => {
+        sentKeyboard = keyboard;
+        sent.push(text);
+        return 777;
+      };
+      try {
+        // 进入输入模式（q_input=0）。
+        await runQCallback(monitor, "otg:q:req-207c:custom");
+        // 纯文本回复 → 推进到 Q2；无 q_msg_id → 兜底发新向导消息。
+        const fetches = [];
+        await stubFetch(fetches);
+        try {
+          await monitor.handleTelegramUpdate({
+            update_id: 1,
+            message: {
+              message_id: 99,
+              text: "自由回答",
+              from: { id: 123 },
+              chat: { id: 123, type: "private" },
+            },
+          });
+        } finally {
+          restoreFetch();
+        }
+        const persisted = await findRecord("req-207c");
+        if (
+          !persisted ||
+          JSON.stringify(persisted.q_draft) !== JSON.stringify([["自由回答"], []])
+        ) {
+          throw new Error(
+            `text answer not persisted: ${JSON.stringify(persisted)}`,
+          );
+        }
+        if (persisted.q_stage !== 1) {
+          throw new Error(`q_stage must advance to 1: ${JSON.stringify(persisted)}`);
+        }
+        // 旧消息不动：纯文本路径无 q_msg_id 无 callback 可兜底，不得编辑。
+        if (editCount(fetches) !== 0) {
+          throw new Error(`old message must not be edited: ${JSON.stringify(fetches)}`);
+        }
+        // 新向导消息：文本渲染 Q2 阶段 + 键盘（含 ✏️ Custom）。
+        if (!sent.some((text) => text.includes("Question 2/2"))) {
+          throw new Error(
+            `new wizard message must render question 2: ${JSON.stringify(sent)}`,
+          );
+        }
+        if (!sentKeyboard) {
+          throw new Error("new wizard message must carry keyboard");
+        }
+        const rowLabels = sentKeyboard.inline_keyboard.flatMap((row) =>
+          row.map((button) => button.text),
+        );
+        if (!rowLabels.includes("✏️ Custom")) {
+          throw new Error(
+            `new wizard keyboard must include Custom: ${JSON.stringify(sentKeyboard)}`,
+          );
+        }
+        // 新 message_id 回写（后续编辑/回调指向新消息）。
+        if (persisted.q_msg_id !== 777) {
+          throw new Error(
+            `q_msg_id must be written back: ${JSON.stringify(persisted)}`,
+          );
+        }
+        await monitor.dispose();
+        if (!sent.join(" ").includes("已记录第 1 题答案")) {
+          throw new Error(`confirmation missing: ${JSON.stringify(sent)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-207c"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-207-4：单问题自定义输入直接提交，q_msg_id 缺失 → 新消息含
+  // ✅ Submitted 终态文本、无键盘 + 回写新 message_id。
+  await runCase(
+    "API-207-4 single-question custom text without q_msg_id sends terminal message with Submitted and no keyboard",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-207d", [
+            { question: "请补充", options: [] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      let sentKeyboard = "unset";
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
+      monitor.sendMessageWithKeyboard = async (text, keyboard) => {
+        sent.push(text);
+        sentKeyboard = keyboard === undefined ? "no-keyboard" : "keyboard";
+        return 888;
+      };
+      try {
+        await runQCallback(monitor, "otg:q:req-207d:custom");
+        const fetches = [];
+        await stubFetch(fetches);
+        try {
+          await monitor.handleTelegramUpdate({
+            update_id: 1,
+            message: {
+              message_id: 100,
+              text: "/home/hipc/project",
+              from: { id: 123 },
+              chat: { id: 123, type: "private" },
+            },
+          });
+        } finally {
+          restoreFetch();
+        }
+        const persisted = await findRecord("req-207d");
+        if (
+          !persisted ||
+          JSON.stringify(persisted.q_answers) !==
+            JSON.stringify([["/home/hipc/project"]])
+        ) {
+          throw new Error(
+            `single-question text submit failed: ${JSON.stringify(persisted)}`,
+          );
+        }
+        if (editCount(fetches) !== 0) {
+          throw new Error(`old message must not be edited: ${JSON.stringify(fetches)}`);
+        }
+        if (!sent.some((text) => text.includes("✅ Submitted"))) {
+          throw new Error(
+            `new message must contain Submitted: ${JSON.stringify(sent)}`,
+          );
+        }
+        if (sentKeyboard !== "no-keyboard") {
+          throw new Error(`terminal message must have no keyboard: ${sentKeyboard}`);
+        }
+        if (persisted.q_msg_id !== 888) {
+          throw new Error(
+            `q_msg_id must be written back: ${JSON.stringify(persisted)}`,
+          );
+        }
+        await monitor.dispose();
+        if (!sent.join(" ").includes("已记录第 1 题答案")) {
+          throw new Error(`confirmation missing: ${JSON.stringify(sent)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-207d"));
         await monitor.dispose();
       }
     },

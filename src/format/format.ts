@@ -396,13 +396,18 @@ export function buildQuestionStageText(
 }
 
 /**
- * question 向导键盘（契约 sessions-relay.md §14.2.1，Round 4）：行序冻结——
+ * question 向导键盘（契约 sessions-relay.md §14.2.1，Round 4；Round 2 修订）：
+ * 行序冻结——
  * 1) 选项行（`questions[stage].options` 逐项平铺，data `otg:q:<entryID>:o<idx>`；
- * 多选且已选 → `✅ label`）；2) custom 行（仅 `custom === true`）；3) 导航/提交行
- * （多问题：非总结 `⬅️ Prev/➡️ Next/❌ Cancel`，总结 `✅ Submit/❌ Cancel`；
- * **单问题单选：无导航无提交**，只有选项行（+custom 若有）+ `❌ Cancel`（点选项
- * 直接提交形态）；**单问题多选（multiple:true）：选项 toggle + `✅ Submit` +
- * `❌ Cancel`**——否则 toggle 后无提交路径（契约 §14.2.1 修订，Phase 1.5）。
+ * 多选且已选 → `✅ label`）；2) custom 行（**恒显示**——契约 §14.8.4，Round 2
+ * 修订：真实 question payload 从不带 `custom: true`，移除 `custom === true` 条件，
+ * 有 current 即渲染）；3) 导航/提交行（多问题：非总结
+ * `⬅️ Prev/➡️ Next/❌ Cancel`，总结 `⬅️ Prev/✅ Submit/❌ Cancel`——契约 §14.8.5，
+ * Round 2 修订加 Prev，支持从总结回最后一题；
+ * **单问题单选：无导航无提交**，只有选项行 + `✏️ Custom` + `❌ Cancel`（点选项
+ * 直接提交形态）；**单问题多选（multiple:true）：选项 toggle + `✏️ Custom` +
+ * `✅ Submit` + `❌ Cancel`**——否则 toggle 后无提交路径（契约 §14.2.1 修订，
+ * Phase 1.5）。
  * entryID 由调用方（monitor）保证回调 ASCII 且 ≤ 64 字节（契约 §14.2.3）；
  * 本函数纯函数，不做长度断言（同 §13.3）。
  */
@@ -429,18 +434,27 @@ export function buildQuestionKeyboard(
         })),
       );
     }
-    if (current.custom === true) {
-      rows.push([
-        {
-          text: "✏️ Custom",
-          callback_data: `${OTG_Q_CB_PREFIX}${entryID}:custom`,
-        },
-      ]);
-    }
+    // 契约 §14.8.4（Round 2 修订）：✏️ Custom 恒显示——真实 question payload
+    // 从不带 `custom: true`（projects.json 全部真实记录零条有此字段），移除
+    // `custom === true` 条件；有 current 即渲染（总结阶段 current 为 undefined，
+    // 天然无 custom 行，键盘只含导航行）。
+    rows.push([
+      {
+        text: "✏️ Custom",
+        callback_data: `${OTG_Q_CB_PREFIX}${entryID}:custom`,
+      },
+    ]);
   }
   if (questions.length > 1) {
     if (stage === questions.length) {
+      // 契约 §14.8.5（Round 2 修订）：总结阶段导航行加 ⬅️ Prev——回调层
+      // prev 的 clamp 已支持从 stage=length 回最后一题（length-1），纯键盘
+      // 遗漏修复，回调逻辑零改动。
       rows.push([
+        {
+          text: "⬅️ Prev",
+          callback_data: `${OTG_Q_CB_PREFIX}${entryID}:prev`,
+        },
         {
           text: "✅ Submit",
           callback_data: `${OTG_Q_CB_PREFIX}${entryID}:submit`,
