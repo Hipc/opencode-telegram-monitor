@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { Session, Todo } from "@opencode-ai/sdk";
+import type { QuestionV2Info, Session, Todo } from "@opencode-ai/sdk";
 
 import {
   ICON_CANCELLED,
@@ -30,7 +30,7 @@ import type {
   TokensSummary,
   WaitingType,
 } from "../types";
-import { safeText, type RedactionContext } from "./redact";
+import { safeText, safeTextKeepPaths, type RedactionContext } from "./redact";
 import {
   escapeHtml,
   fieldRow,
@@ -285,6 +285,10 @@ export function buildMenuKeyboard(
 // （constants.ts 本轮零新增，决策 #9）。
 export const PERM_CB_PREFIX = "otg:perm:";
 
+// 契约 sessions-relay.md §14.2.1：question 向导 callback_data 前缀，与
+// PERM_CB_PREFIX 同款（constants.ts 保持零新增，决策 #9）。
+export const OTG_Q_CB_PREFIX = "otg:q:";
+
 /**
  * permission 记录的 TG 三按钮键盘（契约 sessions-relay.md §13.3，Round 2）：
  * 一行三按钮 Allow once / Allow always / Deny，callback_data
@@ -307,6 +311,168 @@ export function buildSessionPermissionKeyboard(
       ],
     ],
   };
+}
+
+/**
+ * question 向导单阶段文本渲染（契约 sessions-relay.md §14.2.1，Round 4）：
+ * titleLine(❓, projectLabel) + **单张** fieldTable（Type/Session/Question m/n/
+ * Header/选项行同表），整体经 limitMessage 截断。问题/选项/Header 文本值经
+ * safeTextKeepPaths（密钥/token 脱敏链同 safeText，跳过路径类规则——问题文本
+ * 含真实路径时原样展示）。纯函数，供 scanSessionQueue（初始消息）与回调状态机
+ * （阶段编辑，Phase 1.3）复用。
+ */
+export function buildQuestionStageText(
+  projectLabel: string,
+  type: "question",
+  sessionLabel: string,
+  questions: Array<QuestionV2Info>,
+  stage: number,
+  draft: Array<Array<string>>,
+  inputPending: boolean,
+  ctx: FormatContext,
+): string {
+  const rows = [
+    fieldRow("Type", type),
+    fieldRow("Session", sessionLabel),
+  ];
+  if (stage < questions.length) {
+    const current = questions[stage];
+    if (current) {
+      const m = stage + 1;
+      const n = questions.length;
+      rows.push(
+        fieldRow(
+          `Question ${m}/${n}`,
+          safeTextKeepPaths(current.question ?? "", 300, ctx),
+        ),
+      );
+      if (typeof current.header === "string") {
+        rows.push(
+          fieldRow("Header", safeTextKeepPaths(current.header, 300, ctx)),
+        );
+      }
+      const options = Array.isArray(current.options) ? current.options : [];
+      options.forEach((option, index) => {
+        if (typeof option?.label !== "string") return;
+        const multiple = current.multiple === true;
+        const selected = (draft[stage] ?? []).includes(option.label);
+        const label = safeTextKeepPaths(option.label, 200, ctx);
+        const description =
+          typeof option?.description === "string"
+            ? safeTextKeepPaths(option.description, 200, ctx)
+            : "";
+        // 多选且该选项已选 → 值前缀 `✅ `（契约 §14.2.1 行序冻结）。
+        const prefix = multiple && selected ? "✅ " : "";
+        rows.push(
+          fieldRow(
+            `Option ${index + 1}`,
+            description ? `${prefix}${label} — ${description}` : `${prefix}${label}`,
+          ),
+        );
+      });
+      if (inputPending) {
+        rows.push(fieldRow("输入", "✏️ 回复文本作为答案，/cancel 取消"));
+      }
+    }
+  } else {
+    // 总结阶段：每题一行 Question m/n → 已选答案或（未答）标注。
+    questions.forEach((question, index) => {
+      const answers = draft[index] ?? [];
+      const value =
+        answers.length > 0
+          ? safeTextKeepPaths(answers.join("、"), 300, ctx)
+          : "（未答）";
+      rows.push(
+        fieldRow(`Question ${index + 1}/${questions.length}`, value),
+      );
+    });
+  }
+  return limitMessage(
+    [
+      titleLine(iconForWaitingType(type), projectLabel),
+      fieldTable(rows),
+    ].join("\n"),
+  );
+}
+
+/**
+ * question 向导键盘（契约 sessions-relay.md §14.2.1，Round 4）：行序冻结——
+ * 1) 选项行（`questions[stage].options` 逐项平铺，data `otg:q:<entryID>:o<idx>`；
+ * 多选且已选 → `✅ label`）；2) custom 行（仅 `custom === true`）；3) 导航/提交行
+ * （多问题：非总结 `⬅️ Prev/➡️ Next/❌ Cancel`，总结 `✅ Submit/❌ Cancel`；
+ * **单问题请求无导航无提交**，只有选项行（+custom 若有）+ `❌ Cancel`）。
+ * entryID 由调用方（monitor）保证回调 ASCII 且 ≤ 64 字节（契约 §14.2.3）；
+ * 本函数纯函数，不做长度断言（同 §13.3）。
+ */
+export function buildQuestionKeyboard(
+  entryID: string,
+  questions: Array<QuestionV2Info>,
+  stage: number,
+  draft: Array<Array<string>>,
+): TelegramInlineKeyboard {
+  const rows: TelegramInlineButton[][] = [];
+  const current = questions[stage];
+  if (current) {
+    const options = Array.isArray(current.options) ? current.options : [];
+    if (options.length > 0) {
+      const selected = draft[stage] ?? [];
+      const multiple = current.multiple === true;
+      rows.push(
+        options.map((option, idx) => ({
+          text:
+            multiple && selected.includes(option.label)
+              ? `✅ ${option.label}`
+              : option.label,
+          callback_data: `${OTG_Q_CB_PREFIX}${entryID}:o${idx}`,
+        })),
+      );
+    }
+    if (current.custom === true) {
+      rows.push([
+        {
+          text: "✏️ Custom",
+          callback_data: `${OTG_Q_CB_PREFIX}${entryID}:custom`,
+        },
+      ]);
+    }
+  }
+  if (questions.length > 1) {
+    if (stage === questions.length) {
+      rows.push([
+        {
+          text: "✅ Submit",
+          callback_data: `${OTG_Q_CB_PREFIX}${entryID}:submit`,
+        },
+        {
+          text: "❌ Cancel",
+          callback_data: `${OTG_Q_CB_PREFIX}${entryID}:cancel`,
+        },
+      ]);
+    } else {
+      rows.push([
+        {
+          text: "⬅️ Prev",
+          callback_data: `${OTG_Q_CB_PREFIX}${entryID}:prev`,
+        },
+        {
+          text: "➡️ Next",
+          callback_data: `${OTG_Q_CB_PREFIX}${entryID}:next`,
+        },
+        {
+          text: "❌ Cancel",
+          callback_data: `${OTG_Q_CB_PREFIX}${entryID}:cancel`,
+        },
+      ]);
+    }
+  } else {
+    rows.push([
+      {
+        text: "❌ Cancel",
+        callback_data: `${OTG_Q_CB_PREFIX}${entryID}:cancel`,
+      },
+    ]);
+  }
+  return { inline_keyboard: rows };
 }
 
 export function helpText(): string {

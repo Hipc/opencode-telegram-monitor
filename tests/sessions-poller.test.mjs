@@ -504,7 +504,12 @@ async function main() {
       registry,
     );
     monitor.sendMessage = sendStub;
-    monitor.sendMessageWithKeyboard = async (text, keyboard) => sendStub(text);
+    // 契约 §14.6：stub 返回固定 message_id（42），供 question 向导 q_msg_id
+    // 回写断言（API-201）；permission 发送忽略返回值，兼容。
+    monitor.sendMessageWithKeyboard = async (text, keyboard) => {
+      await sendStub(text);
+      return 42;
+    };
     return monitor;
   }
 
@@ -900,6 +905,372 @@ async function main() {
         await monitor.dispose();
       } finally {
         restoreFetch();
+      }
+    },
+  );
+
+  // ---- Phase 1.2 (API-201) ----
+  // 契约 docs/modules/sessions-relay.md §14.2/§14.5：question 记录发送改走向导
+  // 渲染（supersede API-006-5/API-101-2 的「原文节选/无键盘」断言——两者因
+  // message 无 questions 字段仍走退化路径，断言原样成立，本区块显式覆盖新行为）：
+  // 初始消息 = Q1 阶段单表（Type/Session/Question m/n/Header/问题文本/选项行
+  // label+description）+ 键盘（选项 o<idx>；custom 题 ✏️；多题导航
+  // ⬅️/➡️/❌；单问题无导航直接提交形态）；sendMessageWithKeyboard 返回
+  // message_id → q_msg_id 回写；发送条件防御（q_answers!=null /
+  // q_reject=true 不发送）；message 无 questions → 退化原文节选 plain 发送。
+  function questionMessage(questions) {
+    return JSON.stringify({ questions });
+  }
+
+  // API-201-1：多问题请求（Q1 为 multiple + custom）→ 键盘发送恰 1 次；文本
+  // 含 Type/Session/Question 1/2/Header/问题文本/Option 1 label+description；
+  // 键盘行序冻结（选项 / ✏️ Custom / ⬅️ Prev+➡️ Next+❌ Cancel）；callback_data
+  // 全部 ≤ 64 字节；发送后 send=true 且 q_msg_id 回写（stub 返回 42）。
+  await runCase(
+    "API-201-1 question wizard initial send: single-table text + option/custom/nav keyboard + q_msg_id persisted",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-201a",
+            type: "question",
+            message: questionMessage([
+              {
+                question: "请选择操作方式",
+                header: "操作选择",
+                options: [
+                  { label: "读取", description: "读取项目文件" },
+                  { label: "写入", description: "写入项目文件" },
+                ],
+                multiple: true,
+                custom: true,
+              },
+              {
+                question: "请确认改动范围",
+                options: [
+                  { label: "全局", description: "影响所有文件" },
+                  { label: "局部", description: "仅当前文件" },
+                ],
+              },
+            ]),
+          }),
+        ),
+      );
+      const calls = [];
+      const monitor = new TelegramSessionMonitor(
+        fakeClient,
+        fakeConfig,
+        root,
+        registry,
+      );
+      monitor.sendMessage = async (text) => {
+        calls.push({ kind: "plain", text });
+      };
+      monitor.sendMessageWithKeyboard = async (text, keyboard) => {
+        calls.push({ kind: "keyboard", text, keyboard });
+        return 42;
+      };
+      const handled = await monitor.scanSessionQueue();
+      await monitor.dispose();
+      if (handled !== 1) {
+        throw new Error(`expected 1 handled, got ${handled}`);
+      }
+      if (calls.length !== 1 || calls[0].kind !== "keyboard") {
+        throw new Error(
+          `question must be sent via keyboard: ${JSON.stringify(calls)}`,
+        );
+      }
+      const text = calls[0].text;
+      if (!text.includes("❓")) {
+        throw new Error(`missing ❓ title line: ${text}`);
+      }
+      if (!text.includes("Type") || !text.includes("Session")) {
+        throw new Error(`missing Type/Session table fields: ${text}`);
+      }
+      if (!text.includes("Question 1/2")) {
+        throw new Error(`missing Question m/n row: ${text}`);
+      }
+      if (!text.includes("请选择操作方式")) {
+        throw new Error(`missing question text: ${text}`);
+      }
+      if (!text.includes("Header") || !text.includes("操作选择")) {
+        throw new Error(`missing Header row: ${text}`);
+      }
+      if (
+        !text.includes("Option 1") ||
+        !text.includes("读取 — 读取项目文件")
+      ) {
+        throw new Error(`missing option label+description row: ${text}`);
+      }
+      if (
+        !text.includes("Option 2") ||
+        !text.includes("写入 — 写入项目文件")
+      ) {
+        throw new Error(`missing second option row: ${text}`);
+      }
+      const rows = calls[0].keyboard.inline_keyboard;
+      if (rows.length !== 3) {
+        throw new Error(`expected 3 keyboard rows, got ${rows.length}`);
+      }
+      const optionRow = rows[0];
+      if (optionRow.length !== 2) {
+        throw new Error(`expected 2 option buttons, got ${optionRow.length}`);
+      }
+      if (optionRow[0].callback_data !== "otg:q:req-201a:o0") {
+        throw new Error(`unexpected option data: ${optionRow[0].callback_data}`);
+      }
+      if (optionRow[1].callback_data !== "otg:q:req-201a:o1") {
+        throw new Error(`unexpected option data: ${optionRow[1].callback_data}`);
+      }
+      const customRow = rows[1];
+      if (
+        customRow.length !== 1 ||
+        customRow[0].text !== "✏️ Custom" ||
+        customRow[0].callback_data !== "otg:q:req-201a:custom"
+      ) {
+        throw new Error(`unexpected custom row: ${JSON.stringify(customRow)}`);
+      }
+      const navRow = rows[2];
+      if (
+        navRow.length !== 3 ||
+        navRow[0].text !== "⬅️ Prev" ||
+        navRow[1].text !== "➡️ Next" ||
+        navRow[2].text !== "❌ Cancel"
+      ) {
+        throw new Error(`unexpected nav row: ${JSON.stringify(navRow)}`);
+      }
+      if (
+        navRow[0].callback_data !== "otg:q:req-201a:prev" ||
+        navRow[1].callback_data !== "otg:q:req-201a:next" ||
+        navRow[2].callback_data !== "otg:q:req-201a:cancel"
+      ) {
+        throw new Error(`unexpected nav data: ${JSON.stringify(navRow)}`);
+      }
+      const allData = rows.flatMap((row) =>
+        row.map((button) => button.callback_data ?? ""),
+      );
+      for (const data of allData) {
+        if (Buffer.byteLength(data, "utf8") > 64) {
+          throw new Error(`callback_data exceeds 64 bytes: ${data}`);
+        }
+      }
+      const persisted = await findRecord("req-201a");
+      if (!persisted || persisted.send !== true) {
+        throw new Error(
+          `send not set after wizard send: ${JSON.stringify(persisted)}`,
+        );
+      }
+      if (!persisted || persisted.q_msg_id !== 42) {
+        throw new Error(
+          `q_msg_id not written back (expected 42): ${JSON.stringify(persisted)}`,
+        );
+      }
+    },
+  );
+
+  // API-201-2：单问题请求 → 键盘**无导航无 Submit**（直接提交形态）——只有
+  // 选项行 + ❌ Cancel。
+  await runCase(
+    "API-201-2 single-question request keyboard has options + Cancel only (no nav/no submit)",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-201b",
+            type: "question",
+            message: questionMessage([
+              {
+                question: "是否允许读取该目录",
+                header: "确认",
+                options: [
+                  { label: "允许", description: "允许读取" },
+                  { label: "拒绝", description: "拒绝读取" },
+                ],
+              },
+            ]),
+          }),
+        ),
+      );
+      const calls = [];
+      const monitor = new TelegramSessionMonitor(
+        fakeClient,
+        fakeConfig,
+        root,
+        registry,
+      );
+      monitor.sendMessage = async (text) => {
+        calls.push({ kind: "plain", text });
+      };
+      monitor.sendMessageWithKeyboard = async (text, keyboard) => {
+        calls.push({ kind: "keyboard", text, keyboard });
+        return 42;
+      };
+      const handled = await monitor.scanSessionQueue();
+      await monitor.dispose();
+      if (handled !== 1) {
+        throw new Error(`expected 1 handled, got ${handled}`);
+      }
+      if (calls.length !== 1 || calls[0].kind !== "keyboard") {
+        throw new Error(
+          `single question must be sent via keyboard: ${JSON.stringify(calls)}`,
+        );
+      }
+      const text = calls[0].text;
+      if (!text.includes("Question 1/1")) {
+        throw new Error(`missing Question 1/1 row: ${text}`);
+      }
+      if (!text.includes("是否允许读取该目录")) {
+        throw new Error(`missing question text: ${text}`);
+      }
+      const rows = calls[0].keyboard.inline_keyboard;
+      if (rows.length !== 2) {
+        throw new Error(`expected 2 keyboard rows (options + cancel), got ${rows.length}`);
+      }
+      const optionRow = rows[0];
+      if (optionRow.length !== 2) {
+        throw new Error(`expected 2 option buttons, got ${optionRow.length}`);
+      }
+      const cancelRow = rows[1];
+      if (
+        cancelRow.length !== 1 ||
+        cancelRow[0].text !== "❌ Cancel" ||
+        cancelRow[0].callback_data !== "otg:q:req-201b:cancel"
+      ) {
+        throw new Error(`unexpected cancel row: ${JSON.stringify(cancelRow)}`);
+      }
+      const navLabels = [
+        "⬅️ Prev",
+        "➡️ Next",
+        "✅ Submit",
+      ];
+      const allLabels = rows.flatMap((row) => row.map((button) => button.text));
+      if (navLabels.some((label) => allLabels.includes(label))) {
+        throw new Error(
+          `single-question keyboard must not contain nav/submit: ${JSON.stringify(allLabels)}`,
+        );
+      }
+    },
+  );
+
+  // API-201-3：发送条件防御——q_answers != null / q_reject === true 的未发送
+  // 记录不发送初始消息（走消费端 apply，契约 §14.2.2）；记录留在用例内闭环
+  // 到 resolved=true（终态纪律 §14.5，避免 1.4 扫描器扫到）。
+  await runCase(
+    "API-201-3 records with q_answers set or q_reject=true are not sent",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-201c",
+            type: "question",
+            send: false,
+            resolved: false,
+            q_answers: [["允许"]],
+            message: questionMessage([
+              {
+                question: "是否允许读取",
+                options: [{ label: "允许", description: "允许读取" }],
+              },
+            ]),
+          }),
+        ),
+      );
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-201d",
+            type: "question",
+            send: false,
+            resolved: false,
+            q_reject: true,
+            message: questionMessage([
+              {
+                question: "是否允许读取",
+                options: [{ label: "允许", description: "允许读取" }],
+              },
+            ]),
+          }),
+        ),
+      );
+      const calls = [];
+      const monitor = makeMonitor(async (text) => {
+        calls.push(text);
+      });
+      const handled = await monitor.scanSessionQueue();
+      await monitor.dispose();
+      if (handled !== 0) {
+        throw new Error(`expected 0 handled, got ${handled}`);
+      }
+      if (calls.length !== 0) {
+        throw new Error(`expected 0 sends, got ${calls.length}`);
+      }
+      // 终态纪律：用例内闭环到 resolved，避免遗留 q_* 已置且 unresolved 记录。
+      await registry.mutate((reg) => markSessionResolved(reg, "req-201c"));
+      await registry.mutate((reg) => markSessionResolved(reg, "req-201d"));
+    },
+  );
+
+  // API-201-4：message 无 questions（非向导 payload）→ 退化原文节选
+  // plain 发送（防御，question 记录永远可达）；无键盘、无 q_msg_id 回写。
+  await runCase(
+    "API-201-4 question without questions array falls back to plain excerpt send",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-201e",
+            type: "question",
+            message: JSON.stringify({ tool: "bash", command: "ls -la" }),
+          }),
+        ),
+      );
+      const calls = [];
+      const monitor = new TelegramSessionMonitor(
+        fakeClient,
+        fakeConfig,
+        root,
+        registry,
+      );
+      monitor.sendMessage = async (text) => {
+        calls.push({ kind: "plain", text });
+      };
+      monitor.sendMessageWithKeyboard = async (text, keyboard) => {
+        calls.push({ kind: "keyboard", text, keyboard });
+        return 42;
+      };
+      const handled = await monitor.scanSessionQueue();
+      await monitor.dispose();
+      if (handled !== 1) {
+        throw new Error(`expected 1 handled, got ${handled}`);
+      }
+      if (calls.length !== 1 || calls[0].kind !== "plain") {
+        throw new Error(
+          `no-questions message must fall back to plain send: ${JSON.stringify(calls)}`,
+        );
+      }
+      if (!calls[0].text.includes("ls -la")) {
+        throw new Error(`fallback excerpt missing payload text: ${calls[0].text}`);
+      }
+      const persisted = await findRecord("req-201e");
+      if (!persisted || persisted.send !== true) {
+        throw new Error(
+          `send not set after fallback send: ${JSON.stringify(persisted)}`,
+        );
+      }
+      if (persisted.q_msg_id !== undefined) {
+        throw new Error(
+          `q_msg_id must not be written on fallback path: ${JSON.stringify(persisted)}`,
+        );
       }
     },
   );
