@@ -1,7 +1,7 @@
 # sessions-relay 模块契约（等待状态落盘 + poller 扫描中继）
 
 > 冻结: 2026-09-02（Round 1 / sessions-tg-relay；**Round 2 / tg-permission-buttons 扩展见 §13**；
-> Round 2.1 / 结构化渲染修订见 §13.11）
+> Round 2.1 / 结构化渲染修订见 §13.11；**Round 3 / 单表渲染修订见 §13.12**）
 > 文件: `src/registry/index.ts`（记录类型与纯函数）、
 > `src/monitor.ts`（写入端 Phase 1.2 / 扫描端 Phase 1.3）、`src/constants.ts`（扫描间隔常量，仅 Phase 1.3）
 > 计划: docs/todos/sessions-tg-relay.md（Round 1）、docs/todos/tg-permission-buttons.md（Round 2）
@@ -323,6 +323,8 @@ export function markSessionSent(
 | docs/00-overview.md「只读」声明 | 「插件绝不代答（monitor.ts 中无任何 permission.reply/question 代答路径）」 | 同上：2026-09-02 起支持 TG 审批回写（点击驱动）；monitor.ts 新增 reply API 调用路径为按钮显式触发 |
 | 本文件 §6.2 消息格式 | permission 记录渲染 = 「message 节选」 | Round 2.1（Phase 2.1）supersede：permission 记录改为解析 message JSON 后的结构化字段行（§13.11）；question 记录仍为原文节选（§6.2 对 question 保持有效） |
 | 本文件 §13.3「formatSessionRecordMessage 零改动」 | 1.2 不碰该函数体（文本格式不变） | Round 2.1 supersede：函数体由 Phase 2.1 修改为结构化渲染（§13.11）；「1.2 不在该轮改此函数」的约束仍成立，且发送通道/键盘/筛选条件零变化 |
+| 本文件 §13.11 渲染规则 | permission 记录 = Type/Session 表 + Permission/Pattern/Title 表（**两张** fieldTable）+ 原文节选 fallback；结构化值经 `safeText`（路径脱敏 `<external-path>`/`<project>`/40+ 长 blob） | Round 3（本轮 permission-pattern-table）supersede：**单张** fieldTable（Type/Session/Permission/Pattern N 同表）、**Title 行移除**、Pattern 逐行编号（单 `Pattern` / 多 `Pattern 1/2/…`）、结构化值改 `safeTextKeepPaths`（保留密钥/token 脱敏、**放开路径脱敏**显示真实路径）；fallback（原文节选 300 字符）与 `limitMessage` 保持（§13.12） |
+| 本文件 §13.11 编辑区间 | Round 2.1：仅 `formatSessionRecordMessage`（1791-1810）+ tests 尾部追加 API-105 | 本轮 §13.12：1.1 独占 `src/format/redact.ts` + 新测试文件 `tests/redact-keep-paths.test.mjs`；1.2 独占 `src/monitor.ts`（import 块 48-82 + 方法体 1794-1859）+ `tests/sessions-poller.test.mjs`（API-105 区块 907-1001 + 尾部追加） |
 
 ## 12. 变更记录
 
@@ -338,6 +340,12 @@ export function markSessionSent(
   supersede「message 原文节选」→ 解析 message JSON 的结构化字段行（Session/Type/Permission/Pattern(s)/Title，
   宽松缺字段跳行；解析失败或无字段退回 300 字符原文节选）；question 记录渲染不变；发送通道与键盘零变化。
   supersede 记录见 §11，测试编号新增 API-105（§13.9）。
+- 2026-09-02 冻结（Round 3 / permission-pattern-table，见 §13.12）：permission 记录渲染 supersede
+  §13.11——**单张 fieldTable**（Type/Session/Permission/Pattern N 同表）、**移除 Title 行**、Pattern
+  逐项逐行编号（单 `Pattern` / 多 `Pattern 1/2/…`）、结构化值改 `safeTextKeepPaths`（密钥/token 脱敏链
+  与 safeText 完全一致、跳过三条路径类规则，真实路径可见）；新增 `safeTextKeepPaths` 导出契约与
+  1.1/1.2 编辑区间（零交集）；fallback（原文节选 300 字符）与 `limitMessage` 保持；测试编号
+  REDACT-001~003 / API-105 更新 + API-106 新增。supersede 记录见 §11。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
 
@@ -626,3 +634,126 @@ export function buildSessionPermissionKeyboard(entryID: string): TelegramInlineK
   `// ---- API-105: structured rendering (round 2) ----`），单 phase 无合并冲突顾虑。
 - **发送通道与键盘契约零变化**：permission 记录仍走 sendMessageWithKeyboard 三按钮（§13.3），
   回调/回写/消费端（§13.4~§13.6）不受渲染改动影响。
+
+### 13.12 单表渲染修订：Type/Session/Permission/Pattern 同一张 fieldTable（Round 3 冻结）
+
+> 计划: docs/todos/permission-pattern-table.md（其 Round 1；本模块契约序列 Round 3）。
+> **本小节 supersede §13.11 的渲染规则与编辑区间**（差异记录见 §11）：permission 记录的结构化渲染
+> 由「Type/Session 表 + Permission/Pattern/Title 表（两张）」改为**单张 fieldTable**（
+> Type/Session/Permission/Pattern N 全部同表），**移除 Title 行**，Pattern 逐行编号，结构化值改用
+> **keep-paths 脱敏**（`safeTextKeepPaths`，真实路径可见）；fallback 与 `limitMessage` 保持。
+> 发送通道（scanSessionQueue → sendMessage/sendMessageWithKeyboard）、键盘构建（§13.3/§13.4）、
+> 筛选条件（§13.3 `reply == null`）、消费端（§13.6）与 question 记录渲染全部零变化。
+
+**触发（冻结）**：
+
+- 结构化路径仍只对 `type === "permission"` 生效；`type === "question"` 记录渲染不变
+  （恒为 message 原文节选，paragraph，300 字符）。
+- 结构骨架不变：`titleLine(iconForWaitingType(record.type), 项目label)` + **单张**
+  `fieldTable(rows)` + （结构化行 | 节选），整体 `limitMessage` 截断（⚠️ 图标 + 项目名开头）。
+
+#### 13.12.1 Phase 1.1 契约：`safeTextKeepPaths`（src/format/redact.ts 新增导出，冻结）
+
+```ts
+export function safeTextKeepPaths(
+  value: string,
+  limit: number,
+  ctx: RedactionContext,
+): string
+```
+
+- **密钥/token 脱敏链与 `safeText` 完全一致**（逐条原样、顺序不得变，均已在 redact.ts 现有链中）：
+
+| # | 规则 | 替换为 |
+|---|---|---|
+| 1 | `-----BEGIN ...PRIVATE KEY\|CERTIFICATE----- ... -----END ...-----`（PEM 块） | `[REDACTED_KEY]` |
+| 2 | `ctx.botToken`（`replaceAll`） | `[REDACTED]` |
+| 3 | `\b\d{6,}:[A-Za-z0-9_-]{20,}\b`（TG token 形态） | `[REDACTED]` |
+| 4 | `\bBearer\s+[A-Za-z0-9._~+/=-]{8,}` | `Bearer [REDACTED]` |
+| 5 | `\b(?:sk-(?:ant-)?\|gh[pousr]_)[A-Za-z0-9_-]{12,}\b`（sk-/ghp_ 等） | `[REDACTED]` |
+| 6 | `\b(?:github_pat_\|npm_\|hf_)[A-Za-z0-9_-]{16,}\b` | `[REDACTED]` |
+| 7 | `\b(?:glpat-\|xox[baprs]-\|pypi-)[A-Za-z0-9_-]{12,}\b` | `[REDACTED]` |
+| 8 | `\bAIza[A-Za-z0-9_-]{30,}\b`（Google） | `[REDACTED]` |
+| 9 | `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`（JWT） | `[REDACTED]` |
+| 10 | `\bAKIA[A-Z0-9]{16}\b`（AWS） | `[REDACTED]` |
+| 11 | `\b[A-Z0-9_]*(?:API[_-]?KEY\|ACCESS[_-]?KEY\|PRIVATE[_-]?KEY\|PASSWORD\|PASSWD\|SECRET\|TOKEN\|AUTHORIZATION\|CREDENTIALS\|COOKIE)[A-Z0-9_]*\b\s*[:=]\s*[^\s,;]+`（KEY=xxx） | `[REDACTED_SECRET]` |
+| 12 | `\b(?:https?\|postgres(?:ql)?\|mysql\|mongodb(?:\+srv)?\|redis\|amqp):\/\/\S+`（URL） | `[REDACTED_URL]` |
+
+- **跳过三条路径类规则**（与 `safeText` 的唯一差异点，**全部跳过**）：
+  1. `ctx.root` → `<project>` 替换；
+  2. 绝对路径 `(^|[\s=:"'(])\/(?:[^\s/]+\/)*[^\s,;)]*` → `<external-path>`；
+  3. `\b[A-Za-z0-9_+/=-]{40,}\b` → `[REDACTED_VALUE]`——该规则字符类含 `/`，40+ 字符的绝对路径
+     会被整段误杀（用户痛点根因），必须跳过。
+- **空白折叠**（`\s+` → `" "`）、`trim()`、**limit 截断**（`length <= limit` 原样，否则
+  `slice(0, limit - 3) + "..."`）与 `safeText` 完全一致。
+- **既有导出零行为变化**：`safeText`/`safePath`/`safeToolTarget`/`safeProgress` 不得改动；
+  允许抽私有共享 helper 复用密钥链（1-12），但**规则与顺序不得变**；路径类三条只在
+  `safeText` 内保留。
+- **barrel**：`src/format/index.ts` 已 `export * from "./redact"`，新导出自动可用，**index.ts
+  零改动**；monitor.ts 仅 import 块追加一个导入名（1.2 地盘）。
+
+#### 13.12.2 Phase 1.2 契约：`formatSessionRecordMessage` 新渲染（src/monitor.ts 1794-1859）
+
+渲染流程（冻结）：
+
+1. `try { parsed = JSON.parse(record.message) } catch { → fallback }`。
+2. `parsed` 非普通对象（null/数组/非 object）→ fallback。
+3. **行序（rows 数组顺序冻结，全部进同一张 `fieldTable(rows)`）**：
+   - `Type`：`record.type`（fieldRow 直出，不经脱敏——字面量 `"permission"`/`"question"`）。
+   - `Session`：`safeText(record.session_name || shortID(record.session_id), 100, ctx)`（原样）。
+   - `Permission`（宽松跳行）：来源 `parsed.permission ?? parsed.action ?? parsed.type`；
+     值为 string 才输出；值 = `safeTextKeepPaths(value, 300, ctx)`。
+   - `Pattern` 行（宽松跳行，**逐项单独一行**）：来源
+     `parsed.patterns ?? parsed.resources ?? parsed.pattern`；数组归一
+     （`Array.isArray ? arr : [arr]`，仅保留 string 项），逐项一行：
+     - 恰 1 项 → 标签 `Pattern`；
+     - ≥2 项 → 标签 `Pattern 1` / `Pattern 2` / …（从 1 起，按数组序）；
+     - 每项值 = `safeTextKeepPaths(item, 300, ctx)`。
+   - **`Title` 行移除**：`parsed.title` 不再渲染（决策 #2），也不参与「有无输出」判定。
+4. 单表输出：`fieldTable(rows)` 一张（Type/Session/Permission/Pattern N 全在其中）。
+
+fallback（冻结，supersede §13.11 fallback 的判定口径）：`JSON.parse` 抛错、parsed 非对象、
+或 **Permission 与 Pattern 行均无输出**（无可展示字段）→ 在单表**之后**追加
+`paragraph(safeText(record.message, 300, ctx))`（message 原文节选，300 字符，**路径脱敏照旧**
+——fallback 走 `safeText` 而非 `safeTextKeepPaths`）。**不得**在 fallback 时抛错中断发送链。
+
+question 记录：渲染零改动（恒为 message 原文节选 paragraph，300 字符，`safeText`）。
+
+整体：`parts = [titleLine(iconForWaitingType(record.type), projectLabel), fieldTable(rows), body]`
+`join("\n")` 后经 `limitMessage`（不变）。
+
+#### 13.12.3 测试编号契约（supersede §13.9 维护归属）
+
+| 编号 | 定义 | 文件 | 维护 phase |
+|---|---|---|---|
+| REDACT-001 | keep-paths：绝对路径 `/a/b/c.ts` 与 45 字符长路径**原样保留**，无 `<external-path>`/`<project>`/`[REDACTED_VALUE]` | `tests/redact-keep-paths.test.mjs`（新建） | 1.1 |
+| REDACT-002 | keep-paths：botToken 与 `sk-xxx` 密钥仍被 `[REDACTED]`（密钥链与 safeText 一致） | 同上 | 1.1 |
+| REDACT-003 | keep-paths：limit 截断加 `...` 尾，与 safeText 行为一致 | 同上 | 1.1 |
+| API-105（更新） | 单表渲染：permission 记录（多 patterns）→ **恰 1 个 `<table`**、`Permission` 行、`Pattern 1`/`Pattern 2` 编号行、单 pattern 标签 `Pattern`、**无 Title 行**、无 `{` 开头 JSON dump；非法 JSON / `{}` → 退回原文节选（无结构化行） | `tests/sessions-poller.test.mjs`（API-105 区块更新，§13.12.4） | 1.2 |
+| API-106（新增） | 真实路径：pattern 为绝对路径 + 45 字符长路径 → **原样出现**，无 `<external-path>`/`<project>`/`[REDACTED_VALUE]` | `tests/sessions-poller.test.mjs`（尾部追加，§13.12.4） | 1.2 |
+
+- **既有断言最小修正规则**：API-105-1 的 Title 断言（`includes("Title")` /
+  `includes("Allow access to external directory")`）必须移除/改判（Title 行已删）；其余既有
+  API-006/101~104 断言若受单表化影响，允许**最小**修正并在任务报告注明；API-006-5 的
+  Type/Session 存在性断言不受影响。
+- REDACT 单测可直接 `bun tests/redact-keep-paths.test.mjs`（behavior.test.mjs 先例：直接
+  import src TS，无需 HOME 隔离）；sessions-poller 仍 `HOME=$(mktemp -d) bun ...`。
+
+#### 13.12.4 编辑区间分配（防合并冲突，冻结；两 phase 文件集零交集）
+
+| Phase | 独占文件/区间 | 内容 |
+|---|---|---|
+| 1.1 | `src/format/redact.ts`（新增导出 + 可选私有共享 helper） | `safeTextKeepPaths`；既有导出零改动 |
+| 1.1 | `tests/redact-keep-paths.test.mjs`（新建文件） | REDACT-001~003 |
+| 1.2 | `src/monitor.ts` import 块（48-82 区，`./format` 命名导入） | 追加 `safeTextKeepPaths` 导入名一行 |
+| 1.2 | `src/monitor.ts` `formatSessionRecordMessage` 方法体（1794-1859） | 单表渲染重写（§13.12.2） |
+| 1.2 | `tests/sessions-poller.test.mjs`（API-105 区块 907-1001 + 尾部追加） | API-105 更新 + API-106 新增 |
+
+- 1.1 不得碰 monitor.ts / sessions-poller.test.mjs；1.2 不得碰 redact.ts。
+- 行号为冻结时参考，随实现漂移 ±数行以函数名/区块界定为准。
+
+#### 13.12.5 明确不做（Round 3 补充）
+
+- 不新增/删除任何密钥类脱敏规则（仅路径类差异）；不碰发送通道/键盘/筛选/消费端（§13.3~§13.6）。
+- 不改 `html.ts`（fieldRow/fieldTable/titleLine 原样复用）；不改 `constants.ts`。
+- 不做 question 记录单表化（保持原文节选）；不做 fallback 走 keep-paths（路径脱敏照旧）。

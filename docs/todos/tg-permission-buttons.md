@@ -1,6 +1,6 @@
 # TG permission 按钮 + 回写应用闭环（round 2）
 
-> 状态: in-progress
+> 状态: completed
 > 创建: 2026-09-02
 > 当前轮次: Round 2
 > 关联文档: docs/modules/sessions-relay.md（上轮冻结契约，本轮多处 supersede）、docs/todos/sessions-tg-relay.md（上轮交付）
@@ -316,7 +316,7 @@ stub——**区块插在 API-006-2 用例收尾 `);` 之后**，与 1.2 尾部�
     （老插件并存），部署侧由用户清理（停止旧进程/替换产物/重启），不在代码修复范围。
 - **本轮只修代码**：formatSessionRecordMessage 渲染（用户确认：恢复旧直发通知的可读格式）。
 
-### Phase 2.1: formatSessionRecordMessage 结构化渲染 ⬜
+### Phase 2.1: formatSessionRecordMessage 结构化渲染 ✅
 
 **目标**: permission 记录的 TG 消息从「JSON 原文节选」改为解析 message JSON 后的结构化字段行
 （旧 notifyWaiting 风格），解析失败退回原文节选。发送通道与键盘逻辑零改动。
@@ -351,14 +351,23 @@ stub——**区块插在 API-006-2 用例收尾 `);` 之后**，与 1.2 尾部�
 
 **验收标准**:
 
-- [ ] API-105 全绿；sessions-poller 全套回归绿
-- [ ] `node scripts/build.mjs` exit 0
-- [ ] 渲染产物不含未解析的 JSON 原文（合法可解析记录场景）
+- [x] API-105 全绿；sessions-poller 全套回归绿
+- [x] `node scripts/build.mjs` exit 0
+- [x] 渲染产物不含未解析的 JSON 原文（合法可解析记录场景）
+
+**实现记录**（2026-09-02，分支 `phase-r2-p2.1`，SHA `f435207`，merge `7d5dafd`）：
+- 全部验收达成：sessions-poller 19/19（API-105-1/2/3 新增 + 全部既有回归）；构建 exit 0（109.36KB）。
+- 结构化路径仅对 permission 生效；Permission=`permission??action??type`、Pattern=`patterns??resources??pattern`、Title=`title`（契约 §13.11 字段表），宽松渲染缺字段跳行；三行均无输出或解析失败 → 退回 300 字符原文节选；question 渲染零改动。
+- 行号漂移：formatSessionRecordMessage 现 1794-1858（仅该函数改动，发送链/键盘零触碰）。
+- 行为观察（非缺陷）：safeText 既有脱敏会把绝对路径 pattern 替换为 `<external-path>` 占位——与既有去敏设计一致。
+- 既有断言无需修改；API-006-1 的 `includes("read file")` 语义迁移为来自结构化 Permission 行（断言仍绿）。
 
 ### Round 2 整体测试记录
 
-- 测试结论：【通过】/【不通过】（待填）
-- 失败摘要与根因归属：（待填）
+- 测试结论：【通过】（2026-09-02，main @ `7d5dafd`）
+- 47/47 单测 + 3/3 bundle 断言全绿：behavior 8 + registry-sessions 15 + registry-concurrency 5 + sessions-poller 19（API-105×3 首跑即绿，全部既有回归未破坏）；BUILD-001 exit 0 + BUILD-002 3/3。
+- 失败摘要与根因归属：无失败。
+- 残余风险：真实 TG 端到端（结构化行 + 按钮 + 点击回写）待用户按部署清单人工冒烟；极端长字段 limitMessage 截断观感未自动化验证。
 
 ### 部署清单（用户手工执行，代码合并后）
 
@@ -367,3 +376,10 @@ stub——**区块插在 API-006-2 用例收尾 `);` 之后**，与 1.2 尾部�
 3. 将产物 `monitor.ts` 复制到 `~/.config/opencode/plugins/telegram-session-monitor.ts`
 4. 重启 opencode，确认只剩一个 poller（tgdiag.log 无 409）
 5. 触发一次真实 permission 请求，肉眼验证：结构化字段行 + 三按钮 + 点击后按钮移除/结果行 + TUI 侧真实生效
+
+## 交付总结
+
+- **Round 1**（按钮 + 回写闭环）：1 轮通过，详见上文。
+- **Round 2**（渲染修复）：1 轮通过。真实环境诊断确认发送通道无罪（sendRichMessage+reply_markup 实测可出按钮，E2E-201/210），根因 = 旧版产物进程持锁发送旧格式；代码侧修复 formatSessionRecordMessage 结构化渲染（提交 `f435207`，merge `7d5dafd`，47/47 测试全绿）。
+- **诊断产物**：`tests/e2e/real-keyboard-channel.test.mjs`、`real-keyboard-channel-diag.test.mjs`、`real-permission-record.test.mjs`（真实凭据诊断测试，untracked 未入库——含凭据路径读取逻辑，默认不入库；如需保留请自行处理）。
+- **待用户执行**：上文「部署清单」5 步（重建 → 清旧进程 → 替换产物 → 重启 → 冒烟）。
