@@ -1953,8 +1953,9 @@ async function main() {
     },
   );
 
-  // API-202-4：Submit 守卫——非总结阶段 Unknown action；带未答题提交 →
-  // 提示题号、不提交不编辑；全答 → q_answers 写入 + ✅ 编辑（键盘移除）。
+  // API-202-4：Submit 守卫——任意阶段可提交（Phase 1.5 修订，契约 §14.3.1；
+  // 原先非总结阶段 Unknown action 已取消）；带未答题提交 → 提示题号、
+  // 不提交不编辑；全答 → q_answers 写入 + ✅ 编辑（键盘移除）。
   await runCase(
     "API-202-4 submit gate: reject unanswered with question number, then submit all → q_answers + ✅ edit",
     async () => {
@@ -1989,12 +1990,13 @@ async function main() {
         if (persisted.q_answers != null) {
           throw new Error(`q_answers must not be written on rejected submit: ${JSON.stringify(persisted)}`);
         }
-        // 非总结阶段 submit → Unknown action。
+        // 非总结阶段 submit：守卫已放宽为任意 stage（Phase 1.5，契约 §14.3.1
+        // 修订）——不再 Unknown action，仍走 draft 非空校验：Q1 未答 → 提示题号。
         await runQCallback(monitor, "otg:q:req-202d:prev");
         fetches = await runQCallback(monitor, "otg:q:req-202d:submit");
         ans = answersOf(fetches);
-        if (ans.length !== 1 || ans[0].body.text !== "Unknown action") {
-          throw new Error(`non-summary submit must answer Unknown action: ${JSON.stringify(fetches)}`);
+        if (ans.length !== 1 || ans[0].body.text !== "第 1 题未作答，请先作答") {
+          throw new Error(`non-summary submit must answer unanswered hint: ${JSON.stringify(fetches)}`);
         }
         if (editCount(fetches) !== 0) {
           throw new Error(`non-summary submit must not edit: ${JSON.stringify(fetches)}`);
@@ -2552,6 +2554,121 @@ async function main() {
       } finally {
         await registry.mutate((reg) => markSessionResolved(reg, "req-204b"));
         await registry.mutate((reg) => markSessionResolved(reg, "req-204c"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-202-8：单问题多选死角修复（Phase 1.5，契约 §14.2.1/§14.3.1 修订）——
+  // 单问题 multiple 请求键盘含 ✅ Submit（callback_data `otg:q:<req>:submit`）：
+  // 未选任何项 Submit → 提示第 1 题未作答、不提交不编辑；toggle 两个选项后
+  // Submit → q_answers=[[A,B]] 落盘 + ✅ 编辑（键盘移除）终态闭环；toggle
+  // 本身仍不自动提交（原 API-202-2 断言保留）。
+  await runCase(
+    "API-202-8 single-question multi-select: submit button present, empty submit rejected, toggle+submit persists q_answers",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-202h", [
+            {
+              question: "多选影响范围",
+              options: [{ label: "A" }, { label: "B" }],
+              multiple: true,
+            },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      let sentKeyboard;
+      monitor.sendMessage = async () => {};
+      monitor.sendMessageWithKeyboard = async (text, keyboard) => {
+        sentKeyboard = keyboard;
+        return 42;
+      };
+      try {
+        // 发送阶段：键盘 = 选项行 + [✅ Submit, ❌ Cancel]（单问题多选不再无提交路径）。
+        await monitor.scanSessionQueue();
+        if (!sentKeyboard) {
+          throw new Error("single-question multi-select must be sent via keyboard");
+        }
+        const rows = sentKeyboard.inline_keyboard;
+        if (rows.length !== 2) {
+          throw new Error(
+            `expected 2 keyboard rows (options + submit/cancel), got ${rows.length}`,
+          );
+        }
+        const optionRow = rows[0];
+        if (optionRow.length !== 2) {
+          throw new Error(`expected 2 option buttons, got ${optionRow.length}`);
+        }
+        const submitRow = rows[1];
+        if (
+          submitRow.length !== 2 ||
+          submitRow[0].text !== "✅ Submit" ||
+          submitRow[0].callback_data !== "otg:q:req-202h:submit" ||
+          submitRow[1].text !== "❌ Cancel" ||
+          submitRow[1].callback_data !== "otg:q:req-202h:cancel"
+        ) {
+          throw new Error(`unexpected submit row: ${JSON.stringify(submitRow)}`);
+        }
+        // 未选任何项 Submit → 提示、不提交不编辑。
+        let fetches = await runQCallback(monitor, "otg:q:req-202h:submit");
+        let ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "第 1 题未作答，请先作答") {
+          throw new Error(`empty submit must be rejected: ${JSON.stringify(fetches)}`);
+        }
+        if (editCount(fetches) !== 0) {
+          throw new Error(`empty submit must not edit: ${JSON.stringify(fetches)}`);
+        }
+        let persisted = await findRecord("req-202h");
+        if (persisted.q_answers != null) {
+          throw new Error(
+            `empty submit must not write q_answers: ${JSON.stringify(persisted)}`,
+          );
+        }
+        // toggle A → 1 项；toggle B → 2 项（仍不自动提交，原 API-202-2 语义）。
+        await runQCallback(monitor, "otg:q:req-202h:o0");
+        fetches = await runQCallback(monitor, "otg:q:req-202h:o1");
+        ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "已选 2 项") {
+          throw new Error(`toggle B answer expected: ${JSON.stringify(fetches)}`);
+        }
+        persisted = await findRecord("req-202h");
+        if (
+          !persisted ||
+          JSON.stringify(persisted.q_draft) !== JSON.stringify([["A", "B"]]) ||
+          persisted.q_answers != null
+        ) {
+          throw new Error(
+            `toggle must persist draft without auto-submit: ${JSON.stringify(persisted)}`,
+          );
+        }
+        // Submit → q_answers=[[A,B]] + ✅ 编辑（键盘移除）。
+        fetches = await runQCallback(monitor, "otg:q:req-202h:submit");
+        persisted = await findRecord("req-202h");
+        if (
+          !persisted ||
+          JSON.stringify(persisted.q_answers) !== JSON.stringify([["A", "B"]])
+        ) {
+          throw new Error(
+            `q_answers not persisted on submit: ${JSON.stringify(persisted)}`,
+          );
+        }
+        ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "已提交") {
+          throw new Error(`submit confirm expected: ${JSON.stringify(fetches)}`);
+        }
+        const edit = lastEdit(fetches);
+        if (!edit || edit.body.text !== "ORIGINAL\n✅ Submitted") {
+          throw new Error(`submit edit must append ✅ Submitted: ${JSON.stringify(fetches)}`);
+        }
+        if (edit.body.reply_markup !== undefined) {
+          throw new Error(`terminal edit must drop keyboard: ${JSON.stringify(edit.body)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-202h"));
         await monitor.dispose();
       }
     },

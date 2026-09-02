@@ -400,7 +400,9 @@ export function buildQuestionStageText(
  * 1) 选项行（`questions[stage].options` 逐项平铺，data `otg:q:<entryID>:o<idx>`；
  * 多选且已选 → `✅ label`）；2) custom 行（仅 `custom === true`）；3) 导航/提交行
  * （多问题：非总结 `⬅️ Prev/➡️ Next/❌ Cancel`，总结 `✅ Submit/❌ Cancel`；
- * **单问题请求无导航无提交**，只有选项行（+custom 若有）+ `❌ Cancel`）。
+ * **单问题单选：无导航无提交**，只有选项行（+custom 若有）+ `❌ Cancel`（点选项
+ * 直接提交形态）；**单问题多选（multiple:true）：选项 toggle + `✅ Submit` +
+ * `❌ Cancel`**——否则 toggle 后无提交路径（契约 §14.2.1 修订，Phase 1.5）。
  * entryID 由调用方（monitor）保证回调 ASCII 且 ≤ 64 字节（契约 §14.2.3）；
  * 本函数纯函数，不做长度断言（同 §13.3）。
  */
@@ -464,7 +466,20 @@ export function buildQuestionKeyboard(
         },
       ]);
     }
+  } else if (current?.multiple === true) {
+    // 单问题多选：toggle 形态需要显式提交路径（Phase 1.5 死角修复）。
+    rows.push([
+      {
+        text: "✅ Submit",
+        callback_data: `${OTG_Q_CB_PREFIX}${entryID}:submit`,
+      },
+      {
+        text: "❌ Cancel",
+        callback_data: `${OTG_Q_CB_PREFIX}${entryID}:cancel`,
+      },
+    ]);
   } else {
+    // 单问题单选：点选项直接提交形态，仅 Cancel。
     rows.push([
       {
         text: "❌ Cancel",
