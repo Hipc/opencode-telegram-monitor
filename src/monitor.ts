@@ -47,6 +47,8 @@ import {
 import { dline } from "./diagnostics";
 import {
   buildMenuKeyboard,
+  buildSessionPermissionKeyboard,
+  PERM_CB_PREFIX,
   childSessions,
   displayState,
   emptyTokens,
@@ -88,6 +90,7 @@ import {
   markSessionSent,
   registerProject,
   setProjectEnabled,
+  setSessionReply,
   type ProjectRegistry,
   type ProjectRegistryStore,
   type SessionRecord,
@@ -1540,11 +1543,28 @@ export class TelegramSessionMonitor {
       if (!sessions) continue;
       const projectLabel = basename(entry.path) || this.projectLabel;
       for (const record of sessions) {
-        if (record.send || record.resolved) continue;
+        // 契约 §13.3（决策 #6 防御）：reply != null 的记录永不发送——已写
+        // reply 走消费端 apply 路径；对 question 记录恒真（无 reply 键）。
+        if (record.send || record.resolved || record.reply != null) continue;
         try {
-          await this.sendMessage(
-            this.formatSessionRecordMessage(record, projectLabel),
-          );
+          const text = this.formatSessionRecordMessage(record, projectLabel);
+          if (record.type === "permission") {
+            // permission 记录带三按钮键盘（契约 §13.3）：awaitable 保发送
+            // 成功判定/置位语义，不用 fire-and-forget 的 enqueueMessageWithKeyboard。
+            const entryID = this.permissionEntryID(record.request_id);
+            if (entryID === undefined) {
+              // 多字节超限兜底（契约 §13.4）：退化为无键盘普通消息。
+              await this.sendMessage(text);
+            } else {
+              await this.sendMessageWithKeyboard(
+                text,
+                buildSessionPermissionKeyboard(entryID),
+              );
+            }
+          } else {
+            // question 记录维持无键盘发送（决策 #2）。
+            await this.sendMessage(text);
+          }
         } catch (error) {
           // 发送失败：不置位、记录日志（token 脱敏），下轮 ticker 自然重试。
           await this.log(
@@ -1575,6 +1595,49 @@ export class TelegramSessionMonitor {
       }
     }
     return handled;
+  }
+
+  /**
+   * 短 ID → 完整 requestID 的内存映射（契约 sessions-relay.md §13.4）：
+   * callback_data 超 64 字节时用 44 字符短 ID 进键盘并在此登记，回调侧据此
+   * 还原。只存于 poller 实例内存、不持久化；进程重启后旧按钮点击 → 还原为
+   * raw 找不到记录 → §13.5 无匹配分支，可接受降级。字段放 1.2 区间
+   * （契约 §13.7），不占用 140-146 字段区（1.3 地盘）。
+   */
+  private readonly permShortMap = new Map<string, string>();
+
+  /**
+   * 进入键盘的 entryID 换算（契约 sessions-relay.md §13.4）：callback_data
+   * `otg:perm:<entryID>:<once|always|reject>` 上限 64 字节（UTF-8）。
+   * 全量 ≤ 64 → 原样返回；超限 → 截 44 字符 + permShortMap 登记
+   * （44 + 9 + 7 = 60 ≤ 64，ASCII 假设）；多字节字符致 44 字符仍超限 →
+   * 返回 undefined（该记录不发按钮，退化为无键盘普通消息）。禁止静默截断
+   * callback_data。
+   */
+  private permissionEntryID(requestID: string): string | undefined {
+    const ctx = { root: this.root, botToken: this.config.botToken };
+    const full = PERM_CB_PREFIX + requestID + ":always";
+    if (Buffer.byteLength(full, "utf8") <= 64) return requestID;
+    const shortID = requestID.slice(0, 44);
+    const shortFull = PERM_CB_PREFIX + shortID + ":always";
+    if (Buffer.byteLength(shortFull, "utf8") > 64) {
+      void this.log(
+        "error",
+        "Permission callback_data exceeds 64 bytes; sending without buttons",
+        { requestId: safeText(requestID, 100, ctx) },
+      );
+      return undefined;
+    }
+    const previous = this.permShortMap.get(shortID);
+    if (previous !== undefined && previous !== requestID) {
+      void this.log(
+        "warn",
+        "Permission short ID collision; overwriting permShortMap",
+        { requestId: safeText(requestID, 100, ctx) },
+      );
+    }
+    this.permShortMap.set(shortID, requestID);
+    return shortID;
   }
 
   /**
@@ -1834,6 +1897,62 @@ export class TelegramSessionMonitor {
     if (String(callback.from?.id) !== this.config.chatId) return;
     const { id, data, message } = callback;
     if (!id || !data || !message) return;
+    // ---- perm 前置分支（契约 §13.5，早于通用正则 §13.4）----
+    if (data.startsWith(PERM_CB_PREFIX)) {
+      const permMatch = data.match(/^otg:perm:(.+):(once|always|reject)$/);
+      if (!permMatch) {
+        await this.answerCallback(id, "Unknown action", false);
+        return;
+      }
+      const entryID = permMatch[1]!;
+      const value = permMatch[2] as "once" | "always" | "reject";
+      // 还原 requestID：缩短映射只存于 poller 实例内存（§13.4）；进程重启后
+      // 旧按钮点击 → 还原为 raw 找不到记录 → 无匹配分支，可接受降级。
+      const requestID = this.permShortMap.get(entryID) ?? entryID;
+      try {
+        const next = await this.registry.mutate((reg) =>
+          setSessionReply(reg, requestID, value),
+        );
+        if (next === undefined) {
+          // 无匹配记录 / 抢锁超时：提示失效 + 不编辑消息（§13.5）。
+          await this.answerCallback(id, "记录不存在或已失效", true);
+          await this.log(
+            "warn",
+            "Permission callback: no matching session record",
+            {
+              requestId: safeText(requestID, 100, {
+                root: this.root,
+                botToken: this.config.botToken,
+              }),
+            },
+          );
+          return;
+        }
+        // 有匹配即继续；不读取 resolved/send 状态（纯写入，§13.5）。
+        const notice =
+          value === "once"
+            ? "已允许一次"
+            : value === "always"
+              ? "已允许总是"
+              : "已拒绝";
+        await this.answerCallback(id, notice, false);
+        // 编辑原消息移除按钮 + 追加结果行；失败 logWarn 不中断（§13.5）。
+        await this.editPermissionResultMessage(
+          message.chat.id,
+          message.message_id,
+          message.text ?? "",
+          value,
+        );
+      } catch (error) {
+        await this.answerCallback(id, "操作失败，请重试", true).catch(
+          () => undefined,
+        );
+        await this.log("error", "Callback handling failed", {
+          error: errorCategory(error, { root: this.root, botToken: this.config.botToken }),
+        });
+      }
+      return;
+    }
     const match = data.match(/^otg:([a-z]+)(?::([0-9a-f]{12}))?(?::([01]))?$/);
     if (!match) {
       await this.answerCallback(id, "Unknown action", false);
@@ -1908,6 +2027,45 @@ export class TelegramSessionMonitor {
       text,
       show_alert: alert,
     }, { config: this.config, signal: this.abortController.signal });
+  }
+
+  /**
+   * 编辑权限消息为结果态（契约 §13.5 step 6）：保留原文、追加结果行，
+   * 不传 reply_markup ⇒ 键盘被移除（防重复点击，决策 #4）。编辑失败
+   * logWarn 不抛错（answer 已发出，视为已处理）。结果行冻结：once →
+   * ✅ Allowed once；always → ✅ Allowed always；reject → ❌ Rejected。
+   */
+  private async editPermissionResultMessage(
+    chatID: number | string,
+    messageID: number,
+    originalText: string,
+    value: "once" | "always" | "reject",
+  ) {
+    const resultLine =
+      value === "once"
+        ? "✅ Allowed once"
+        : value === "always"
+          ? "✅ Allowed always"
+          : "❌ Rejected";
+    try {
+      await telegramWithRetry(
+        "editMessageText",
+        {
+          chat_id: chatID,
+          message_id: messageID,
+          text: `${originalText}\n${resultLine}`,
+        },
+        { config: this.config, signal: this.abortController.signal },
+      );
+    } catch (error) {
+      await this.log(
+        "warn",
+        "Permission result message edit failed",
+        {
+          error: errorCategory(error, { root: this.root, botToken: this.config.botToken }),
+        },
+      );
+    }
   }
 
   private async editMenuMessage(

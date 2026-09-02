@@ -1,8 +1,8 @@
 # opencode-telegram-monitor
 
-A read-only [opencode](https://opencode.ai) plugin that keeps you in the loop on your opencode sessions from **Telegram**.
+A [opencode](https://opencode.ai) plugin that keeps you in the loop on your opencode sessions from **Telegram**.
 
-It watches opencode sessions in real time and reports their lifecycle — started, busy, idle, retried, completed, failed or cancelled — plus token usage and cost, to a Telegram bot chat of your choice. The bot is fully read-only: approvals, permission prompts and answers are always handled in opencode itself.
+It watches opencode sessions in real time and reports their lifecycle — started, busy, idle, retried, completed, failed or cancelled — plus token usage and cost, to a Telegram bot chat of your choice. The bot is read-only by default: since 2026-09-02, permission prompts can be answered with three inline buttons (Allow once / Allow always / Deny) straight from Telegram — only when you explicitly tap one. Questions and everything else are always handled in opencode itself; the plugin never answers on your behalf.
 
 ## Features
 
@@ -10,7 +10,7 @@ It watches opencode sessions in real time and reports their lifecycle — starte
 - **Token usage & cost** — aggregated input / output / reasoning / cache tokens with estimated cost per session.
 - **Todo projection** — see the current session's todo list from Telegram.
 - **Project registry & inline menu** — a registry of monitored projects (`~/.otg/projects.json`) with an inline-keyboard menu (`/menu`) to manage them from the chat.
-- **Read-only bot** — intentional design; approvals and answers stay in opencode.
+- **Read-only by default, explicit TG replies for permissions** — since 2026-09-02 permission prompts render Allow once / Allow always / Deny buttons; tapping one writes your choice back to opencode. Questions and everything else stay in opencode — the plugin never answers on its own.
 - **Cross-process poller lock** — when several opencode windows are open on the same machine, a file-based lock (`PollerLock`) guarantees only one instance polls Telegram at a time.
 - **Proxy support** — optional HTTP/HTTPS proxy (with auth and CONNECT tunneling) for reaching the Telegram Bot API.
 - **Resilient messaging** — long polling (`getUpdates`, 25 s interval), retries with backoff, message length clamping, and bot-token redaction in all logs.
@@ -170,7 +170,7 @@ The plugin reads its configuration from `~/.otg/telegram.json`:
 
 ## Security notes
 
-- The bot is **read-only** — it never acts on your behalf inside opencode.
+- The bot is **read-only by default** — the only way it acts on your behalf is when you explicitly tap an approval button on a permission prompt (2026-09-02+); it never answers questions or takes actions on its own.
 - Messages are limited to the originating `chatId`; updates from any other chat are ignored.
 - The bot token is redacted (`[REDACTED]`) in all log output and diagnostics.
 - The plugin runs locally and talks to the public Telegram Bot API only.
