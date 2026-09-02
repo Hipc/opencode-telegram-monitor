@@ -904,6 +904,102 @@ async function main() {
     },
   );
 
+  // ---- API-105: structured rendering (round 2) ----
+  // 契约 docs/modules/sessions-relay.md §13.11：permission 记录 message JSON
+  // 解析 → 渲染 Permission/Pattern/Title 字段行（不再输出 JSON 原文 dump）；
+  // 非法 JSON / 合法但无可识别字段（如 {}）→ 退回 300 字符原文节选。
+  // question 记录渲染不变（API-006-5/API-101-2 既有断言覆盖，不新增）。
+  let api105Seq = 0;
+  async function renderedText(overrides = {}) {
+    api105Seq += 1;
+    const requestID = `req-105-${api105Seq}`;
+    await registry.mutate((reg) =>
+      appendSessionRecord(
+        reg,
+        root,
+        makeRecord({ request_id: requestID, ...overrides }),
+      ),
+    );
+    const sent = [];
+    const monitor = makeMonitor(async (text) => {
+      sent.push(text);
+    });
+    const handled = await monitor.scanSessionQueue();
+    await monitor.dispose();
+    if (handled !== 1 || sent.length !== 1) {
+      throw new Error(
+        `expected 1 send for rendering, got handled=${handled} sent=${sent.length}`,
+      );
+    }
+    return sent[0];
+  }
+
+  // API-105-1：合法 JSON（permission/patterns/title）→ 渲染含
+  // Permission/Pattern/Title 行内容，不含未解析的 JSON dump。
+  await runCase(
+    "API-105-1 permission valid JSON renders Permission/Pattern/Title rows, no raw JSON dump",
+    async () => {
+      const rawMessage = JSON.stringify({
+        id: "req-105a",
+        permission: "external_directory",
+        patterns: ["*.ts", "*.md"],
+        title: "Allow access to external directory",
+        metadata: { provider: "fs" },
+      });
+      const text = await renderedText({ message: rawMessage });
+      if (!text.includes("Permission") || !text.includes("external_directory")) {
+        throw new Error(`missing Permission row: ${text}`);
+      }
+      if (!text.includes("Pattern")) {
+        throw new Error(`missing Pattern row: ${text}`);
+      }
+      if (!text.includes("*.ts") || !text.includes("*.md")) {
+        throw new Error(`missing pattern items: ${text}`);
+      }
+      if (
+        !text.includes("Title") ||
+        !text.includes("Allow access to external directory")
+      ) {
+        throw new Error(`missing Title row: ${text}`);
+      }
+      if (text.includes(rawMessage)) {
+        throw new Error(`raw JSON dump must not appear: ${text}`);
+      }
+      if (text.includes("req-105a")) {
+        throw new Error(`raw JSON id leaked into rendered text: ${text}`);
+      }
+    },
+  );
+
+  // API-105-2：非法 JSON → 退回原文节选（含截断 JSON 文本）。
+  await runCase(
+    "API-105-2 permission invalid JSON falls back to message excerpt",
+    async () => {
+      const badMessage = '{"permission": "read file", "patterns": ["a"]';
+      const text = await renderedText({ message: badMessage });
+      if (!text.includes(badMessage)) {
+        throw new Error(`fallback excerpt missing raw text: ${text}`);
+      }
+      if (text.includes("Permission")) {
+        throw new Error(`no structured rows expected on invalid JSON: ${text}`);
+      }
+    },
+  );
+
+  // API-105-3：合法 JSON 但无可识别字段（{}）→ 退回原文节选。
+  await runCase(
+    "API-105-3 permission empty-object JSON falls back to message excerpt",
+    async () => {
+      const text = await renderedText({ message: "{}" });
+      if (!text.includes("{}")) {
+        throw new Error(`fallback excerpt missing on empty object: ${text}`);
+      }
+      if (text.includes("Permission")) {
+        throw new Error(`no structured rows expected for {}: ${text}`);
+      }
+    },
+  );
+
   await rm(baseDir, { recursive: true, force: true });
   const passed = total - failures;
   console.log(`\n${passed}/${total} cases passed`);
