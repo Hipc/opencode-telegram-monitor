@@ -1708,6 +1708,855 @@ async function main() {
     },
   );
 
+  // ---- Phase 1.3 (API-202/203/204) ----
+  // 契约 docs/modules/sessions-relay.md §14.3/§14.5：question 向导回调状态机
+  // （**无内存状态**——每次回调从盘上 registry 重建 q_draft/q_stage，断言一律
+  // 以 findRecord 重新 read 的盘上内容为准）+ 纯文本自定义输入捕获 + /cancel
+  // 命令。手法同 API-102：真实 handleCallback / handleTelegramUpdate + 全局
+  // fetch stub 拦截 answerCallbackQuery / editMessageText。终态纪律（§14.5）：
+  // q_answers/q_reject 已置的记录在用例内闭环到 resolved=true，不遗留
+  // 可被扫描器拾取的记录；用例相互独立、不依赖执行顺序。
+  function questionWizardCallback(id, data, text = "ORIGINAL") {
+    return {
+      id,
+      from: { id: 123 },
+      message: { message_id: 7, chat: { id: 123 }, text },
+      data,
+    };
+  }
+  function questionWizardRecord(requestID, questions, overrides = {}) {
+    return makeRecord({
+      request_id: requestID,
+      type: "question",
+      message: questionMessage(questions),
+      ...overrides,
+    });
+  }
+  // 执行一次 q 回调，返回该次产生的全部 telegram fetch 调用。
+  async function runQCallback(monitor, data, text = "ORIGINAL") {
+    const fetches = [];
+    await stubFetch(fetches);
+    try {
+      await monitor.handleCallback(questionWizardCallback(`cb-${data}`, data, text));
+    } finally {
+      restoreFetch();
+    }
+    return fetches;
+  }
+  function answersOf(fetches) {
+    return fetches.filter((call) => call.url.includes("answerCallbackQuery"));
+  }
+  function lastEdit(fetches) {
+    const edits = fetches.filter((call) => call.url.includes("editMessageText"));
+    return edits[edits.length - 1];
+  }
+  function editCount(fetches) {
+    return fetches.filter((call) => call.url.includes("editMessageText")).length;
+  }
+
+  // API-202-1：单选多题自动跳下一题——q_draft/q_stage 落盘 + 编辑下一题
+  // （键盘保留）→ 最后一题自动进总结（键盘变 Submit）。
+  await runCase(
+    "API-202-1 single-select auto-advance persists q_draft/q_stage and renders next question",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-202a", [
+            { question: "请选择操作方式", options: [{ label: "读取" }, { label: "写入" }] },
+            { question: "请确认改动范围", options: [{ label: "全局" }, { label: "局部" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        // Q1 单选点选 → 自动跳 Q2（stage 0→1）。
+        let fetches = await runQCallback(monitor, "otg:q:req-202a:o0");
+        let persisted = await findRecord("req-202a");
+        if (
+          !persisted ||
+          JSON.stringify(persisted.q_draft) !== JSON.stringify([["读取"], []])
+        ) {
+          throw new Error(`q_draft not persisted after Q1: ${JSON.stringify(persisted)}`);
+        }
+        if (persisted.q_stage !== 1) {
+          throw new Error(`q_stage expected 1, got ${persisted.q_stage}`);
+        }
+        let ans = answersOf(fetches);
+        if (
+          ans.length !== 1 ||
+          ans[0].body.text !== "已选「读取」" ||
+          ans[0].body.show_alert !== false
+        ) {
+          throw new Error(`unexpected Q1 answer: ${JSON.stringify(fetches)}`);
+        }
+        let edit = lastEdit(fetches);
+        if (!edit || !edit.body.text.includes("Question 2/2")) {
+          throw new Error(`expected next-question edit, got ${JSON.stringify(fetches)}`);
+        }
+        if (!edit.body.reply_markup?.inline_keyboard) {
+          throw new Error(`non-terminal edit must keep keyboard: ${JSON.stringify(edit.body)}`);
+        }
+        // Q2 单选点选 → 自动进总结（stage=2 = questions.length）。
+        const fetches2 = await runQCallback(monitor, "otg:q:req-202a:o0");
+        persisted = await findRecord("req-202a");
+        if (
+          !persisted ||
+          persisted.q_stage !== 2 ||
+          JSON.stringify(persisted.q_draft) !== JSON.stringify([["读取"], ["全局"]])
+        ) {
+          throw new Error(`summary state not persisted: ${JSON.stringify(persisted)}`);
+        }
+        const edit2 = lastEdit(fetches2);
+        const text2 = edit2?.body?.text ?? "";
+        if (!edit2 || !text2.includes("Question 1/2") || !text2.includes("Question 2/2")) {
+          throw new Error(`summary edit must render all questions: ${JSON.stringify(fetches2)}`);
+        }
+        const buttons2 = edit2.body.reply_markup?.inline_keyboard?.flatMap((row) => row) ?? [];
+        if (!buttons2.some((button) => button.text === "✅ Submit")) {
+          throw new Error(`summary keyboard must contain Submit: ${JSON.stringify(edit2.body)}`);
+        }
+      } finally {
+        // 终态纪律：q_answers 未置 → 用例内闭环到 resolved。
+        await registry.mutate((reg) => markSessionResolved(reg, "req-202a"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-202-2：多选题 toggle ✓ 落盘 + 编辑刷新（✅ 前缀）；单问题多选不触发
+  // 直接提交。
+  await runCase(
+    "API-202-2 multi-select toggle persists q_draft, refresh edit shows ✅ prefix, no direct submit",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-202b", [
+            {
+              question: "多选影响范围",
+              options: [{ label: "A" }, { label: "B" }],
+              multiple: true,
+            },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        // 选 A → 已选 1 项；编辑文本刷新出 ✅ A。
+        let fetches = await runQCallback(monitor, "otg:q:req-202b:o0");
+        let persisted = await findRecord("req-202b");
+        if (!persisted || JSON.stringify(persisted.q_draft) !== JSON.stringify([["A"]])) {
+          throw new Error(`toggle-on not persisted: ${JSON.stringify(persisted)}`);
+        }
+        let ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "已选 1 项") {
+          throw new Error(`unexpected toggle-on answer: ${JSON.stringify(fetches)}`);
+        }
+        let edit = lastEdit(fetches);
+        if (!edit || !edit.body.text.includes("✅ A")) {
+          throw new Error(`refresh edit must show ✅ prefix: ${JSON.stringify(fetches)}`);
+        }
+        // 再点 A → toggle 掉：已选 0 项，✅ 前缀消失。
+        const fetches2 = await runQCallback(monitor, "otg:q:req-202b:o0");
+        persisted = await findRecord("req-202b");
+        if (!persisted || JSON.stringify(persisted.q_draft) !== JSON.stringify([[]])) {
+          throw new Error(`toggle-off not persisted: ${JSON.stringify(persisted)}`);
+        }
+        ans = answersOf(fetches2);
+        if (ans.length !== 1 || ans[0].body.text !== "已选 0 项") {
+          throw new Error(`unexpected toggle-off answer: ${JSON.stringify(fetches2)}`);
+        }
+        edit = lastEdit(fetches2);
+        if (!edit || edit.body.text.includes("✅ A")) {
+          throw new Error(`refresh edit must drop ✅ prefix: ${JSON.stringify(fetches2)}`);
+        }
+        // 点 B → 已选 1 项。
+        const fetches3 = await runQCallback(monitor, "otg:q:req-202b:o1");
+        persisted = await findRecord("req-202b");
+        if (!persisted || JSON.stringify(persisted.q_draft) !== JSON.stringify([["B"]])) {
+          throw new Error(`toggle B not persisted: ${JSON.stringify(persisted)}`);
+        }
+        if (persisted.q_answers != null) {
+          throw new Error(`single-question multi-select must not auto-submit: ${JSON.stringify(persisted)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-202b"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-202-3：prev/next 阶段钳制（next 上限=总结阶段；prev 下限 0），答案
+  // 保留不丢；每步落盘。
+  await runCase(
+    "API-202-3 prev/next clamp q_stage at 0..questions.length and keep answers",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-202c", [
+            { question: "Q1", options: [{ label: "A1" }, { label: "A2" }] },
+            { question: "Q2", options: [{ label: "B1" }, { label: "B2" }] },
+            { question: "Q3", options: [{ label: "C1" }, { label: "C2" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        // 起点 stage 0：prev 钳制在 0。
+        let fetches = await runQCallback(monitor, "otg:q:req-202c:prev");
+        let persisted = await findRecord("req-202c");
+        if (!persisted || persisted.q_stage !== 0) {
+          throw new Error(`prev at 0 must clamp to 0: ${JSON.stringify(persisted)}`);
+        }
+        if (editCount(fetches) !== 1 || !lastEdit(fetches).body.text.includes("Question 1/3")) {
+          throw new Error(`prev edit should render Q1: ${JSON.stringify(fetches)}`);
+        }
+        // next ×3 → 3（总结阶段；=questions.length）。
+        for (let step = 1; step <= 3; step++) {
+          await runQCallback(monitor, "otg:q:req-202c:next");
+        }
+        persisted = await findRecord("req-202c");
+        if (!persisted || persisted.q_stage !== 3) {
+          throw new Error(`next ×3 should reach summary stage 3: ${JSON.stringify(persisted)}`);
+        }
+        // 总结阶段再 next → 仍 3（上界钳制）。
+        fetches = await runQCallback(monitor, "otg:q:req-202c:next");
+        persisted = await findRecord("req-202c");
+        if (!persisted || persisted.q_stage !== 3) {
+          throw new Error(`next at summary must clamp to 3: ${JSON.stringify(persisted)}`);
+        }
+        if (!lastEdit(fetches).body.text.includes("Question 1/3")) {
+          throw new Error(`summary edit must render answer rows: ${JSON.stringify(fetches)}`);
+        }
+        // prev → 2。
+        fetches = await runQCallback(monitor, "otg:q:req-202c:prev");
+        persisted = await findRecord("req-202c");
+        if (!persisted || persisted.q_stage !== 2) {
+          throw new Error(`prev from summary should reach 2: ${JSON.stringify(persisted)}`);
+        }
+        const ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "已跳转") {
+          throw new Error(`nav answer must be 已跳转: ${JSON.stringify(fetches)}`);
+        }
+        if (!lastEdit(fetches).body.text.includes("Question 3/3")) {
+          throw new Error(`prev edit should render Q3 (stage 2): ${JSON.stringify(fetches)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-202c"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-202-4：Submit 守卫——非总结阶段 Unknown action；带未答题提交 →
+  // 提示题号、不提交不编辑；全答 → q_answers 写入 + ✅ 编辑（键盘移除）。
+  await runCase(
+    "API-202-4 submit gate: reject unanswered with question number, then submit all → q_answers + ✅ edit",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-202d", [
+            { question: "操作方式", options: [{ label: "读取" }, { label: "写入" }] },
+            { question: "改动范围", options: [{ label: "全局" }, { label: "局部" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        // 进入总结（stage 2）后 Submit：第 1 题未答 → 拒绝、不编辑。
+        await runQCallback(monitor, "otg:q:req-202d:next");
+        await runQCallback(monitor, "otg:q:req-202d:next");
+        let fetches = await runQCallback(monitor, "otg:q:req-202d:submit");
+        let ans = answersOf(fetches);
+        if (
+          ans.length !== 1 ||
+          ans[0].body.text !== "第 1 题未作答，请先作答" ||
+          ans[0].body.show_alert !== false
+        ) {
+          throw new Error(`unanswered hint expected: ${JSON.stringify(fetches)}`);
+        }
+        if (editCount(fetches) !== 0) {
+          throw new Error(`rejected submit must not edit: ${JSON.stringify(fetches)}`);
+        }
+        let persisted = await findRecord("req-202d");
+        if (persisted.q_answers != null) {
+          throw new Error(`q_answers must not be written on rejected submit: ${JSON.stringify(persisted)}`);
+        }
+        // 非总结阶段 submit → Unknown action。
+        await runQCallback(monitor, "otg:q:req-202d:prev");
+        fetches = await runQCallback(monitor, "otg:q:req-202d:submit");
+        ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "Unknown action") {
+          throw new Error(`non-summary submit must answer Unknown action: ${JSON.stringify(fetches)}`);
+        }
+        if (editCount(fetches) !== 0) {
+          throw new Error(`non-summary submit must not edit: ${JSON.stringify(fetches)}`);
+        }
+        // 答 Q2（stage 1）→ 自动进总结 → Submit 仍提示第 1 题未答。
+        await runQCallback(monitor, "otg:q:req-202d:o1");
+        fetches = await runQCallback(monitor, "otg:q:req-202d:submit");
+        ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "第 1 题未作答，请先作答") {
+          throw new Error(`still-unanswered Q1 hint expected: ${JSON.stringify(fetches)}`);
+        }
+        if (editCount(fetches) !== 0) {
+          throw new Error(`still-unanswered submit must not edit: ${JSON.stringify(fetches)}`);
+        }
+        // 回 Q1 作答（prev×2 到 0，点 o1=写入）→ 进总结 → Submit 全答 →
+        // q_answers 写入 + ✅ 编辑（键盘移除）。
+        await runQCallback(monitor, "otg:q:req-202d:prev");
+        await runQCallback(monitor, "otg:q:req-202d:prev");
+        await runQCallback(monitor, "otg:q:req-202d:o1");
+        await runQCallback(monitor, "otg:q:req-202d:next");
+        fetches = await runQCallback(monitor, "otg:q:req-202d:submit");
+        persisted = await findRecord("req-202d");
+        if (
+          !persisted ||
+          JSON.stringify(persisted.q_answers) !== JSON.stringify([["写入"], ["局部"]])
+        ) {
+          throw new Error(`q_answers not persisted on submit: ${JSON.stringify(persisted)}`);
+        }
+        ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "已提交") {
+          throw new Error(`submit confirm expected: ${JSON.stringify(fetches)}`);
+        }
+        const edit = lastEdit(fetches);
+        if (!edit || edit.body.text !== "ORIGINAL\n✅ Submitted") {
+          throw new Error(`submit edit must append ✅ Submitted: ${JSON.stringify(fetches)}`);
+        }
+        if (edit.body.reply_markup !== undefined) {
+          throw new Error(`terminal edit must drop keyboard: ${JSON.stringify(edit.body)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-202d"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-202-5：单问题请求点选项 → 直接提交（q_answers + ✅ 编辑，键盘移除；
+  // 不写 q_draft/q_stage）。
+  await runCase(
+    "API-202-5 single-question option click directly submits q_answers",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-202e", [
+            { question: "是否允许读取", options: [{ label: "允许" }, { label: "拒绝" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        const fetches = await runQCallback(monitor, "otg:q:req-202e:o1");
+        const persisted = await findRecord("req-202e");
+        if (!persisted || JSON.stringify(persisted.q_answers) !== JSON.stringify([["拒绝"]])) {
+          throw new Error(`direct submit not persisted: ${JSON.stringify(persisted)}`);
+        }
+        if (persisted.q_draft !== undefined || persisted.q_stage !== undefined) {
+          throw new Error(`single-question direct submit must not write draft/stage: ${JSON.stringify(persisted)}`);
+        }
+        const ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "已提交") {
+          throw new Error(`direct submit confirm expected: ${JSON.stringify(fetches)}`);
+        }
+        const edit = lastEdit(fetches);
+        if (!edit || edit.body.text !== "ORIGINAL\n✅ Submitted" || edit.body.reply_markup !== undefined) {
+          throw new Error(`direct submit edit must be ✅ without keyboard: ${JSON.stringify(fetches)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-202e"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-202-6：失效路径——记录不存在 / 已 resolved / 已 q_answers / 已
+  // q_reject / message 解析失败 → 「记录不存在或已失效」(alert) + 不编辑；
+  // 选项越界 → 「选项无效」；正则不命中 → Unknown action。
+  await runCase(
+    "API-202-6 stale/invalid callbacks answer invalid, do not edit",
+    async () => {
+      // 预置各类失效记录。
+      await registry.mutate((reg) => {
+        let next = reg;
+        next = appendSessionRecord(reg, root, questionWizardRecord("req-202f1", [
+          { question: "Q", options: [{ label: "A" }] },
+        ], { resolved: true }));
+        next = appendSessionRecord(next, root, questionWizardRecord("req-202f2", [
+          { question: "Q", options: [{ label: "A" }] },
+        ], { q_answers: [["A"]] }));
+        next = appendSessionRecord(next, root, questionWizardRecord("req-202f3", [
+          { question: "Q", options: [{ label: "A" }] },
+        ], { q_reject: true }));
+        return appendSessionRecord(next, root, questionWizardRecord("req-202f4", [
+          { question: "Q", options: [{ label: "A" }] },
+        ], { message: "not-a-json" }));
+      });
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-202f5", [
+            { question: "正常题", options: [{ label: "A" }, { label: "B" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        for (const data of [
+          "otg:q:req-none:o0",
+          "otg:q:req-202f1:o0",
+          "otg:q:req-202f2:o0",
+          "otg:q:req-202f3:o0",
+          "otg:q:req-202f4:o0",
+        ]) {
+          const fetches = await runQCallback(monitor, data);
+          const ans = answersOf(fetches);
+          if (
+            ans.length !== 1 ||
+            ans[0].body.text !== "记录不存在或已失效" ||
+            ans[0].body.show_alert !== true
+          ) {
+            throw new Error(`expected invalid answer for ${data}: ${JSON.stringify(fetches)}`);
+          }
+          if (editCount(fetches) !== 0) {
+            throw new Error(`no edit expected for ${data}: ${JSON.stringify(fetches)}`);
+          }
+        }
+        // 选项越界（合法记录 req-202f5）。
+        const fetches = await runQCallback(monitor, "otg:q:req-202f5:o9");
+        const ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "选项无效") {
+          throw new Error(`out-of-range option must answer 选项无效: ${JSON.stringify(fetches)}`);
+        }
+        if (editCount(fetches) !== 0) {
+          throw new Error(`out-of-range option must not edit: ${JSON.stringify(fetches)}`);
+        }
+        // 正则不命中（非法后缀）。
+        const bad = await runQCallback(monitor, "otg:q:req-202f5:foobar");
+        const badAns = answersOf(bad);
+        if (badAns.length !== 1 || badAns[0].body.text !== "Unknown action") {
+          throw new Error(`regex-miss must answer Unknown action: ${JSON.stringify(bad)}`);
+        }
+        if (editCount(bad) !== 0) {
+          throw new Error(`regex-miss must not edit: ${JSON.stringify(bad)}`);
+        }
+      } finally {
+        for (const requestID of ["req-202f1", "req-202f2", "req-202f3", "req-202f4", "req-202f5"]) {
+          await registry.mutate((reg) => markSessionResolved(reg, requestID));
+        }
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-202-7：重启重建——直接构造带 q_draft/q_stage 的记录（模拟盘上旧状态）
+  // → 回调继续从该状态前进并可提交。
+  await runCase(
+    "API-202-7 restart rebuild: record with persisted q_draft/q_stage resumes wizard",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-202g", [
+            { question: "操作方式", options: [{ label: "读取" }, { label: "写入" }] },
+            { question: "改动范围", options: [{ label: "全局" }, { label: "局部" }] },
+          ], { q_draft: [["读取"], []], q_stage: 1 }),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        // 从 stage 1 继续：点 Q2 选项 → 进总结。
+        const fetches = await runQCallback(monitor, "otg:q:req-202g:o0");
+        const persisted = await findRecord("req-202g");
+        if (
+          !persisted ||
+          persisted.q_stage !== 2 ||
+          JSON.stringify(persisted.q_draft) !== JSON.stringify([["读取"], ["全局"]])
+        ) {
+          throw new Error(`resumed wizard state wrong: ${JSON.stringify(persisted)}`);
+        }
+        const ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "已选「全局」") {
+          throw new Error(`resumed answer expected: ${JSON.stringify(fetches)}`);
+        }
+        // 提交 → q_answers。
+        const fetches2 = await runQCallback(monitor, "otg:q:req-202g:submit");
+        const persisted2 = await findRecord("req-202g");
+        if (!persisted2 || JSON.stringify(persisted2.q_answers) !== JSON.stringify([["读取"], ["全局"]])) {
+          throw new Error(`resumed submit failed: ${JSON.stringify(persisted2)}`);
+        }
+        const edit = lastEdit(fetches2);
+        if (!edit || edit.body.text !== "ORIGINAL\n✅ Submitted") {
+          throw new Error(`resumed submit edit expected: ${JSON.stringify(fetches2)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-202g"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-203-1：✏️ Custom → q_input 落盘 + 提示编辑（键盘保留）→ 纯文本消息
+  // → draft[q_input] 写入 + 清输入 + 推进（多问题）+ 回复确认。
+  await runCase(
+    "API-203-1 custom input: q_input persisted, plain text writes draft, advances, confirms",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-203a", [
+            {
+              question: "补充说明",
+              options: [{ label: "默认" }],
+              custom: true,
+            },
+            { question: "后续问题", options: [{ label: "是" }, { label: "否" }] },
+          ], { q_msg_id: 42 }),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
+      try {
+        // 点 ✏️ Custom → q_input=0 落盘；answer 提示；编辑含输入提示行、键盘保留。
+        let fetches = await runQCallback(monitor, "otg:q:req-203a:custom");
+        let persisted = await findRecord("req-203a");
+        if (!persisted || persisted.q_input !== 0) {
+          throw new Error(`q_input not persisted: ${JSON.stringify(persisted)}`);
+        }
+        let ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "直接回复文本作为答案，/cancel 取消") {
+          throw new Error(`custom entry answer expected: ${JSON.stringify(fetches)}`);
+        }
+        let edit = lastEdit(fetches);
+        if (!edit || !edit.body.text.includes("✏️ 回复文本作为答案，/cancel 取消")) {
+          throw new Error(`custom edit must show input hint: ${JSON.stringify(fetches)}`);
+        }
+        if (!edit.body.reply_markup?.inline_keyboard) {
+          throw new Error(`custom edit must keep keyboard: ${JSON.stringify(edit.body)}`);
+        }
+        // 纯文本回复 → 写入 draft[0]、清 q_input、推进到 Q2（编辑渲染下一题）。
+        const textFetches = [];
+        await stubFetch(textFetches);
+        try {
+          await monitor.handleTelegramUpdate({
+            update_id: 1,
+            message: {
+              message_id: 99,
+              text: "我的自由回答",
+              from: { id: 123 },
+              chat: { id: 123, type: "private" },
+            },
+          });
+        } finally {
+          restoreFetch();
+        }
+        persisted = await findRecord("req-203a");
+        if (!persisted || JSON.stringify(persisted.q_draft) !== JSON.stringify([["我的自由回答"], []])) {
+          throw new Error(`text answer not persisted: ${JSON.stringify(persisted)}`);
+        }
+        if (persisted.q_input !== null && persisted.q_input !== undefined) {
+          throw new Error(`q_input must be cleared after text answer: ${JSON.stringify(persisted)}`);
+        }
+        if (persisted.q_stage !== 1) {
+          throw new Error(`q_stage must advance to 1: ${JSON.stringify(persisted)}`);
+        }
+        const textEdit = lastEdit(textFetches);
+        if (!textEdit || !textEdit.body.text.includes("Question 2/2")) {
+          throw new Error(`text input must edit to next question: ${JSON.stringify(textFetches)}`);
+        }
+        if (textEdit.body.message_id !== 42) {
+          throw new Error(`text input edit must target record.q_msg_id: ${JSON.stringify(textEdit.body)}`);
+        }
+        if (!textEdit.body.reply_markup?.inline_keyboard) {
+          throw new Error(`text input edit must keep keyboard: ${JSON.stringify(textEdit.body)}`);
+        }
+        await monitor.dispose(); // flush enqueueMessage tail
+        if (!sent.join(" ").includes("已记录第 1 题答案")) {
+          throw new Error(`confirmation message missing: ${JSON.stringify(sent)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-203a"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-203-2：单问题 custom → 纯文本直接提交（q_answers + ✅ 编辑键盘移除 +
+  // 确认文案）。
+  await runCase(
+    "API-203-2 single-question custom text directly submits q_answers",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-203b", [
+            { question: "请补充路径", options: [], custom: true },
+          ], { q_msg_id: 42 }),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
+      try {
+        await runQCallback(monitor, "otg:q:req-203b:custom");
+        const fetches = [];
+        await stubFetch(fetches);
+        try {
+          await monitor.handleTelegramUpdate({
+            update_id: 1,
+            message: {
+              message_id: 100,
+              text: "   /home/hipc/project  ",
+              from: { id: 123 },
+              chat: { id: 123, type: "private" },
+            },
+          });
+        } finally {
+          restoreFetch();
+        }
+        const persisted = await findRecord("req-203b");
+        if (!persisted || JSON.stringify(persisted.q_answers) !== JSON.stringify([["/home/hipc/project"]])) {
+          throw new Error(`single-question text submit failed: ${JSON.stringify(persisted)}`);
+        }
+        if (persisted.q_input !== null && persisted.q_input !== undefined) {
+          throw new Error(`q_input must be cleared: ${JSON.stringify(persisted)}`);
+        }
+        const edit = lastEdit(fetches);
+        if (!edit || !edit.body.text.includes("✅ Submitted")) {
+          throw new Error(`single-question text submit edit expected: ${JSON.stringify(fetches)}`);
+        }
+        if (edit.body.message_id !== 42) {
+          throw new Error(`text submit edit must target record.q_msg_id: ${JSON.stringify(edit.body)}`);
+        }
+        if (edit.body.reply_markup !== undefined) {
+          throw new Error(`terminal edit must drop keyboard: ${JSON.stringify(edit.body)}`);
+        }
+        await monitor.dispose();
+        if (!sent.join(" ").includes("已记录第 1 题答案")) {
+          throw new Error(`confirmation message missing: ${JSON.stringify(sent)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-203b"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-203-3：/cancel 命令清除全部 q_input + 确认文案；无输入态纯文本静默。
+  await runCase(
+    "API-203-3 /cancel clears all q_input and confirms; plain text without pending input is silent",
+    async () => {
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
+      try {
+        // 先做无输入态静默检查（此刻 registry 无任何 q_input 待输入记录——
+        // 既有记录全部已 resolved，handleQuestionTextInput 扫描不命中）。
+        const silentFetches = [];
+        await stubFetch(silentFetches);
+        try {
+          await monitor.handleTelegramUpdate({
+            update_id: 1,
+            message: {
+              message_id: 101,
+              text: "随便说点什么",
+              from: { id: 123 },
+              chat: { id: 123, type: "private" },
+            },
+          });
+        } finally {
+          restoreFetch();
+        }
+        if (editCount(silentFetches) !== 0) {
+          throw new Error(`no edit expected for idle text: ${JSON.stringify(silentFetches)}`);
+        }
+        if (sent.length !== 0) {
+          throw new Error(`no confirmation expected for idle text: ${JSON.stringify(sent)}`);
+        }
+        // 再建两条 q_input 待输入记录，/cancel → 全部清除（键删除）＋ 确认文案。
+        await registry.mutate((reg) => {
+          let next = reg;
+          next = appendSessionRecord(next, root, questionWizardRecord("req-203c", [
+            { question: "Q", options: [], custom: true },
+          ], { q_input: 0 }));
+          return appendSessionRecord(next, root, questionWizardRecord("req-203d", [
+            { question: "Q", options: [], custom: true },
+          ], { q_input: 1 }));
+        });
+        // 注意：必须先 handleTelegramUpdate 再 dispose（enqueueMessage 在
+        // disposed 后短路）。
+        await monitor.handleTelegramUpdate({
+          update_id: 2,
+          message: {
+            message_id: 102,
+            text: "/cancel",
+            from: { id: 123 },
+            chat: { id: 123, type: "private" },
+          },
+        });
+        const c = await findRecord("req-203c");
+        const d = await findRecord("req-203d");
+        if ((c && c.q_input !== undefined) || (d && d.q_input !== undefined)) {
+          throw new Error(`/cancel must clear all q_input: ${JSON.stringify({ c, d })}`);
+        }
+        await monitor.dispose();
+        if (!sent.join(" ").includes("已取消输入模式")) {
+          throw new Error(`/cancel confirmation missing: ${JSON.stringify(sent)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-203c"));
+        await registry.mutate((reg) => markSessionResolved(reg, "req-203d"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-203-4：custom 但该题不支持 → 「该题不支持自定义输入」+ 不落盘不编辑。
+  await runCase(
+    "API-203-4 custom on non-custom question answers unsupported, no state change",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-203e", [
+            { question: "普通题", options: [{ label: "A" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        const fetches = await runQCallback(monitor, "otg:q:req-203e:custom");
+        const ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "该题不支持自定义输入") {
+          throw new Error(`unsupported custom answer expected: ${JSON.stringify(fetches)}`);
+        }
+        if (editCount(fetches) !== 0) {
+          throw new Error(`unsupported custom must not edit: ${JSON.stringify(fetches)}`);
+        }
+        const persisted = await findRecord("req-203e");
+        if (persisted.q_input !== undefined && persisted.q_input !== null) {
+          throw new Error(`q_input must not be set: ${JSON.stringify(persisted)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-203e"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-204-1：任意阶段 ❌ → q_reject 落盘 + answer + 编辑 ❌（键盘移除）；
+  // 已取消记录再点按钮 → 失效提示。
+  await runCase(
+    "API-204-1 cancel writes q_reject, edits ❌ without keyboard, later clicks answer invalid",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-204a", [
+            { question: "Q1", options: [{ label: "A" }, { label: "B" }] },
+            { question: "Q2", options: [{ label: "C" }, { label: "D" }] },
+          ]),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        const fetches = await runQCallback(monitor, "otg:q:req-204a:cancel");
+        const persisted = await findRecord("req-204a");
+        if (!persisted || persisted.q_reject !== true) {
+          throw new Error(`q_reject not persisted: ${JSON.stringify(persisted)}`);
+        }
+        const ans = answersOf(fetches);
+        if (ans.length !== 1 || ans[0].body.text !== "已取消") {
+          throw new Error(`cancel answer expected: ${JSON.stringify(fetches)}`);
+        }
+        const edit = lastEdit(fetches);
+        if (!edit || edit.body.text !== "ORIGINAL\n❌ Cancelled") {
+          throw new Error(`cancel edit must append ❌ Cancelled: ${JSON.stringify(fetches)}`);
+        }
+        if (edit.body.reply_markup !== undefined) {
+          throw new Error(`cancel edit must drop keyboard: ${JSON.stringify(edit.body)}`);
+        }
+        // 已取消记录再点选项 → 失效提示、不编辑。
+        const later = await runQCallback(monitor, "otg:q:req-204a:o0");
+        const laterAns = answersOf(later);
+        if (laterAns.length !== 1 || laterAns[0].body.text !== "记录不存在或已失效") {
+          throw new Error(`cancelled record must answer invalid: ${JSON.stringify(later)}`);
+        }
+        if (editCount(later) !== 0) {
+          throw new Error(`cancelled record click must not edit: ${JSON.stringify(later)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-204a"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-204-2：总结阶段/输入模式下 ❌ 同样生效（任意阶段可用）。
+  await runCase(
+    "API-204-2 cancel works from summary stage and from custom input mode",
+    async () => {
+      await registry.mutate((reg) => {
+        let next = reg;
+        next = appendSessionRecord(next, root, questionWizardRecord("req-204b", [
+          { question: "Q1", options: [{ label: "A" }] },
+          { question: "Q2", options: [{ label: "B" }] },
+        ], { q_draft: [["A"], ["B"]], q_stage: 2 }));
+        return appendSessionRecord(next, root, questionWizardRecord("req-204c", [
+          { question: "Q1", options: [], custom: true },
+        ], { q_input: 0 }));
+      });
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      try {
+        // 总结阶段取消。
+        const fetches = await runQCallback(monitor, "otg:q:req-204b:cancel");
+        let persisted = await findRecord("req-204b");
+        if (!persisted || persisted.q_reject !== true) {
+          throw new Error(`summary cancel not persisted: ${JSON.stringify(persisted)}`);
+        }
+        if (editCount(fetches) !== 1 || !lastEdit(fetches).body.text.includes("❌ Cancelled")) {
+          throw new Error(`summary cancel edit expected: ${JSON.stringify(fetches)}`);
+        }
+        // 输入模式下取消。
+        const fetches2 = await runQCallback(monitor, "otg:q:req-204c:cancel");
+        persisted = await findRecord("req-204c");
+        if (!persisted || persisted.q_reject !== true) {
+          throw new Error(`input-mode cancel not persisted: ${JSON.stringify(persisted)}`);
+        }
+        if (editCount(fetches2) !== 1 || !lastEdit(fetches2).body.text.includes("❌ Cancelled")) {
+          throw new Error(`input-mode cancel edit expected: ${JSON.stringify(fetches2)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-204b"));
+        await registry.mutate((reg) => markSessionResolved(reg, "req-204c"));
+        await monitor.dispose();
+      }
+    },
+  );
+
   await rm(baseDir, { recursive: true, force: true });
   const passed = total - failures;
   console.log(`\n${passed}/${total} cases passed`);
