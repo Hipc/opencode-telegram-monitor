@@ -18,8 +18,9 @@ export type RegistryEntry = {
   sessions?: SessionRecord[]; // 可选：旧文件/旧代码路径无此键时保持 undefined
 };
 
-// 等待状态落盘记录（契约 docs/modules/sessions-relay.md §2，冻结）。
-// message 为完整事件 payload 的 JSON 字符串；resolved 为终态（轮询不再补发）。
+// 等待状态落盘记录（契约 docs/modules/sessions-relay.md §2 冻结；Round 2 扩展 §13.1）。
+// message 为完整事件 payload 的 JSON 字符串；resolved 为终态（轮询不再补发）；
+// reply 为可选字段：null/缺失 = 未回复；三值 = 用户选定回复（透传不映射）。
 export type SessionRecord = {
   session_id: string; // opencode sessionID（事件 properties.sessionID）
   session_name: string; // 展示名：ensureSessionInfo 拉取 info.title；拉不到兜底 sessionID
@@ -29,6 +30,7 @@ export type SessionRecord = {
   resolved: boolean; // 初始 false；replied/rejected 置 true；终态（不再改回）
   request_id: string; // 内部匹配键：asked 事件 properties.id；replied 匹配键
   created_at: string; // ISO 8601 字符串（new Date().toISOString()），本轮仅预留不消费
+  reply?: "once" | "always" | "reject" | null; // Round 2：null/缺失=未回复；三值=用户选定回复（透传不映射）
 };
 
 export type ProjectRegistry = {
@@ -83,9 +85,12 @@ export function parseRegistry(text: string): ProjectRegistry | undefined {
 }
 
 /**
- * 严格校验单条 SessionRecord（契约 sessions-relay.md §3.2）：全部 8 字段类型
- * 必须正确，不允许从默认值推断（如把非 boolean 的 send 按 truthy 处理）；
- * 任一字段不符 → undefined（调用方丢弃该记录，不抛错、不影响其它记录）。
+ * 严格校验单条 SessionRecord（契约 sessions-relay.md §3.2，Round 2 扩展 §13.1）：
+ * 8 基础字段类型必须正确，不允许从默认值推断（如把非 boolean 的 send 按
+ * truthy 处理）；任一字段不符 → undefined（调用方丢弃该记录，不抛错、不影响
+ * 其它记录）。可选 reply 字段四态：键缺失 → 构造记录不含该键（serialize 自动
+ * 省略，旧文件往返不新增键）；显式 null → null；三合法值 → 原样保留；其它
+ * 任何值 → 丢弃整条记录（严格白名单风格，不抛错）。
  */
 function parseSessionRecord(value: unknown): SessionRecord | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -104,7 +109,20 @@ function parseSessionRecord(value: unknown): SessionRecord | undefined {
     !type
   )
     return undefined;
-  return {
+  let reply: "once" | "always" | "reject" | null | undefined;
+  if ("reply" in rec) {
+    if (
+      rec.reply === null ||
+      rec.reply === "once" ||
+      rec.reply === "always" ||
+      rec.reply === "reject"
+    ) {
+      reply = rec.reply;
+    } else {
+      return undefined; // 非法 reply 值：丢弃整条记录，不抛错、不影响其它记录
+    }
+  }
+  const record: SessionRecord = {
     session_id: rec.session_id,
     session_name: rec.session_name,
     type,
@@ -114,6 +132,8 @@ function parseSessionRecord(value: unknown): SessionRecord | undefined {
     request_id: rec.request_id,
     created_at: rec.created_at,
   };
+  if (reply !== undefined) record.reply = reply;
+  return record;
 }
 
 export function serializeRegistry(registry: ProjectRegistry) {
@@ -249,6 +269,42 @@ export function markSessionSent(
   requestID: string,
 ): ProjectRegistry | undefined {
   return markSessionFlag(registry, requestID, "send");
+}
+
+/**
+ * 按 request_id 全局精确写入 reply 值（契约 sessions-relay.md §13.2，Round 2，
+ * TG 审批按钮回调）。与 markSessionResolved 同构：全局 request_id 精确匹配
+ * （请求 ID 全局唯一，跨全部条目找第一条；顺序 = projects 数组序 + sessions
+ * 数组序）。三态语义：
+ * - 无匹配 → undefined（mutate 不写盘不抛错）；
+ * - 匹配且 reply 已是同一值 → 返回原 registry 引用（幂等，mutate 短路不写盘）；
+ * - 匹配且值不同 → 返回新 registry，仅改 reply 字段（send/resolved 不动，
+ *   即使 resolved=true 也允许写 reply——纯字段写、无状态检查）。
+ * 不复用 markSessionFlag（只置 true boolean，值类型不同），自行实现。
+ */
+export function setSessionReply(
+  registry: ProjectRegistry,
+  requestID: string,
+  reply: "once" | "always" | "reject",
+): ProjectRegistry | undefined {
+  for (let i = 0; i < registry.projects.length; i++) {
+    const entry = registry.projects[i]!;
+    const sessions = entry.sessions;
+    if (!sessions) continue;
+    for (let j = 0; j < sessions.length; j++) {
+      if (sessions[j]!.request_id !== requestID) continue;
+      if (sessions[j]!.reply === reply) return registry; // 同值：幂等，原引用
+      const projects = registry.projects.slice();
+      projects[i] = {
+        ...entry,
+        sessions: sessions.map((record, k) =>
+          k !== j ? record : { ...record, reply },
+        ),
+      };
+      return { projects };
+    }
+  }
+  return undefined; // 无匹配：无可写记录，静默跳过写盘
 }
 
 function markSessionFlag(

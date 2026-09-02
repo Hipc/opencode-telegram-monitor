@@ -1,10 +1,12 @@
 // tests/registry-sessions.test.mjs
 //
-// 纯函数测试：SessionRecord 承载（sessions-relay.md §3/§4，REG-101）。
+// 纯函数测试：SessionRecord 承载（sessions-relay.md §3/§4，REG-101；Round 2
+// 扩展 §13.1/§13.2，REG-201）。
 // 覆盖：parse/serialize 白名单往返保留全字段、旧文件无 sessions 键、非数组丢弃、
 // 损坏记录容错、append 追加不覆盖、mark* 按 request_id 精确匹配（无匹配
 // undefined / 已置位幂等原引用 / 两字段互不联动）、既有 parse 语义保持、
-// mutate 集成（写盘 + undefined 不写盘）。
+// mutate 集成（写盘 + undefined 不写盘）、reply 字段四态往返与容错、
+// setSessionReply 三态（写入/无匹配 undefined/幂等原引用/send、resolved 不受影响）。
 //
 // 用例全部使用 mkdtemp 临时目录隔离，绝不触碰真实 ~/.otg。
 // 运行：bun tests/registry-sessions.test.mjs
@@ -20,6 +22,7 @@ const {
   appendSessionRecord,
   markSessionResolved,
   markSessionSent,
+  setSessionReply,
   ProjectRegistryStore,
   registerProject,
 } = await import(registryURL.href);
@@ -480,6 +483,220 @@ await runCase("REG-101 mutate integration: append/mark persist, no-match no-op",
   assert(
     JSON.stringify(await reader.read()) === before,
     "file must not change for idempotent mark",
+  );
+});
+
+// REG-201: reply 字段往返——显式 null 与三合法值逐字段一致（parse→serialize→parse）。
+// 来源：决策 #8 / 契约 sessions-relay.md §13.1（Round 2）。
+await runCase("REG-201 reply round-trip preserves null and valid values", async (baseDir) => {
+  const records = [
+    makeRecord({ request_id: "req-null", reply: null }),
+    makeRecord({ request_id: "req-once", reply: "once" }),
+    makeRecord({ request_id: "req-always", reply: "always" }),
+    makeRecord({ request_id: "req-reject", reply: "reject" }),
+  ];
+  const reg = regWith([
+    {
+      path: join(baseDir, "p"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: records,
+    },
+  ]);
+  const parsed = parseRegistry(serializeRegistry(reg));
+  assert(parsed !== undefined, "parse failed");
+  const sessions = parsed.projects[0].sessions;
+  assert(sessions.length === 4, `expected 4 records, got ${sessions.length}`);
+  for (let i = 0; i < records.length; i++) {
+    assert(
+      Object.prototype.hasOwnProperty.call(sessions[i], "reply"),
+      `record ${i} must keep the reply key`,
+    );
+    assert(
+      sessions[i].reply === records[i].reply,
+      `reply mismatch for ${records[i].request_id}: ${JSON.stringify(sessions[i].reply)}`,
+    );
+  }
+  // 二次往返（parse→serialize→parse）
+  const reparsed = parseRegistry(serializeRegistry(parsed));
+  for (let i = 0; i < records.length; i++) {
+    assert(
+      reparsed.projects[0].sessions[i].reply === records[i].reply,
+      `reply mismatch after 2nd round-trip`,
+    );
+  }
+});
+
+// REG-201: 无 reply 键的旧记录往返不新增键（serialize 自动省略，键缺失态保持）。
+await runCase("REG-201 old record without reply key round-trips without adding key", async (baseDir) => {
+  const record = makeRecord({ request_id: "req-old" });
+  assert(!("reply" in record), "fixture must not carry reply key");
+  const text = serializeRegistry(
+    regWith([
+      {
+        path: join(baseDir, "p"),
+        enabled: true,
+        addedAt: "2026-01-01T00:00:00.000Z",
+        sessions: [record],
+      },
+    ]),
+  );
+  assert(!text.includes('"reply"'), "serialize must not add reply key");
+  const parsed = parseRegistry(text);
+  const got = parsed.projects[0].sessions[0];
+  assert(got.request_id === "req-old", "record lost in round-trip");
+  assert(!("reply" in got), "parse must not add reply key to old record");
+  const out2 = serializeRegistry(parsed);
+  assert(!out2.includes('"reply"'), "2nd serialize must not add reply key");
+});
+
+// REG-201: 非法 reply 值（非三合法值/非 null）→ 丢弃整条记录，不抛错、合法记录保留。
+await runCase("REG-201 invalid reply value drops the record without throwing", async (baseDir) => {
+  const good = makeRecord({ request_id: "req-good", reply: "once" });
+  const bad = ["maybe", "", "ONCE", 42, true, false, {}, [], { once: true }];
+  const parsed = parseRegistry(
+    JSON.stringify({
+      projects: [
+        {
+          path: join(baseDir, "p"),
+          enabled: true,
+          addedAt: "2026-01-01T00:00:00.000Z",
+          sessions: [
+            good,
+            ...bad.map((reply, i) =>
+              makeRecord({ request_id: `req-bad-${i}`, reply }),
+            ),
+          ],
+        },
+      ],
+    }),
+  );
+  assert(parsed !== undefined, "parse threw/failed");
+  const sessions = parsed.projects[0].sessions;
+  assert(
+    sessions.length === 1,
+    `expected 1 valid record, got ${sessions.length}`,
+  );
+  assert(sessions[0].request_id === "req-good", "wrong record survived");
+  assert(sessions[0].reply === "once", "valid reply not preserved");
+});
+
+// REG-201: setSessionReply 三态——全局 request_id 精确匹配写入；无匹配 undefined；
+// 幂等同值返回原引用；只改 reply、send/resolved 不动（跨条目、已 resolved 也允许写）。
+// 来源：决策 #8 / 契约 sessions-relay.md §13.2。
+await runCase("REG-201 setSessionReply writes, no-match undefined, idempotent", async (baseDir) => {
+  const reg = regWith([
+    {
+      path: join(baseDir, "p"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [
+        makeRecord({ request_id: "req-1", send: false, resolved: false }),
+        makeRecord({ request_id: "req-2", send: true, resolved: false }),
+      ],
+    },
+    {
+      path: join(baseDir, "q"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [makeRecord({ request_id: "req-3", send: false, resolved: true })],
+    },
+  ]);
+  assert(
+    setSessionReply(reg, "req-missing", "once") === undefined,
+    "no match must return undefined",
+  );
+  assert(
+    setSessionReply(reg, "req-", "once") === undefined,
+    "prefix must not match (exact match only)",
+  );
+
+  // 写入 once：新 registry，仅该记录 reply 变化
+  const next = setSessionReply(reg, "req-2", "once");
+  assert(next !== reg, "must return a new registry object");
+  assert(next.projects[0].sessions[1].reply === "once", "reply not written");
+  assert(
+    next.projects[0].sessions[1].send === true &&
+      next.projects[0].sessions[1].resolved === false,
+    "setSessionReply must not touch send/resolved",
+  );
+  assert(
+    next.projects[0].sessions[0].reply === undefined,
+    "other record must not be touched",
+  );
+
+  // 幂等：同值返回原引用
+  const idem = setSessionReply(next, "req-2", "once");
+  assert(idem === next, "idempotent same-value must return same reference");
+
+  // 跨条目匹配 + 已 resolved 记录仍允许写 reply（纯字段写、无状态检查）
+  const cross = setSessionReply(reg, "req-3", "reject");
+  assert(cross !== reg, "cross-entry must return a new registry object");
+  assert(
+    cross.projects[1].sessions[0].reply === "reject",
+    "cross-entry reply not written",
+  );
+  assert(
+    cross.projects[1].sessions[0].resolved === true,
+    "resolved must stay untouched even when writing reply",
+  );
+
+  // 从无 reply 键的记录写入：新增键
+  const add = setSessionReply(reg, "req-1", "always");
+  assert(add.projects[0].sessions[0].reply === "always", "reply key not added");
+  assert(
+    setSessionReply(add, "req-1", "always") === add,
+    "idempotent after adding key must return same reference",
+  );
+});
+
+// REG-201 (集成): mutate(setSessionReply) 写盘持久化、无匹配 undefined 且文件
+// 内容不变、幂等同值不写盘（与 REG-101 mutate 集成同款语义）。
+await runCase("REG-201 mutate integration: setSessionReply persist, no-match no-op", async (baseDir) => {
+  const filePath = join(baseDir, "projects.json");
+  const store = new ProjectRegistryStore(filePath);
+  await store.ensureDir();
+  const p = join(baseDir, "project", "demo");
+  await store.mutate((reg) => registerProject(reg, p));
+  await store.mutate((reg) =>
+    appendSessionRecord(
+      reg,
+      p,
+      makeRecord({ request_id: "req-int", session_id: "sess-int" }),
+    ),
+  );
+
+  const written = await store.mutate((reg) =>
+    setSessionReply(reg, "req-int", "always"),
+  );
+  assert(written !== undefined, "setSessionReply mutate failed");
+  const got = (await store.read()).projects[0].sessions[0];
+  assert(got.reply === "always", "reply not persisted");
+  assert(
+    got.send === false && got.resolved === false,
+    "send/resolved must stay false after persist",
+  );
+
+  const before = JSON.stringify(await store.read());
+  const none = await store.mutate((reg) =>
+    setSessionReply(reg, "req-nope", "once"),
+  );
+  assert(
+    none === undefined,
+    "no-match setSessionReply must yield undefined from mutate",
+  );
+  assert(
+    JSON.stringify(await store.read()) === before,
+    "file must not change for no-match setSessionReply",
+  );
+
+  const idem = await store.mutate((reg) =>
+    setSessionReply(reg, "req-int", "always"),
+  );
+  assert(idem !== undefined, "idempotent setSessionReply must succeed");
+  assert(
+    JSON.stringify(await store.read()) === before,
+    "file must not change for idempotent setSessionReply",
   );
 });
 
