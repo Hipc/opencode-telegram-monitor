@@ -23,6 +23,12 @@ const {
   markSessionResolved,
   markSessionSent,
   setSessionReply,
+  setQuestionDraft,
+  setQuestionInput,
+  submitQuestionAnswers,
+  rejectQuestion,
+  setQuestionMessageID,
+  clearQuestionInputs,
   ProjectRegistryStore,
   registerProject,
 } = await import(registryURL.href);
@@ -697,6 +703,401 @@ await runCase("REG-201 mutate integration: setSessionReply persist, no-match no-
   assert(
     JSON.stringify(await store.read()) === before,
     "file must not change for idempotent setSessionReply",
+  );
+});
+
+// ---- Phase 1.1 (REG-301, question-tg-wizard round 4, §14.1) ----
+
+// REG-301: q_* 6 字段往返——合法值逐字段一致（含 q_input 显式 null 保留）；
+// 无 q_* 键的旧记录往返不新增键；二次往返一致。
+await runCase("REG-301 q_* round-trip preserves valid and missing fields", async (baseDir) => {
+  const full = makeRecord({
+    request_id: "req-full",
+    type: "question",
+    q_draft: [["yes"], []],
+    q_stage: 2,
+    q_input: 1,
+    q_answers: [["yes"], ["no"]],
+    q_reject: false,
+    q_msg_id: 1234,
+  });
+  const inputNull = makeRecord({ request_id: "req-null", q_input: null });
+  const old = makeRecord({ request_id: "req-old" });
+  const reg = regWith([
+    {
+      path: join(baseDir, "p"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [full, inputNull, old],
+    },
+  ]);
+  const parsed = parseRegistry(serializeRegistry(reg));
+  assert(parsed !== undefined, "parse failed");
+  const sessions = parsed.projects[0].sessions;
+  assert(sessions.length === 3, `expected 3 records, got ${sessions.length}`);
+
+  const gotFull = sessions[0];
+  for (const key of ["q_draft", "q_stage", "q_input", "q_answers", "q_reject", "q_msg_id"]) {
+    assert(
+      Object.prototype.hasOwnProperty.call(gotFull, key),
+      `record must keep key ${key}`,
+    );
+    assert(
+      JSON.stringify(gotFull[key]) === JSON.stringify(full[key]),
+      `field ${key} changed in round-trip`,
+    );
+  }
+  assert(
+    Object.prototype.hasOwnProperty.call(sessions[1], "q_input") &&
+      sessions[1].q_input === null,
+    "explicit null q_input must keep the key and stay null",
+  );
+  for (const key of ["q_draft", "q_stage", "q_input", "q_answers", "q_reject", "q_msg_id"]) {
+    assert(
+      !Object.prototype.hasOwnProperty.call(sessions[2], key),
+      `old record must not gain key ${key}`,
+    );
+  }
+  // 二次往返（parse→serialize→parse）
+  const reparsed = parseRegistry(serializeRegistry(parsed));
+  assert(
+    JSON.stringify(reparsed.projects[0].sessions[0].q_draft) ===
+      JSON.stringify(full.q_draft),
+    "q_draft lost after 2nd round-trip",
+  );
+  assert(
+    reparsed.projects[0].sessions[1].q_input === null,
+    "q_input null lost after 2nd round-trip",
+  );
+  assert(
+    !("q_answers" in reparsed.projects[0].sessions[2]),
+    "old record gained key after 2nd round-trip",
+  );
+});
+
+// REG-301: 非法 q_* 值（类型/结构不符，含各字段 null）→ 丢弃整条记录，
+// 不抛错、合法记录保留。
+await runCase("REG-301 invalid q_* values drop the record without throwing", async (baseDir) => {
+  const good = makeRecord({
+    request_id: "req-good",
+    type: "question",
+    q_msg_id: 7,
+  });
+  const bad = [
+    { request_id: "req-bad-draft-1", q_draft: "yes" },
+    { request_id: "req-bad-draft-2", q_draft: [["ok"], "nope"] },
+    { request_id: "req-bad-draft-3", q_draft: [[1]] },
+    { request_id: "req-bad-draft-4", q_draft: null },
+    { request_id: "req-bad-stage-1", q_stage: "2" },
+    { request_id: "req-bad-stage-2", q_stage: null },
+    { request_id: "req-bad-stage-3", q_stage: true },
+    { request_id: "req-bad-input-1", q_input: "1" },
+    { request_id: "req-bad-input-2", q_input: true },
+    { request_id: "req-bad-input-3", q_input: {} },
+    { request_id: "req-bad-answers-1", q_answers: ["flat"] },
+    { request_id: "req-bad-answers-2", q_answers: [["a"], 42] },
+    { request_id: "req-bad-answers-3", q_answers: null },
+    { request_id: "req-bad-reject-1", q_reject: "true" },
+    { request_id: "req-bad-reject-2", q_reject: 1 },
+    { request_id: "req-bad-reject-3", q_reject: null },
+    { request_id: "req-bad-msgid-1", q_msg_id: "42" },
+    { request_id: "req-bad-msgid-2", q_msg_id: null },
+    { request_id: "req-bad-msgid-3", q_msg_id: true },
+  ];
+  const parsed = parseRegistry(
+    JSON.stringify({
+      projects: [
+        {
+          path: join(baseDir, "p"),
+          enabled: true,
+          addedAt: "2026-01-01T00:00:00.000Z",
+          sessions: [good, ...bad.map((o) => makeRecord(o))],
+        },
+      ],
+    }),
+  );
+  assert(parsed !== undefined, "parse threw/failed");
+  const sessions = parsed.projects[0].sessions;
+  assert(
+    sessions.length === 1,
+    `expected 1 valid record, got ${sessions.length}`,
+  );
+  assert(sessions[0].request_id === "req-good", "wrong record survived");
+  assert(sessions[0].q_msg_id === 7, "valid q_msg_id not preserved");
+});
+
+// REG-301: 5 个 q_* 纯函数三态——全局 request_id 精确匹配（跨条目第二条目）；
+// 无匹配（含前缀不匹配）undefined；写入只改目标字段（send/resolved/reply
+// 及其它 q_* 不动）；幂等（同值/同引用）返回原引用。
+await runCase("REG-301 q_* pure functions: write, no-match undefined, idempotent", async (baseDir) => {
+  const base = makeRecord({
+    request_id: "req-q",
+    type: "question",
+    send: true,
+    resolved: false,
+    reply: null,
+    q_draft: [["a"]],
+    q_stage: 0,
+    q_input: 1,
+  });
+  const reg = regWith([
+    {
+      path: join(baseDir, "p"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [makeRecord({ request_id: "req-other" }), base],
+    },
+    {
+      path: join(baseDir, "q"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [makeRecord({ request_id: "req-cross", type: "question" })],
+    },
+  ]);
+  assert(
+    setQuestionDraft(reg, "req-missing", [["x"]], 0) === undefined,
+    "setQuestionDraft no-match must be undefined",
+  );
+  assert(
+    setQuestionInput(reg, "req-", 0) === undefined,
+    "setQuestionInput prefix must not match",
+  );
+  assert(
+    submitQuestionAnswers(reg, "req-nope", [["x"]]) === undefined,
+    "submitQuestionAnswers no-match must be undefined",
+  );
+  assert(
+    rejectQuestion(reg, "req-nope") === undefined,
+    "rejectQuestion no-match must be undefined",
+  );
+  assert(
+    setQuestionMessageID(reg, "req-nope", 5) === undefined,
+    "setQuestionMessageID no-match must be undefined",
+  );
+
+  // setQuestionDraft：写 q_draft+q_stage，只改目标字段
+  const draft = [["a"], ["b"]];
+  const d = setQuestionDraft(reg, "req-q", draft, 1);
+  assert(d !== reg, "setQuestionDraft must return a new registry object");
+  const dRec = d.projects[0].sessions[1];
+  assert(
+    dRec.q_draft === draft && dRec.q_stage === 1,
+    "draft/stage not written",
+  );
+  assert(
+    dRec.q_input === 1 &&
+      dRec.reply === null &&
+      dRec.send === true &&
+      dRec.resolved === false &&
+      !("q_answers" in dRec) &&
+      !("q_reject" in dRec) &&
+      !("q_msg_id" in dRec),
+    "setQuestionDraft must only change q_draft/q_stage",
+  );
+  assert(
+    d.projects[0].sessions[0].request_id === "req-other" &&
+      d.projects[1].sessions[0].request_id === "req-cross",
+    "other records must not be touched",
+  );
+  assert(
+    setQuestionDraft(d, "req-q", draft, 1) === d,
+    "setQuestionDraft idempotent must return same reference",
+  );
+
+  // setQuestionInput：写 q_input（数字），只改该字段
+  const i = setQuestionInput(reg, "req-q", 0);
+  assert(i !== reg && i.projects[0].sessions[1].q_input === 0, "q_input not written");
+  assert(
+    i.projects[0].sessions[1].q_draft === base.q_draft &&
+      i.projects[0].sessions[1].q_stage === 0,
+    "setQuestionInput must only change q_input",
+  );
+  assert(
+    setQuestionInput(i, "req-q", 0) === i,
+    "setQuestionInput idempotent must return same reference",
+  );
+  // setQuestionInput(null)：显式清除 → 写入 null（显式无输入态）
+  const clear = setQuestionInput(reg, "req-q", null);
+  assert(
+    clear.projects[0].sessions[1].q_input === null,
+    "setQuestionInput(null) must write explicit null",
+  );
+  assert(
+    clear.projects[0].sessions[1].q_draft === base.q_draft,
+    "setQuestionInput(null) must not touch other fields",
+  );
+
+  // submitQuestionAnswers：写 q_answers，只改该字段
+  const answers = [["a"], ["b"]];
+  const s = submitQuestionAnswers(reg, "req-q", answers);
+  assert(s !== reg && s.projects[0].sessions[1].q_answers === answers, "answers not written");
+  assert(
+    s.projects[0].sessions[1].q_draft === base.q_draft &&
+      s.projects[0].sessions[1].q_input === 1,
+    "submitQuestionAnswers must only change q_answers",
+  );
+  assert(
+    submitQuestionAnswers(s, "req-q", answers) === s,
+    "submitQuestionAnswers idempotent must return same reference",
+  );
+
+  // rejectQuestion：置 q_reject=true，只改该字段，幂等
+  const r = rejectQuestion(reg, "req-q");
+  assert(r !== reg && r.projects[0].sessions[1].q_reject === true, "q_reject not written");
+  assert(
+    r.projects[0].sessions[1].resolved === false &&
+      r.projects[0].sessions[1].q_draft === base.q_draft &&
+      r.projects[0].sessions[1].q_input === 1,
+    "rejectQuestion must only change q_reject",
+  );
+  assert(
+    rejectQuestion(r, "req-q") === r,
+    "rejectQuestion idempotent must return same reference",
+  );
+
+  // setQuestionMessageID：写 q_msg_id，只改该字段，幂等
+  const m = setQuestionMessageID(reg, "req-q", 42);
+  assert(m !== reg && m.projects[0].sessions[1].q_msg_id === 42, "q_msg_id not written");
+  assert(
+    m.projects[0].sessions[1].q_draft === base.q_draft,
+    "setQuestionMessageID must only change q_msg_id",
+  );
+  assert(
+    setQuestionMessageID(m, "req-q", 42) === m,
+    "setQuestionMessageID idempotent must return same reference",
+  );
+
+  // 跨条目全局匹配（第二条目）
+  const cross = setQuestionDraft(reg, "req-cross", [["x"]], 0);
+  assert(
+    cross !== reg && cross.projects[1].sessions[0].q_stage === 0,
+    "cross-entry match must write",
+  );
+  assert(
+    cross.projects[0].sessions[1] === reg.projects[0].sessions[1],
+    "untouched entry records must keep reference",
+  );
+});
+
+// REG-301: clearQuestionInputs 批量清除——无任何 q_input → 原引用；
+// 有 q_input（数字与 null 混合）→ 新 registry 且全部 q_input 键删除；
+// 其它字段（含其它 q_*）不动；无 sessions 条目不参与。
+await runCase("REG-301 clearQuestionInputs clears q_input keys in batch", async (baseDir) => {
+  const reg = regWith([
+    {
+      path: join(baseDir, "p"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [
+        makeRecord({ request_id: "req-1", q_input: 2, q_draft: [["a"]], q_stage: 2 }),
+        makeRecord({ request_id: "req-2", q_input: null }),
+        makeRecord({ request_id: "req-3" }),
+      ],
+    },
+    {
+      path: join(baseDir, "q"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [makeRecord({ request_id: "req-4", q_input: 0 })],
+    },
+    {
+      path: join(baseDir, "z"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ]);
+  const next = clearQuestionInputs(reg);
+  assert(next !== reg, "must return a new registry when cleared");
+  for (const entryIdx of [0, 1]) {
+    for (const req of entryIdx === 0 ? ["req-1", "req-2", "req-3"] : ["req-4"]) {
+      const rec = next.projects[entryIdx].sessions.find((s) => s.request_id === req);
+      assert(rec !== undefined, `record ${req} lost`);
+      assert(!("q_input" in rec), `q_input key must be removed for ${req}`);
+    }
+  }
+  assert(
+    next.projects[0].sessions[0].q_draft[0][0] === "a" &&
+      next.projects[0].sessions[0].q_stage === 2,
+    "other q_* fields must stay untouched",
+  );
+  assert(
+    next.projects[0].sessions[0].send === false &&
+      next.projects[0].sessions[0].resolved === false,
+    "send/resolved must stay untouched",
+  );
+  assert(
+    next.projects[2] === reg.projects[2],
+    "entry without sessions must keep reference",
+  );
+  // 二次清除无变更 → 原引用
+  const clean = clearQuestionInputs(next);
+  assert(clean === next, "no pending input must return same reference");
+});
+
+// REG-301 (集成): mutate(q_* 纯函数) 写盘持久化、无匹配 undefined 且文件内容
+// 不变、幂等同值不写盘（与 REG-101/201 mutate 集成同款语义）。
+await runCase("REG-301 mutate integration: q_* writes persist, no-match no-op", async (baseDir) => {
+  const filePath = join(baseDir, "projects.json");
+  const store = new ProjectRegistryStore(filePath);
+  await store.ensureDir();
+  const p = join(baseDir, "project", "demo");
+  await store.mutate((reg) => registerProject(reg, p));
+  await store.mutate((reg) =>
+    appendSessionRecord(
+      reg,
+      p,
+      makeRecord({
+        request_id: "req-int",
+        session_id: "sess-int",
+        type: "question",
+      }),
+    ),
+  );
+
+  const draft = [["yes"]];
+  const written = await store.mutate((reg) =>
+    setQuestionDraft(reg, "req-int", draft, 1),
+  );
+  assert(written !== undefined, "setQuestionDraft mutate failed");
+  const got = (await store.read()).projects[0].sessions[0];
+  assert(
+    JSON.stringify(got.q_draft) === JSON.stringify(draft) && got.q_stage === 1,
+    "draft/stage not persisted",
+  );
+  assert(
+    got.send === false && got.resolved === false,
+    "send/resolved must stay false after persist",
+  );
+
+  const rejected = await store.mutate((reg) => rejectQuestion(reg, "req-int"));
+  assert(
+    rejected !== undefined &&
+      (await store.read()).projects[0].sessions[0].q_reject === true,
+    "q_reject not persisted",
+  );
+  assert(
+    (await store.read()).projects[0].sessions[0].q_draft !== undefined,
+    "rejectQuestion must not clear q_draft",
+  );
+
+  const before = JSON.stringify(await store.read());
+  const none = await store.mutate((reg) =>
+    setQuestionMessageID(reg, "req-nope", 9),
+  );
+  assert(
+    none === undefined,
+    "no-match setQuestionMessageID must yield undefined from mutate",
+  );
+  assert(
+    JSON.stringify(await store.read()) === before,
+    "file must not change for no-match",
+  );
+
+  const idem = await store.mutate((reg) => rejectQuestion(reg, "req-int"));
+  assert(idem !== undefined, "idempotent rejectQuestion must succeed");
+  assert(
+    JSON.stringify(await store.read()) === before,
+    "file must not change for idempotent rejectQuestion",
   );
 });
 
