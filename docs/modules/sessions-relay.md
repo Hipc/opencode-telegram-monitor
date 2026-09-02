@@ -1,6 +1,7 @@
 # sessions-relay 模块契约（等待状态落盘 + poller 扫描中继）
 
-> 冻结: 2026-09-02（Round 1 / sessions-tg-relay；**Round 2 / tg-permission-buttons 扩展见 §13**）
+> 冻结: 2026-09-02（Round 1 / sessions-tg-relay；**Round 2 / tg-permission-buttons 扩展见 §13**；
+> Round 2.1 / 结构化渲染修订见 §13.11）
 > 文件: `src/registry/index.ts`（记录类型与纯函数）、
 > `src/monitor.ts`（写入端 Phase 1.2 / 扫描端 Phase 1.3）、`src/constants.ts`（扫描间隔常量，仅 Phase 1.3）
 > 计划: docs/todos/sessions-tg-relay.md（Round 1）、docs/todos/tg-permission-buttons.md（Round 2）
@@ -229,6 +230,8 @@ export function markSessionSent(
 - 消息格式（决策 #9，复用等待通知样式）：`titleLine(iconForWaitingType(record.type), 项目label)`
   + `fieldTable([fieldRow("Type", type), fieldRow("Session", session_name | shortID)])` +
   message 节选；`项目label` = 记录所属条目 `basename(entry.path)`；整体经 `limitMessage` 截断。
+  **（Round 2.1 supersede：permission 记录的「message 节选」改为结构化字段行，见 §13.11；
+  question 记录仍为原文节选，本条对 question 保持有效。）**
 
 ### 6.3 可测试入口（冻结）
 
@@ -315,9 +318,11 @@ export function markSessionSent(
 | 本文件 §6.2 扫描端筛选条件 | `send === false && resolved === false` | Round 2 追加 `&& reply == null`（§13.3；已写 reply 的未发送记录永不发送，走消费端 apply） |
 | 本文件 §5.3 resolved 回写 | resolved 仅由 replied/rejected 事件置位（单路径） | Round 2 新增第二路径：消费端 apply 成功后置位（§13.6；双路径先到先得，§5.3 逻辑保留） |
 | 本文件 §7 `src/monitor.ts` 编辑区间 | Round 1 行号区间（658-741/855-920/1286-1383） | 历史已合并；Round 2 区间以 §13.7 为准 |
-| 本文件 §8 测试编号表 | API-001~006 / REG-101 / LOCK / BUILD | Round 2 新增 API-101~104 / REG-201，追加锚点规则见 §13.9 |
+| 本文件 §8 测试编号表 | API-001~006 / REG-101 / LOCK / BUILD | Round 2 新增 API-101~104 / REG-201，追加锚点规则见 §13.9；Round 2.1 新增 API-105（§13.9/§13.11） |
 | README.md「只读」声明 | "The bot is fully read-only: approvals, permission prompts and answers are always handled in opencode itself" | 2026-09-02 起 permission 记录支持 TG 三按钮回写（仅在你显式点击时；question 与其它一切仍留在 opencode，绝不擅自代答）。**本轮 README 修订被 doc-prep 写权限边界阻断（README.md ∉ docs/**），由 dev-lead 另行指派执行，见计划「断点记录」** |
 | docs/00-overview.md「只读」声明 | 「插件绝不代答（monitor.ts 中无任何 permission.reply/question 代答路径）」 | 同上：2026-09-02 起支持 TG 审批回写（点击驱动）；monitor.ts 新增 reply API 调用路径为按钮显式触发 |
+| 本文件 §6.2 消息格式 | permission 记录渲染 = 「message 节选」 | Round 2.1（Phase 2.1）supersede：permission 记录改为解析 message JSON 后的结构化字段行（§13.11）；question 记录仍为原文节选（§6.2 对 question 保持有效） |
+| 本文件 §13.3「formatSessionRecordMessage 零改动」 | 1.2 不碰该函数体（文本格式不变） | Round 2.1 supersede：函数体由 Phase 2.1 修改为结构化渲染（§13.11）；「1.2 不在该轮改此函数」的约束仍成立，且发送通道/键盘/筛选条件零变化 |
 
 ## 12. 变更记录
 
@@ -329,6 +334,10 @@ export function markSessionSent(
   handleCallback perm 分支行为序列、消费端扫描器（scanReplyQueue/applySessionReply）、
   发送条件 `&& reply == null`、Round 2 编辑区间、测试编号 REG-201/API-101~104 与同文件追加锚点规则、
   SDK 签名核验任务与兜底形态。
+- 2026-09-02 修订（Round 2 / Phase 2.1 结构化渲染，见 §13.11）：permission 记录渲染
+  supersede「message 原文节选」→ 解析 message JSON 的结构化字段行（Session/Type/Permission/Pattern(s)/Title，
+  宽松缺字段跳行；解析失败或无字段退回 300 字符原文节选）；question 记录渲染不变；发送通道与键盘零变化。
+  supersede 记录见 §11，测试编号新增 API-105（§13.9）。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
 
@@ -415,6 +424,8 @@ export function buildSessionPermissionKeyboard(entryID: string): TelegramInlineK
 - keyboard 构建：`buildSessionPermissionKeyboard(this.permissionEntryID(record.request_id))`（entryID 换算见 §13.4）。
 - **筛选条件更新（supersede §6.2）**：`send === false && resolved === false && reply == null`（决策 #6 防御）。`reply == null` 对 question 记录恒真（无 reply 键 → undefined == null），一条条件同时覆盖两类；已写 reply 的未发送记录**永不发送**（走消费端 apply）。
 - `formatSessionRecordMessage`（1587-1606）**零改动**（文本格式不变，1.2 不碰该函数体）。
+  **（Round 2.1 supersede：函数体由 Phase 2.1 修改为结构化渲染，见 §13.11；本条对 1.2 的
+  「不在 1.2 改该函数」约束仍成立，且发送通道/键盘/筛选条件零变化。）**
 
 **发送端新增私有成员（monitor.ts，1.2 地盘）**：
 
@@ -535,6 +546,7 @@ export function buildSessionPermissionKeyboard(entryID: string): TelegramInlineK
 | API-102 | 回调三值写入 + answer 文案 + 编辑（键盘移除+结果行）+ 非法 chatId 拒绝 + 无匹配记录失败分支 | `tests/sessions-poller.test.mjs` | 1.2 |
 | API-103 | 消费端 apply：stub reply API 断言透传（sessionID/requestID/response）→ resolved=true；reply=null 或已 resolved 不触发 | `tests/sessions-poller.test.mjs` | 1.3 |
 | API-104 | ①apply 失败保持 false、下轮重试成功 ②TUI 先置位（resolved=true）→ 跳过不调 API ③poller 对 reply!=null 未发送记录不发送（防御条件联动 1.2） | `tests/sessions-poller.test.mjs` | 1.3 |
+| API-105 | 结构化渲染（Round 2.1）：permission 记录 message JSON 解析 → 渲染含 Permission/Pattern/Title 行、不含 `{` 开头 JSON dump；非法 JSON / 合法但无可识别字段 → 退回 300 字符原文节选；question 记录渲染不变 | `tests/sessions-poller.test.mjs`（尾部追加，§13.11） | 2.1 |
 
 **同文件追加锚点规则（防合并冲突，经 git 3-way 合并实测：同锚点追加 ⇒ CONFLICT；不同锚点追加 ⇒ 自动干净合并）**：
 
@@ -552,4 +564,65 @@ export function buildSessionPermissionKeyboard(entryID: string): TelegramInlineK
 - 不改 mutate/锁/缓存/serialized（projects-registry.md §3/§4 保持零改动）；不改 PollerLock/SharedFileStore。
 - `src/constants.ts` 零新增（决策 #9；PERM_CB_PREFIX 放 format.ts）。
 - 不改 `formatSessionRecordMessage` 文本；不改 `enqueueMessageWithKeyboard`/`sendMessage` 本体（发送通道只新增 sendMessageWithKeyboard 调用点）。
+  **（Round 2.1 supersede：「不改 formatSessionRecordMessage 文本」不再成立——该函数体由 Phase 2.1
+  修改为结构化渲染（§13.11）；「不改 enqueueMessageWithKeyboard/sendMessage 本体」仍成立。）**
 - 不做 TG 侧的 question 应答通道；不新增 Telegram 命令（`/sessions` 等仍为 PLANNED_COMMANDS）。
+
+### 13.11 结构化渲染：permission 记录字段行（Round 2.1 冻结）
+
+> 计划: docs/todos/tg-permission-buttons.md Phase 2.1（修复轮）。
+> **本轮修改 `formatSessionRecordMessage`（src/monitor.ts 1791-1810）方法体本身**——
+> 上轮 §6.2/§13.3 对 permission 记录描述为「message 原文节选」，现 supersede 为
+> 「解析 message JSON 后的结构化字段行」；**发送通道（scanSessionQueue →
+> sendMessage/sendMessageWithKeyboard）、键盘构建（§13.3/§13.4）、筛选条件（§13.3
+> `reply == null`）、消费端（§13.6）与 question 记录渲染全部零变化**。
+
+**触发（冻结）**：
+
+- 结构化路径**只对 `type === "permission"` 生效**；`type === "question"` 记录渲染不变
+  （恒为 message 原文节选，见下「fallback」同款 paragraph，300 字符）。
+- 结构骨架不变：`titleLine(iconForWaitingType(record.type), 项目label)` +
+  `fieldTable(rows)` + （结构化行 | 节选），整体 `limitMessage` 截断（⚠️ 图标 + 项目名开头）。
+
+**渲染流程（冻结）**：
+
+1. `try { parsed = JSON.parse(record.message) } catch { → fallback }`。
+2. `parsed` 非普通对象（null/数组/非 object）→ fallback。
+3. 基础行恒输出（来自 record 字段，不经 parsed）：`Type`（record.type）、
+   `Session`（session_name || shortID(session_id)，safeText 100）。
+4. 结构化行（来自 parsed，宽松渲染——字段缺失/类型不符即跳过该行，不抛错）：
+
+| 行标签 | 取值来源（按事件类型，本机 SDK v2 `types.gen.d.ts` 核验） | 输出条件 |
+|---|---|---|
+| `Permission` | `parsed.permission`（permission.asked，string）→ `parsed.action`（permission.v2.asked，string）→ `parsed.type`（permission.updated，string） | 值为 string（如 external_directory） |
+| `Pattern` | `parsed.patterns`（permission.asked，Array<string>）→ `parsed.resources`（permission.v2.asked，Array<string>）→ `parsed.pattern`（permission.updated，string\|Array<string>） | 数组逐项或安全拼接展示，safeText 截断 |
+| `Title` | `parsed.title`（permission.updated，string；asked/v2.asked **无此字段**） | 值为 string（人类可读摘要行） |
+
+- 事件 payload 实形（核验依据，SDK v2）：
+  - `permission.asked` properties：`{ id, sessionID, permission: string, patterns: Array<string>, metadata, always, tool? }`；
+  - `permission.v2.asked` properties：`{ id, sessionID, action: string, resources: Array<string>, save?, metadata?, source? }`；
+  - `permission.updated` properties = `Permission`：`{ id, type: string, pattern?: string|Array<string>, title, sessionID, messageID, callID?, metadata, time }`；
+  - question 类 properties 无 permission/patterns/title 可识别字段 → 天然走 fallback。
+
+**fallback（冻结）**：`JSON.parse` 抛错、parsed 非对象、或 Permission/Pattern/Title
+**三行均无输出**（无可展示字段）→ 退回原行为：`paragraph(safeText(record.message, 300, ctx))`
+（message 原文节选，300 字符，与 question 记录同款）。**不得**在 fallback 时抛错中断发送链。
+
+**测试锚点（API-105，追加到 §13.9）**：
+
+- 合成 permission 记录（message 含 permission/patterns/title 的 JSON）→ 断言渲染含
+  Permission/Pattern/Title 行、**不含** `{` 开头的 JSON dump；
+- message=非法 JSON → 断言退回原文节选（含截断 JSON 文本）；
+- message=合法 JSON 但无可识别字段（如 `{}`）→ 断言退回原文节选；
+- 回归：API-006/101/102 既有断言仍绿（question 节选断言、键盘断言不受影响）；
+  若既有用例断言了 permission 的 JSON 节选文本，允许**最小**修正相关断言行并在报告注明。
+
+**编辑区间（Round 2.1）**：
+
+- `src/monitor.ts`：**仅 `formatSessionRecordMessage` 方法体（1791-1810）**；不得触碰
+  发送链（scanSessionQueue 1600-1618 附近/sendMessage*/handleCallback 2200+ 附近）、
+  registry、format.ts 键盘函数、`src/types.ts`。
+- `tests/sessions-poller.test.mjs`：尾部追加 API-105 区块（分节注释
+  `// ---- API-105: structured rendering (round 2) ----`），单 phase 无合并冲突顾虑。
+- **发送通道与键盘契约零变化**：permission 记录仍走 sendMessageWithKeyboard 三按钮（§13.3），
+  回调/回写/消费端（§13.4~§13.6）不受渲染改动影响。

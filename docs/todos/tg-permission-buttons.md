@@ -1,8 +1,8 @@
 # TG permission 按钮 + 回写应用闭环（round 2）
 
-> 状态: planning
+> 状态: in-progress
 > 创建: 2026-09-02
-> 当前轮次: Round 1
+> 当前轮次: Round 2
 > 关联文档: docs/modules/sessions-relay.md（上轮冻结契约，本轮多处 supersede）、docs/todos/sessions-tg-relay.md（上轮交付）
 
 ## 背景
@@ -116,6 +116,11 @@
 - [REG-201] registry reply 往返：parse/serialize 保留 reply（null/缺失/合法值/非法值容错）；
   setSessionReply 按 request_id 精确匹配写入、无匹配返回 undefined、幂等。来源：决策 #8。
 
+**Round 2.1 新增（Phase 2.1）：**
+- [API-105] 结构化渲染：permission 记录 message JSON 解析 → 渲染含 Permission/Pattern/Title 行、
+  不含 `{` 开头 JSON dump；非法 JSON / 合法但无可识别字段（如 `{}`）→ 退回 300 字符原文节选；
+  question 记录渲染不变。来源：契约 §13.11。
+
 **上轮回归（必须全绿）：**
 - [API-001~005] behavior.test.mjs（写入/去抖/resolved 回写/并发）
 - [API-006] sessions-poller.test.mjs（扫描发送语义——注意发送条件新增 reply==null 防御后的兼容）
@@ -134,7 +139,7 @@
 
 ## Round 1
 
-### Phase 1.1: registry reply 字段 ⬜
+### Phase 1.1: registry reply 字段 ✅
 
 **目标**: SessionRecord 增加 reply 可选字段（白名单兼容）、新增 setSessionReply 纯函数。
 **契约**: docs/modules/sessions-relay.md §13.1/§13.2（reply 字段语义与 parse 容错、setSessionReply 三态签名——照此实现）
@@ -155,7 +160,13 @@
 - [ ] 旧格式 projects.json（无 reply 键）解析往返不新增键、不丢记录
 - [ ] `node scripts/build.mjs` exit 0
 
-### Phase 1.2: 发送端按钮 + 回调写入 ⬜
+**实现记录**（2026-09-02，分支 `phase-r2-p1.1`，SHA `ee94489`，merge `1464ba2`）：
+- 全部验收达成：registry-sessions 15/15（REG-101×10 回归 + REG-201×5 新增）；LOCK 5/5；构建 exit 0。
+- parse 用 `"reply" in rec` 区分键缺失与显式值（比 `!== undefined` 更精确表达「旧文件往返不新增键」）；非法值丢整条记录不抛错。
+- `setSessionReply` 全局 request_id 匹配、无匹配 undefined、同值幂等原引用、只改 reply 不动 send/resolved；置于 markSessionSent 之后（契约指定位置）。
+- 行号漂移：SessionRecord 现 24-33、parseSessionRecord 现 95-137。
+
+### Phase 1.2: 发送端按钮 + 回调写入 ✅
 
 **目标**: permission 记录的 TG 消息带三按钮；点击回调写入 reply 字段 + answer + 编辑消息。
 **契约**: docs/modules/sessions-relay.md §13.3~§13.5/§13.7/§13.9（键盘构建、发送通道、callback_data 与
@@ -196,7 +207,14 @@ stopSessionsScan~scanSessionQueue 之间空白区（1524-1526，1.3 地盘））
 - [ ] API-101/102 全绿；API-006 既有用例回归全绿（发送条件变更后兼容）
 - [ ] `node scripts/build.mjs` exit 0
 
-### Phase 1.3: 每实例 reply 消费扫描器 ⬜
+**实现记录**（2026-09-02，分支 `phase-r2-p1.2`，SHA `88d2261`，merge `53bfbeb`）：
+- 全部验收达成：sessions-poller 14/14（API-006-1~5 回归 + API-101-1~4 + API-102-1~5）；构建 exit 0（105.43KB）。
+- callback_data 64 字节核验：典型 UUID requestID 全量约 52 字节，**正常不启用缩短**；缩短路径（44 字符 shortID + permShortMap 内存映射）已实现并验证；多字节兜底 → logError + 退化为无键盘普通消息，无静默截断。
+- **测试基建偏差**：permission 改走 sendMessageWithKeyboard 后，为让既有 API-006 用例在「只许尾部追加」约束下回归，在尾部区块**重新声明 makeMonitor**（JS 函数声明提升、后声明胜出）将 sendMessageWithKeyboard 委派给 sendStub。若后续轮次觉得晦涩，可在合并后把 stub 直接并入原 makeMonitor。
+- 修复记录：permissionEntryID 与无匹配分支的 safeText 调用曾缺 ctx 参数（测试捕获），已补全；API-102 断言强化为 answer/edit 精确各 1 次。
+- README（3/5/13/173 行）与 format.ts helpText 只读表述已按契约 §11 口径修订。
+
+### Phase 1.3: 每实例 reply 消费扫描器 ✅
 
 **目标**: 每个 opencode 实例 1s 扫描自己项目的 sessions，发现新 reply 调 opencode reply API
 应用，成功后置 resolved=true。
@@ -240,10 +258,19 @@ stub——**区块插在 API-006-2 用例收尾 `);` 之后**，与 1.2 尾部�
 - [ ] dispose 后无残留 interval（代码可证：timer 在 dispose 清理列表）
 - [ ] `node scripts/build.mjs` exit 0
 
+**实现记录**（2026-09-02，分支 `phase-r2-p1.3`，SHA `2c8b693`，merge `c3c94c2`）：
+- 全部验收达成：sessions-poller 7/7（API-006 回归 + API-103 + API-104）；构建 exit 0。
+- **SDK 签名已实际核验（非兜底）**：本机 `~/.opencode/node_modules/@opencode-ai/sdk`（版本 1.17.13，插件宿主实际解析的版本）`types.gen.d.ts:2510-2540` / `sdk.gen.d.ts:381`——方法为**顶层** `client.postSessionIdPermissionsPermissionId({ path: { id, permissionID }, body: { response } })`（path 键是 `permissionID` 大写 ID，非兜底形态的 `permissionId`；方法非 `client.session.*`）。契约 §13.8 兜底形态与核验结果不符，**以核验结果为准**。调用点加 `throwOnError: true`（沿用 bootstrap 既有模式），HTTP 400/404（如已被 TUI 处理）抛错被捕获 → logWarn 不置位，下轮读到 resolved=true 跳过。
+- applySessionReply 失败 logWarn 后 rethrow，由 scanReplyQueue catch 继续整轮（避免双重 logWarn）。
+- 行号漂移：字段区 147-152、initialize 挂载 175、dispose 清理 445-453、新方法区 1540-1662。
+- 风险标注：本机 SDK 1.17.13 vs 目标 opencode 1.18.23/1.18.26——路由 `/session/{id}/permissions/{permissionID}` 为长期稳定 schema，跨版本差异风险极低，终验已过。
+
 ### Round 1 整体测试记录
 
-- 测试结论：【通过】/【不通过】（待填）
-- 失败摘要与根因归属：（待填）
+- 测试结论：【通过】（2026-09-02，main @ `c3c94c2`）
+- 全量 44 条单测 + 3 条 bundle 断言全绿：behavior 8/8（API-001~005 回归）+ registry-sessions 15/15（REG-101×10 + REG-201×5）+ registry-concurrency 5/5（LOCK）+ sessions-poller 16/16（API-006 回归 + API-101×4 + API-102×5 + API-103/104）；BUILD-001 exit 0（108.14KB）+ BUILD-002 3/3。
+- 失败摘要与根因归属：无失败；1.2/1.3 在 sessions-poller.test.mjs 的不同锚点区块合并后无 stub 干扰。
+- 残余风险：① 真实 TG 端到端（真实按钮点击链路）刻意排除——建议上线人工冒烟；② 回写应用依赖 `client.postSessionIdPermissionsPermissionId` 形态（本机 SDK 1.17.13 核验），opencode 升级跨版本时需回归；③ Telegram callback_data 64 字节策略若变化需回归 API-101-3/4。
 
 ## 断点记录（运输层错误续传用）
 
@@ -262,4 +289,81 @@ stub——**区块插在 API-006-2 用例收尾 `);` 之后**，与 1.2 尾部�
 
 ## 交付总结
 
-- （待填）
+- **轮次**：1 轮完成（文档先行 → 批次 A → 合并 → 批次 B 并发 → 合并 → 整体测试【通过】）。
+- **提交链**：`f1bb950`（docs 冻结）→ `ee94489`/`1464ba2`（Phase 1.1）→ `88d2261`/`53bfbeb`（Phase 1.2）→ `2c8b693`/`c3c94c2`（Phase 1.3 merge，最终 HEAD）。
+- **改动文件**：
+  - `src/registry/index.ts`：SessionRecord.reply 可选字段（null/三值/非法值四态容错）、setSessionReply 纯函数
+  - `src/monitor.ts`：发送端 permission 记录带三按钮（sendMessageWithKeyboard + 发送条件加 reply==null 防御）、handleCallback perm 分支（写 reply + answer + 编辑消息移除键盘加结果行 + permShortMap 缩短映射）、每实例 1s reply 消费扫描器（startReplyScan/stopReplyScan/scanReplyQueue/applySessionReply，initialize 挂载 dispose 清理）
+  - `src/format/format.ts`：buildSessionPermissionKeyboard + helpText 只读表述修订
+  - `README.md`：只读声明修订（支持 TG 审批回写）
+  - 测试：registry-sessions 追加 REG-201×5；sessions-poller 追加 API-101/102（尾部锚点）与 API-103/104（中段锚点）
+  - 契约：docs/modules/sessions-relay.md §13 + supersede 记录
+- **SDK 核验结论**：实际签名为顶层 `client.postSessionIdPermissionsPermissionId({ path: { id, permissionID }, body: { response: "once"|"always"|"reject" } })`（本机 SDK 1.17.13 核验，推翻契约 §13.8 兜底形态）。
+- **最终整体测试**：44 单测 + 3 bundle 断言全绿（详见 Round 1 整体测试记录）。
+- **遗留事项**：① question 类型按钮/回写后续做；② sessions 清理策略后续做；③ 真实 TG 按钮链路建议人工冒烟；④ 上轮遗留：极端网络抖动单条重复投递（安全重试语义）。
+
+## Round 2（修复轮：TG 消息渲染 JSON 原文 → 结构化字段）
+
+### 背景与诊断结论（2026-09-02，真实环境诊断）
+
+- **用户反馈**：TG 收到的 permission 消息是 JSON 原文节选（无按钮、无结构化字段）。
+- **真实凭据诊断**（用户授权，测试文件 `tests/e2e/real-keyboard-channel.test.mjs` /
+  `real-permission-record.test.mjs`）：
+  - E2E-201/202：sendRichMessage+reply_markup 与官方 sendMessage+reply_markup **都能出按钮**；
+  - E2E-210：用 projects.json 真实记录 + 插件同款格式 + 三按钮发送（message_id=755）→ **按钮正常**；
+  - 结论：**发送通道无罪**；根因 = 持 poller.lock 发消息的进程跑的是旧版产物（round-1 代码：
+    JSON 节选格式、无按钮），新代码未上岗。tgdiag.log 另见 3 进程并发 getUpdates 互相 409
+    （老插件并存），部署侧由用户清理（停止旧进程/替换产物/重启），不在代码修复范围。
+- **本轮只修代码**：formatSessionRecordMessage 渲染（用户确认：恢复旧直发通知的可读格式）。
+
+### Phase 2.1: formatSessionRecordMessage 结构化渲染 ⬜
+
+**目标**: permission 记录的 TG 消息从「JSON 原文节选」改为解析 message JSON 后的结构化字段行
+（旧 notifyWaiting 风格），解析失败退回原文节选。发送通道与键盘逻辑零改动。
+**并行组**: 单 phase 批次（唯一改动）
+**触碰范围**: `src/monitor.ts`（**仅 formatSessionRecordMessage 方法体**，约 1791-1810 行）；
+`tests/sessions-poller.test.mjs`（尾部追加 API-105 区块，分节注释 `// ---- API-105: structured rendering (round 2) ----`；若既有用例断言了 JSON 节选内容需同步微调，允许最小修改相关断言行）。
+**禁改**: 发送链（scanSessionQueue/sendMessage*/handleCallback）、registry、format.ts 的键盘函数、docs/**。
+**分支**: `phase-r2-p2.1`　**worktree**: `.worktrees/phase-r2-p2.1`
+**任务**:
+
+- [ ] **结构化路径只对 `type === "permission"` 生效；`type === "question"` 渲染不变**
+      （恒走 message 节选，与现有 API-006-5 断言兼容——契约 §13.11）
+- [ ] formatSessionRecordMessage：先 `JSON.parse(record.message)`（try/catch）
+- [ ] 解析成功且为对象 → 结构化行（旧 notifyWaiting 风格）；字段来源按事件类型
+      （本机 SDK v2 types.gen.d.ts 核验，契约 §13.11 字段表）：
+  - `Session` 行（session_name || shortID(session_id)，safeText）——保留现有
+  - `Type` 行（record.type）——保留现有
+  - `Permission` 行：`parsed.permission`（asked）?? `parsed.action`（v2.asked）?? `parsed.type`
+    （updated），字符串时展示，如 external_directory
+  - `Pattern` 行：`parsed.patterns`（asked，数组）?? `parsed.resources`（v2.asked，数组）??
+    `parsed.pattern`（updated，string|array），逐项或安全拼接，safeText 截断
+  - `Title` 行：`parsed.title`（仅 updated 有），字符串时展示，作为人类可读摘要行
+  - 以上 parsed 字段缺失/类型不符时跳过对应行（宽松渲染，不抛错）
+- [ ] 解析失败（JSON.parse 抛错 / 非对象）或解析结果**无任何可展示字段**
+      （Permission/Pattern/Title 三行均未输出）→ 退回现有行为（message 节选 paragraph，300 字符）
+- [ ] 整体仍经 limitMessage 截断；titleLine/fieldTable 结构不变（⚠️ 图标 + 项目名开头）
+- [ ] `tests/sessions-poller.test.mjs` 尾部追加 API-105：
+  - 合成 permission 记录（message=含 permission/patterns/title 的 JSON）→ 断言渲染含 Permission/Pattern/Title 行、不含 `{` 开头的 JSON dump
+  - message=非法 JSON → 断言退回原文节选（含截断 JSON 文本）
+  - message=合法 JSON 但无可识别字段（如 `{}`）→ 断言退回原文节选
+- [ ] 回归确认 API-006/101/102 既有断言仍绿（若断言依赖旧 JSON 节选文本，最小修正并在报告注明）
+
+**验收标准**:
+
+- [ ] API-105 全绿；sessions-poller 全套回归绿
+- [ ] `node scripts/build.mjs` exit 0
+- [ ] 渲染产物不含未解析的 JSON 原文（合法可解析记录场景）
+
+### Round 2 整体测试记录
+
+- 测试结论：【通过】/【不通过】（待填）
+- 失败摘要与根因归属：（待填）
+
+### 部署清单（用户手工执行，代码合并后）
+
+1. `node scripts/build.mjs` 重新构建
+2. 停止旧插件进程（tgdiag.log 中的 2309823/2346621/2562977 中的旧版），关闭多余 opencode 窗口
+3. 将产物 `monitor.ts` 复制到 `~/.config/opencode/plugins/telegram-session-monitor.ts`
+4. 重启 opencode，确认只剩一个 poller（tgdiag.log 无 409）
+5. 触发一次真实 permission 请求，肉眼验证：结构化字段行 + 三按钮 + 点击后按钮移除/结果行 + TUI 侧真实生效
