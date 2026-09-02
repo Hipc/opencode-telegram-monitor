@@ -46,6 +46,12 @@ async function main() {
   // replyCalls 断言透传、replyError 控制成功/失败（方法名/参数形状以本机 SDK
   // 核验为准：client.postSessionIdPermissionsPermissionId({ path: { id,
   // permissionID }, body: { response } })，契约 §13.8）。
+  // Phase 1.4（API-205）：追加 question reply/reject API stub（方法名按契约
+  // §14.4.3 兜底形态：client.postApiSessionSessionIDQuestionRequestIDReply({
+  // path: { sessionID, requestID }, body: { questionV2Reply: { answers } } })
+  // / postApiSessionSessionIDQuestionRequestIDReject({ path: { sessionID,
+  // requestID } })）；questionReplyCalls/questionRejectCalls 断言透传，
+  // questionReplyError/questionRejectError 控制成功/失败。
   const fakeClient = {
     app: { log: async () => {} },
     session: {
@@ -62,8 +68,29 @@ async function main() {
       if (fakeClient.replyError) throw fakeClient.replyError;
       return { data: true };
     },
+    postApiSessionSessionIDQuestionRequestIDReply: async (options) => {
+      fakeClient.questionReplyCalls.push({
+        sessionID: options?.path?.sessionID,
+        requestID: options?.path?.requestID,
+        answers: options?.body?.questionV2Reply?.answers,
+      });
+      if (fakeClient.questionReplyError) throw fakeClient.questionReplyError;
+      return { data: true };
+    },
+    postApiSessionSessionIDQuestionRequestIDReject: async (options) => {
+      fakeClient.questionRejectCalls.push({
+        sessionID: options?.path?.sessionID,
+        requestID: options?.path?.requestID,
+      });
+      if (fakeClient.questionRejectError) throw fakeClient.questionRejectError;
+      return { data: true };
+    },
     replyCalls: [],
     replyError: undefined,
+    questionReplyCalls: [],
+    questionRejectCalls: [],
+    questionReplyError: undefined,
+    questionRejectError: undefined,
   };
 
   // 假配置（字面值）；绝不真发。
@@ -366,6 +393,266 @@ async function main() {
         );
       }
       await monitor2.dispose();
+    },
+  );
+
+  // ---- Phase 1.4 (API-205) ----
+  // 契约 docs/modules/sessions-relay.md §14.4/§14.5：消费端 q_answers/q_reject
+  // 应用。question 双分支：q_answers != null → applyQuestionReply（透传
+  // sessionID/requestID/answers → resolved=true）；q_reject === true →
+  // applyQuestionReject；失败不置位下轮重试；已 resolved 跳过（双路径先到先得）；
+  // permission 分支（API-103/104）不受影响。
+  // API-205-1：q_answers → reply API 透传置位；q_reject → reject API 置位；
+  // 未达终态的 question 记录不触发；permission reply 记录仍走原 API。
+  await runCase(
+    "API-205 question reply/reject apply: answers passthrough, both set resolved=true, permission path unchanged",
+    async () => {
+      fakeClient.questionReplyCalls = [];
+      fakeClient.questionRejectCalls = [];
+      fakeClient.questionReplyError = undefined;
+      fakeClient.questionRejectError = undefined;
+      fakeClient.replyCalls = [];
+      // q_answers 已写入的 question 记录 → reply API。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-q1",
+            type: "question",
+            message: JSON.stringify({
+              sessionID: "ses_testp0001",
+              id: "req-q1",
+              questions: [
+                { question: "pick one", header: "H", options: [{ label: "A", description: "desc" }] },
+              ],
+            }),
+            q_answers: [["A"]],
+          }),
+        ),
+      );
+      // q_reject=true 的 question 记录 → reject API。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-q2",
+            type: "question",
+            message: JSON.stringify({
+              sessionID: "ses_testp0001",
+              id: "req-q2",
+              questions: [{ question: "pick two", options: [{ label: "B" }] }],
+            }),
+            q_reject: true,
+          }),
+        ),
+      );
+      // 未达终态（q_answers 缺失且 q_reject 未置位）→ 不触发任何 API。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-q3",
+            type: "question",
+            message: JSON.stringify({ id: "req-q3", questions: [] }),
+          }),
+        ),
+      );
+      // permission 回归：reply 记录仍走 permission reply API（分支零改动）。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-q4", reply: "once" }),
+        ),
+      );
+      const monitor = makeMonitor(async () => {});
+      const applied = await monitor.scanReplyQueue();
+      if (applied !== 3) {
+        throw new Error(`expected 3 applied, got ${applied}`);
+      }
+      // question reply 透传断言（sessionID/requestID/answers 原样）。
+      if (fakeClient.questionReplyCalls.length !== 1) {
+        throw new Error(
+          `expected exactly 1 question reply API call, got ${fakeClient.questionReplyCalls.length}`,
+        );
+      }
+      const rc = fakeClient.questionReplyCalls[0];
+      if (rc.sessionID !== "ses_testp0001") {
+        throw new Error(`question reply sessionID mismatch: ${rc.sessionID}`);
+      }
+      if (rc.requestID !== "req-q1") {
+        throw new Error(`question reply requestID mismatch: ${rc.requestID}`);
+      }
+      if (JSON.stringify(rc.answers) !== JSON.stringify([["A"]])) {
+        throw new Error(`question reply answers passthrough mismatch: ${JSON.stringify(rc.answers)}`);
+      }
+      // question reject 透传断言（sessionID/requestID）。
+      if (fakeClient.questionRejectCalls.length !== 1) {
+        throw new Error(
+          `expected exactly 1 question reject API call, got ${fakeClient.questionRejectCalls.length}`,
+        );
+      }
+      const jc = fakeClient.questionRejectCalls[0];
+      if (jc.sessionID !== "ses_testp0001") {
+        throw new Error(`question reject sessionID mismatch: ${jc.sessionID}`);
+      }
+      if (jc.requestID !== "req-q2") {
+        throw new Error(`question reject requestID mismatch: ${jc.requestID}`);
+      }
+      // permission 回归：permission reply API 仍被调用。
+      if (fakeClient.replyCalls.length !== 1) {
+        throw new Error(
+          `expected 1 permission reply API call (regression), got ${fakeClient.replyCalls.length}`,
+        );
+      }
+      if (fakeClient.replyCalls[0].permissionID !== "req-q4") {
+        throw new Error(
+          `permission reply requestID mismatch: ${fakeClient.replyCalls[0].permissionID}`,
+        );
+      }
+      // resolved 置位断言（终态）。
+      const r1 = await findRecord("req-q1");
+      if (!r1 || r1.resolved !== true) {
+        throw new Error(
+          `q1 resolved not true after reply apply: ${JSON.stringify(r1)}`,
+        );
+      }
+      const r2 = await findRecord("req-q2");
+      if (!r2 || r2.resolved !== true) {
+        throw new Error(
+          `q2 resolved not true after reject apply: ${JSON.stringify(r2)}`,
+        );
+      }
+      const r3 = await findRecord("req-q3");
+      if (!r3 || r3.resolved !== false) {
+        throw new Error(
+          `q3 (no flag) must stay unresolved: ${JSON.stringify(r3)}`,
+        );
+      }
+      // 用例终态纪律（契约 §14.5）：req-q3 无触发标志、无法被扫描器消费，
+      // 需显式置 resolved，避免遗留 send=false && resolved=false 的 question
+      // 记录污染后续 scanSessionQueue 用例计数。
+      await registry.mutate((reg) => markSessionResolved(reg, "req-q3"));
+      await monitor.dispose();
+    },
+  );
+
+  // API-205-2：apply 失败 → resolved 保持 false、下轮重试成功（reply 与
+  // reject 双路径各验证一次；单条失败不中断整轮）。
+  await runCase(
+    "API-205 question apply failure keeps resolved=false and retries to success (reply + reject)",
+    async () => {
+      fakeClient.questionReplyCalls = [];
+      fakeClient.questionRejectCalls = [];
+      fakeClient.questionReplyError = undefined;
+      fakeClient.questionRejectError = undefined;
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-q5",
+            type: "question",
+            message: JSON.stringify({ id: "req-q5", questions: [] }),
+            q_answers: [["X"]],
+          }),
+        ),
+      );
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-q6",
+            type: "question",
+            message: JSON.stringify({ id: "req-q6", questions: [] }),
+            q_reject: true,
+          }),
+        ),
+      );
+      // ① reply apply 失败（stub 抛错，如「已决」404）→ 不置位；reject 成功
+      // → 置位（单条失败不中断整轮，成功计数只含 reject）。
+      fakeClient.questionReplyError = new Error("question already decided (404)");
+      const monitor = makeMonitor(async () => {});
+      const first = await monitor.scanReplyQueue();
+      if (first !== 1) {
+        throw new Error(`expected 1 applied (reject only), got ${first}`);
+      }
+      let r5 = await findRecord("req-q5");
+      if (!r5 || r5.resolved !== false) {
+        throw new Error(
+          `q5 resolved must stay false after failed reply apply: ${JSON.stringify(r5)}`,
+        );
+      }
+      const r6 = await findRecord("req-q6");
+      if (!r6 || r6.resolved !== true) {
+        throw new Error(
+          `q6 must be resolved after successful reject: ${JSON.stringify(r6)}`,
+        );
+      }
+      // ② 下轮重试：reply stub 恢复成功 → resolved=true。
+      fakeClient.questionReplyError = undefined;
+      const second = await monitor.scanReplyQueue();
+      if (second !== 1) {
+        throw new Error(`expected 1 applied on retry, got ${second}`);
+      }
+      r5 = await findRecord("req-q5");
+      if (!r5 || r5.resolved !== true) {
+        throw new Error(
+          `q5 resolved not true after retry success: ${JSON.stringify(r5)}`,
+        );
+      }
+      if (fakeClient.questionReplyCalls.length !== 2) {
+        throw new Error(
+          `expected 2 question reply API calls total, got ${fakeClient.questionReplyCalls.length}`,
+        );
+      }
+      if (fakeClient.questionRejectCalls.length !== 1) {
+        throw new Error(
+          `expected 1 question reject API call total, got ${fakeClient.questionRejectCalls.length}`,
+        );
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // API-205-3：双路径先到先得——question.replied/rejected 事件路径先置位
+  // （markSessionResolved）→ 扫描器跳过，不调任何 question API。
+  await runCase(
+    "API-205 already-resolved question record is skipped (event path first)",
+    async () => {
+      fakeClient.questionReplyCalls = [];
+      fakeClient.questionRejectCalls = [];
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-q7",
+            type: "question",
+            message: JSON.stringify({ id: "req-q7", questions: [] }),
+            q_answers: [["Y"]],
+          }),
+        ),
+      );
+      await registry.mutate((reg) => markSessionResolved(reg, "req-q7"));
+      const monitor = makeMonitor(async () => {});
+      const applied = await monitor.scanReplyQueue();
+      if (applied !== 0) {
+        throw new Error(`expected 0 applied for resolved, got ${applied}`);
+      }
+      if (
+        fakeClient.questionReplyCalls.length !== 0 ||
+        fakeClient.questionRejectCalls.length !== 0
+      ) {
+        throw new Error(
+          `question API must not be called for already-resolved record`,
+        );
+      }
+      await monitor.dispose();
     },
   );
 

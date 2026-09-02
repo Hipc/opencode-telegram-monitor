@@ -1593,18 +1593,49 @@ export class TelegramSessionMonitor {
     if (!sessions) return 0;
     let applied = 0;
     for (const record of sessions) {
-      if (record.type !== "permission") continue;
-      // reply == null 覆盖缺失与显式 null（未回复）；resolved 双路径跳过
-      // （决策 #6：TUI replied 事件可能已先置位）。
-      if (record.reply == null || record.resolved) continue;
+      if (record.type === "permission") {
+        // permission 分支（契约 §13.6 零改动）：reply == null 覆盖缺失与显式
+        // null（未回复）；resolved 双路径跳过（决策 #6：TUI replied 事件可能
+        // 已先置位）。
+        if (record.reply == null || record.resolved) continue;
+        try {
+          await this.applySessionReply(record);
+          applied += 1;
+        } catch (error) {
+          // 单条失败不中断整轮；applySessionReply 已 logWarn，这里只继续。
+          await this.log(
+            "warn",
+            "applySessionReply failed; will retry on next reply scan",
+            {
+              requestId: record.request_id,
+              error: errorCategory(error, {
+                root: this.root,
+                botToken: this.config.botToken,
+              }),
+            },
+          );
+        }
+        continue;
+      }
+      // question 分支（契约 §14.4.1）：resolved 双路径跳过；未达终态
+      // （q_answers 未写入且 q_reject 未置位）跳过；q_answers != null →
+      // applyQuestionReply，q_reject === true → applyQuestionReject。
+      if (record.type !== "question") continue;
+      if (record.resolved || (record.q_answers == null && record.q_reject !== true)) {
+        continue;
+      }
       try {
-        await this.applySessionReply(record);
+        if (record.q_answers != null) {
+          await this.applyQuestionReply(record);
+        } else {
+          await this.applyQuestionReject(record);
+        }
         applied += 1;
       } catch (error) {
-        // 单条失败不中断整轮；applySessionReply 已 logWarn，这里只继续。
+        // 单条失败不中断整轮；applyQuestion* 已 logWarn，这里只继续。
         await this.log(
           "warn",
-          "applySessionReply failed; will retry on next reply scan",
+          "question apply failed; will retry on next reply scan",
           {
             requestId: record.request_id,
             error: errorCategory(error, {
@@ -1644,6 +1675,106 @@ export class TelegramSessionMonitor {
       await this.log(
         "warn",
         "Permission reply apply failed; resolved stays false, will retry on next scan",
+        {
+          requestId: record.request_id,
+          sessionId: record.session_id,
+          error: errorCategory(error, {
+            root: this.root,
+            botToken: this.config.botToken,
+          }),
+        },
+      );
+      throw error;
+    }
+    const next = await this.registry.mutate((reg) =>
+      markSessionResolved(reg, record.request_id),
+    );
+    if (next === undefined) {
+      // 抢锁超时或记录已被删除：resolved 未置位属安全重试态，静默容忍。
+      await this.log(
+        "warn",
+        "markSessionResolved skipped (no match or lock timeout); will retry on next scan",
+        { requestId: record.request_id },
+      );
+    }
+  }
+
+  /**
+   * 把一条 question 记录的 q_answers 应用到 opencode 会话（契约 §14.4.2）。
+   * 透传语义（决策 #8）：answers = record.q_answers 原样（不映射不校验，parse
+   * 已保证 Array<Array<string>>）。SDK 签名核验结论（1.4 任务报告）：本机
+   * @opencode-ai/sdk@1.17.13 root 扁平客户端无任何 question 方法（grep 实证）、
+   * v2 为 class 方法（Question2.reply({ sessionID, requestID, questionV2Reply })，
+   * 路由 POST /api/session/{sessionID}/question/{requestID}/reply，body 嵌套
+   * { questionV2Reply: { answers } }）——目标运行时 1.18.23 的扁平方法名无法
+   * 在本机核验，按契约 §14.4.3 兜底形态实现（命名沿用 postSessionIdPermissions
+   * PermissionId 先例约定）：
+   *   client.postApiSessionSessionIDQuestionRequestIDReply({
+   *     path: { sessionID, requestID },
+   *     body: { questionV2Reply: { answers: record.q_answers } },
+   *     throwOnError: true,
+   *   })
+   * 成功（API resolve）→ mutate(markSessionResolved)；失败/抛错 → logWarn
+   * 不置位（resolved 保持 false，下轮重试）。已 resolved 记录由调用方筛选跳过。
+   */
+  private async applyQuestionReply(record: SessionRecord) {
+    if (record.q_answers == null) return;
+    try {
+      await this.client.postApiSessionSessionIDQuestionRequestIDReply({
+        path: { sessionID: record.session_id, requestID: record.request_id },
+        body: { questionV2Reply: { answers: record.q_answers } },
+        throwOnError: true,
+      });
+    } catch (error) {
+      // 失败不置位：resolved 保持 false，下轮 ticker 重试（「已决」等错误在
+      // 下轮读到 resolved=true 后自然跳过，双路径先到先得，§14.4.2）。
+      await this.log(
+        "warn",
+        "Question reply apply failed; resolved stays false, will retry on next scan",
+        {
+          requestId: record.request_id,
+          sessionId: record.session_id,
+          error: errorCategory(error, {
+            root: this.root,
+            botToken: this.config.botToken,
+          }),
+        },
+      );
+      throw error;
+    }
+    const next = await this.registry.mutate((reg) =>
+      markSessionResolved(reg, record.request_id),
+    );
+    if (next === undefined) {
+      // 抢锁超时或记录已被删除：resolved 未置位属安全重试态，静默容忍。
+      await this.log(
+        "warn",
+        "markSessionResolved skipped (no match or lock timeout); will retry on next scan",
+        { requestId: record.request_id },
+      );
+    }
+  }
+
+  /**
+   * 把一条 question 记录的 q_reject 应用到 opencode 会话（契约 §14.4.2）。
+   * 与 applyQuestionReply 同构（reject API 无 body）——SDK 兜底形态同 §14.4.3：
+   *   client.postApiSessionSessionIDQuestionRequestIDReject({
+   *     path: { sessionID, requestID },
+   *     throwOnError: true,
+   *   })
+   * 成功 → mutate(markSessionResolved)；失败/抛错 → logWarn 不置位下轮重试。
+   */
+  private async applyQuestionReject(record: SessionRecord) {
+    if (record.q_reject !== true) return;
+    try {
+      await this.client.postApiSessionSessionIDQuestionRequestIDReject({
+        path: { sessionID: record.session_id, requestID: record.request_id },
+        throwOnError: true,
+      });
+    } catch (error) {
+      await this.log(
+        "warn",
+        "Question reject apply failed; resolved stays false, will retry on next scan",
         {
           requestId: record.request_id,
           sessionId: record.session_id,
