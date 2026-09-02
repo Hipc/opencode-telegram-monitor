@@ -1425,6 +1425,13 @@ private questionApplyChannel?: 1 | 2 | 3 | undefined; // 实例级缓存：某�
 6. 探针结论（赢家形态 + 键盘行为）必须写入 Phase 1.1 任务报告；dev-lead 终验后回写本章
    判定结果占位（§15.2 结论行）。
 
+**实测结论（2026-09-03，Phase 1.1）**：赢家为候选 B——`editMessageText` +
+`rich_message: { html: limitMessage(text) }`。候选 A `editRichMessage` 返回 HTTP 404；候选 C
+`editMessageText` + `parse_mode: "HTML"` 返回 `Unsupported start tag "p"`。候选 B 响应中的
+`rich_message.blocks` 保留 `type: "table"`、`cells` 与 `is_compact: true`；携带
+`reply_markup` 时键盘保留，省略时响应不含 `reply_markup`、键盘移除。实现与 API-301~304
+单元断言均冻结为候选 B，不得回退为裸 `text`。
+
 ### 15.3 统一富文本编辑 helper（Phase 1.1 冻结）
 
 新增 `src/monitor.ts` 私有方法（放 `editPermissionResultMessage` 近旁，3246-3343 helper 区内）：

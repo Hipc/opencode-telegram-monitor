@@ -69,6 +69,37 @@ function parseMessageId(result) {
   return undefined;
 }
 
+// 富文本 AST 定位：telegramRequest 返回 envelope.result，rich_message 字段路径按实际响应键名
+// 发现（§15.2 实测结论：赢家响应 rich_message.blocks 保留 table/cells/is_compact），不做假设。
+function locateRichMessage(payload) {
+  if (!payload || typeof payload !== "object") return undefined;
+  if (payload.rich_message && typeof payload.rich_message === "object")
+    return payload.rich_message;
+  if (
+    payload.result &&
+    typeof payload.result === "object" &&
+    payload.result.rich_message
+  )
+    return payload.result.rich_message;
+  if (
+    payload.message &&
+    typeof payload.message === "object" &&
+    payload.message.rich_message
+  )
+    return payload.message.rich_message;
+  return undefined;
+}
+
+function summarizeBlocks(blocks) {
+  if (!Array.isArray(blocks)) return `blocks=<${typeof blocks}>`;
+  return `blocks[${blocks.length}] types=[${blocks
+    .map((b) => (b && typeof b === "object" ? (b.type ?? "?") : String(b)))
+    .join(",")}]`;
+}
+
+// 记录硬断言失败次数：任何硬断言失败都要求退出码非 0（§15.2 判定规则，不得放宽）。
+let hardAssertFailures = 0;
+
 const probeResults = {};
 
 // ---- 探针执行 ----
@@ -129,7 +160,9 @@ try {
   console.log(`ok   REAL-RICH-EDIT-002: editRichMessage (with keyboard) succeeded, result=${JSON.stringify(res002).slice(0, 150)}`);
 } catch (error) {
   probeResults["REAL-RICH-EDIT-002"] = { ok: false, error: error.message };
-  console.log(`info REAL-RICH-EDIT-002: editRichMessage (with keyboard) failed: ${error.message}`);
+  console.log(
+    `info REAL-RICH-EDIT-002: editRichMessage (with keyboard) failed (预期对照失败): ${error.message} (code=${error instanceof TelegramApiError ? error.errorCode ?? "n/a" : "n/a"})`,
+  );
 }
 
 await sleep(1500);
@@ -153,7 +186,9 @@ try {
   console.log(`ok   REAL-RICH-EDIT-003: editRichMessage (omit keyboard) succeeded, result=${JSON.stringify(res003).slice(0, 150)}`);
 } catch (error) {
   probeResults["REAL-RICH-EDIT-003"] = { ok: false, error: error.message };
-  console.log(`info REAL-RICH-EDIT-003: editRichMessage (omit keyboard) failed: ${error.message}`);
+  console.log(
+    `info REAL-RICH-EDIT-003: editRichMessage (omit keyboard) failed (预期对照失败): ${error.message} (code=${error instanceof TelegramApiError ? error.errorCode ?? "n/a" : "n/a"})`,
+  );
 }
 
 await sleep(1500);
@@ -176,11 +211,65 @@ try {
     ctx,
   );
   const mid004 = parseMessageId(res004);
-  probeResults["REAL-RICH-EDIT-004"] = { ok: true, messageId: mid004, raw: res004 };
-  console.log(`ok   REAL-RICH-EDIT-004: editMessageText+rich_message succeeded, result=${JSON.stringify(res004).slice(0, 150)}`);
+
+  // ---- 观察 + 硬断言（§15.2 判定规则 1/5；溯源 docs/modules/sessions-relay.md §15.2）----
+  // 先打印实际响应键名，再按发现的结构断言；不凭空假设路径。
+  const res004Keys = Object.keys(res004 ?? {}).sort();
+  console.log(
+    `info REAL-RICH-EDIT-004: response top-level keys = ${res004Keys.join(", ") || "(empty)"}`,
+  );
+  const richMessage004 = locateRichMessage(res004);
+  const richKeys004 = richMessage004 ? Object.keys(richMessage004).sort() : [];
+  const blocks004 = richMessage004?.blocks;
+  const tableBlock004 = Array.isArray(blocks004)
+    ? blocks004.find((b) => b?.type === "table")
+    : undefined;
+  const astOk =
+    richMessage004 !== undefined &&
+    Array.isArray(blocks004) &&
+    tableBlock004 !== undefined &&
+    tableBlock004.cells !== undefined &&
+    tableBlock004.is_compact === true;
+  const keyboardRetained = res004?.reply_markup !== undefined;
+  console.log(
+    `info REAL-RICH-EDIT-004: rich_message.path=${richMessage004 ? (res004?.rich_message ? "res.rich_message" : "res.result.rich_message") : "MISSING"} keys=[${richKeys004.join(",") || "(empty)"}] ${summarizeBlocks(blocks004)} table={type:${tableBlock004?.type} cells:${Array.isArray(tableBlock004?.cells) ? `array[${tableBlock004.cells.length}]` : typeof tableBlock004?.cells} is_compact:${tableBlock004?.is_compact}} reply_markup.present=${keyboardRetained}`,
+  );
+  if (!astOk) {
+    throw new Error(
+      `REAL-RICH-EDIT-004 assertion failed: winner AST must keep table/cells/is_compact=true; actual keys=[${res004Keys.join(",")}] rich_message=${richMessage004 ? "found" : "MISSING"} ${summarizeBlocks(blocks004)} table=${tableBlock004 ? JSON.stringify({ type: tableBlock004.type, cellsType: typeof tableBlock004.cells, is_compact: tableBlock004.is_compact }) : "not found"}`,
+    );
+  }
+  if (!keyboardRetained) {
+    throw new Error(
+      "REAL-RICH-EDIT-004 assertion failed: reply_markup was sent but response has no reply_markup (keyboard retention broken)",
+    );
+  }
+  probeResults["REAL-RICH-EDIT-004"] = {
+    ok: true,
+    messageId: mid004,
+    astOk: true,
+    keyboardRetained: true,
+    raw: res004,
+  };
+  console.log(
+    `ok   REAL-RICH-EDIT-004: editMessageText+rich_message succeeded, message_id=${mid004}, AST table/cells/is_compact confirmed, keyboard retained`,
+  );
 } catch (error) {
-  probeResults["REAL-RICH-EDIT-004"] = { ok: false, error: error.message };
-  console.log(`info REAL-RICH-EDIT-004: editMessageText+rich_message failed: ${error.message}`);
+  const msg004 = String(error?.message ?? error);
+  const isHard004 = msg004.startsWith("REAL-RICH-EDIT-004 assertion failed");
+  probeResults["REAL-RICH-EDIT-004"] = {
+    ok: false,
+    error: msg004,
+    hardAssertionFailure: isHard004,
+  };
+  if (isHard004) {
+    hardAssertFailures += 1;
+    console.error(`FAIL REAL-RICH-EDIT-004: ${msg004}`);
+  } else {
+    console.log(
+      `info REAL-RICH-EDIT-004: editMessageText+rich_message failed: ${msg004} (code=${error instanceof TelegramApiError ? error.errorCode ?? "n/a" : "n/a"})`,
+    );
+  }
 }
 
 await sleep(1500);
@@ -200,17 +289,39 @@ try {
     ctx,
   );
   const mid004b = parseMessageId(res004b);
+
+  // ---- 硬断言：省略 reply_markup 必须移除键盘（§15.2 判定规则 5，键盘两态契约）----
   const keyboardRemoved = res004b?.reply_markup === undefined;
+  if (!keyboardRemoved) {
+    throw new Error(
+      `REAL-RICH-EDIT-004b assertion failed: reply_markup omitted but response still contains it (keyboard removal broken); response keys=[${Object.keys(res004b ?? {}).sort().join(",")}]`,
+    );
+  }
   probeResults["REAL-RICH-EDIT-004b"] = {
     ok: true,
     messageId: mid004b,
     keyboardRemoved,
     raw: res004b,
   };
-  console.log(`ok   REAL-RICH-EDIT-004b: editMessageText+rich_message (omit keyboard) succeeded, keyboardRemoved=${keyboardRemoved}`);
+  console.log(
+    `ok   REAL-RICH-EDIT-004b: editMessageText+rich_message (omit keyboard) succeeded, keyboardRemoved=${keyboardRemoved} (hard-asserted)`,
+  );
 } catch (error) {
-  probeResults["REAL-RICH-EDIT-004b"] = { ok: false, error: error.message };
-  console.log(`info REAL-RICH-EDIT-004b: editMessageText+rich_message (omit keyboard) failed: ${error.message}`);
+  const msg004b = String(error?.message ?? error);
+  const isHard004b = msg004b.startsWith("REAL-RICH-EDIT-004b assertion failed");
+  probeResults["REAL-RICH-EDIT-004b"] = {
+    ok: false,
+    error: msg004b,
+    hardAssertionFailure: isHard004b,
+  };
+  if (isHard004b) {
+    hardAssertFailures += 1;
+    console.error(`FAIL REAL-RICH-EDIT-004b: ${msg004b}`);
+  } else {
+    console.log(
+      `info REAL-RICH-EDIT-004b: editMessageText+rich_message (omit keyboard) failed: ${msg004b} (code=${error instanceof TelegramApiError ? error.errorCode ?? "n/a" : "n/a"})`,
+    );
+  }
 }
 try {
   const res005 = await telegramRequest(
@@ -229,7 +340,9 @@ try {
   console.log(`ok   REAL-RICH-EDIT-005: editMessageText+parse_mode succeeded, result=${JSON.stringify(res005).slice(0, 150)}`);
 } catch (error) {
   probeResults["REAL-RICH-EDIT-005"] = { ok: false, error: error.message };
-  console.log(`info REAL-RICH-EDIT-005: editMessageText+parse_mode failed: ${error.message}`);
+  console.log(
+    `info REAL-RICH-EDIT-005: editMessageText+parse_mode failed (预期对照失败): ${error.message} (code=${error instanceof TelegramApiError ? error.errorCode ?? "n/a" : "n/a"})`,
+  );
 }
 
 console.log("");
@@ -268,3 +381,19 @@ if (winner) {
   console.error("FAIL: No candidate satisfied the probe criteria! Blocking issue.");
   process.exit(1);
 }
+
+// 键盘两态汇总（§15.2 判定规则 5）与硬断言退出码收口
+const win004 = probeResults["REAL-RICH-EDIT-004"];
+const win004b = probeResults["REAL-RICH-EDIT-004b"];
+if (win004?.ok && win004b?.ok) {
+  console.log(
+    `Keyboard two-state verified: reply_markup present -> retained (004), omitted -> removed (004b keyboardRemoved=${win004b.keyboardRemoved})`,
+  );
+}
+if (hardAssertFailures > 0) {
+  console.error(
+    `FAIL: ${hardAssertFailures} hard assertion(s) failed (see FAIL lines above); exiting non-zero.`,
+  );
+  process.exit(1);
+}
+console.log("ALL REAL-RICH-EDIT hard assertions passed; exit code 0.");
