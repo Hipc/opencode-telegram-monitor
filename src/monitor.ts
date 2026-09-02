@@ -2306,8 +2306,10 @@ export class TelegramSessionMonitor {
    * `type==="question" && resolved===false && q_answers==null && q_input!=null`
    * 的记录（跨全部条目，顺序 = projects 数组序 + sessions 数组序）→ 覆盖式
    * 写入 draft[q_input] → 串行落盘（先清输入态、再推进：多问题 stage+1 /
-   * 单问题直接提交）→ 编辑向导消息（**仅** record.q_msg_id；缺失 logWarn
-   * 跳过编辑，答案已落盘不受影响）→ enqueueMessage 确认文案
+   * 单问题直接提交）→ 编辑向导消息（**仅** record.q_msg_id；缺失 → 契约
+   * §14.8.6（Round 2 修订）发一条新的当前阶段向导消息兜底：多问题含键盘并
+   * 回写新 q_msg_id（后续编辑/回调指向新消息）、单问题 ✅ Submitted 终态文本
+   * 无键盘；旧消息不动，答案已落盘不受影响）→ enqueueMessage 确认文案
    * `已记录第 {n} 题答案`（n = q_input + 1）。找不到输入态记录 → 静默
    * return（非命令文本保持忽略）。
    */
@@ -2388,27 +2390,60 @@ export class TelegramSessionMonitor {
         );
         return;
       }
+      const resultText =
+        this.questionStageText(
+          record,
+          projectLabel,
+          questions,
+          index,
+          draft,
+          false,
+        ) + "\n✅ Submitted";
       if (record.q_msg_id !== undefined) {
-        const resultText =
-          this.questionStageText(
-            record,
-            projectLabel,
-            questions,
-            index,
-            draft,
-            false,
-          ) + "\n✅ Submitted";
         await this.editQuestionWizardMessage(
           this.config.chatId,
           record.q_msg_id,
           resultText,
         );
       } else {
-        await this.log(
-          "warn",
-          "Question text input: no q_msg_id, skip edit",
-          { requestId: safeText(requestID, 100, ctx) },
-        );
+        // 契约 §14.8.6（Round 2 修订）：q_msg_id 缺失 → 发一条新的终态向导
+        // 消息（✅ Submitted，无键盘），旧消息不动（按钮仍可用、状态在盘上）；
+        // 发送成功后回写新 message_id。发送失败不中断——答案已落盘，消费端
+        // 照常 apply，下轮无需重试。
+        try {
+          // 终态无键盘：reply_markup 传 undefined，经 JSON.stringify 自然忽略
+          // （telegram/client.ts），等效无键盘文本发送，同时保留 message_id
+          // 返回供回写（§14.8.6「统一走 sendMessageWithKeyboard 亦可行」）。
+          const newMsgID = await this.sendMessageWithKeyboard(
+            resultText,
+            undefined as unknown as TelegramInlineKeyboard,
+          );
+          if (newMsgID !== undefined) {
+            const wrote = await this.registry.mutate((rec) =>
+              setQuestionMessageID(rec, requestID, newMsgID),
+            );
+            if (wrote === undefined) {
+              await this.log(
+                "warn",
+                "Question text input: new message id writeback skipped (no match or lock timeout)",
+                { requestId: safeText(requestID, 100, ctx) },
+              );
+            }
+          } else {
+            await this.log(
+              "warn",
+              "Question text input: new message has no message_id",
+              { requestId: safeText(requestID, 100, ctx) },
+            );
+          }
+        } catch (error) {
+          await this.log("warn", "Question text input: fallback send failed", {
+            error: errorCategory(error, {
+              root: this.root,
+              botToken: this.config.botToken,
+            }),
+          });
+        }
       }
     } else {
       // 多问题：推进（=length 自然进总结）。
@@ -2437,11 +2472,62 @@ export class TelegramSessionMonitor {
           record.q_msg_id,
         );
       } else {
-        await this.log(
-          "warn",
-          "Question text input: no q_msg_id, skip edit",
-          { requestId: safeText(requestID, 100, ctx) },
+        // 契约 §14.8.6（Round 2 修订）：q_msg_id 缺失 → 发一条新的当前阶段
+        // 向导消息（含键盘），发送成功后回写新 message_id（后续编辑/回调指向
+        // 新消息）；旧消息不动（按钮仍可用、状态在盘上）。发送失败不中断——
+        // 答案已落盘，消费端照常 apply，下轮无需重试。
+        const fallbackText = this.questionStageText(
+          record,
+          projectLabel,
+          questions,
+          newStage,
+          draft,
+          false,
         );
+        try {
+          let newMsgID: number | undefined;
+          const entryID = this.questionEntryID(requestID);
+          if (entryID === undefined) {
+            // 超限兜底：退化为无键盘文本发送（§14.2.2 步骤 3 同款），无 id 可回写。
+            await this.sendMessage(fallbackText);
+          } else {
+            const keyboard = buildQuestionKeyboard(
+              entryID,
+              questions,
+              newStage,
+              draft,
+            );
+            newMsgID = await this.sendMessageWithKeyboard(
+              fallbackText,
+              keyboard,
+            );
+            if (newMsgID !== undefined) {
+              const wrote = await this.registry.mutate((rec) =>
+                setQuestionMessageID(rec, requestID, newMsgID),
+              );
+              if (wrote === undefined) {
+                await this.log(
+                  "warn",
+                  "Question text input: new message id writeback skipped (no match or lock timeout)",
+                  { requestId: safeText(requestID, 100, ctx) },
+                );
+              }
+            } else {
+              await this.log(
+                "warn",
+                "Question text input: new message has no message_id",
+                { requestId: safeText(requestID, 100, ctx) },
+              );
+            }
+          }
+        } catch (error) {
+          await this.log("warn", "Question text input: fallback send failed", {
+            error: errorCategory(error, {
+              root: this.root,
+              botToken: this.config.botToken,
+            }),
+          });
+        }
       }
     }
     this.enqueueMessage(paragraph(`已记录第 ${answerNumber} 题答案`));
@@ -2976,10 +3062,13 @@ export class TelegramSessionMonitor {
     }
 
     // custom：进入输入模式（键盘保留 + 追加输入提示行）。
+    // 契约 §14.8.4（Round 2 修订）：custom 恒可用——真实 question payload 从不带
+    // `custom: true`，移除「该题不支持自定义输入」防御；current 判空保留为失效
+    // 兜底（state 重建已钳制，理论不可达）。
     if (action === "custom") {
       const current = questions[stage];
-      if (!current || current.custom !== true) {
-        await this.answerCallback(callbackID, "该题不支持自定义输入", false);
+      if (!current) {
+        await this.answerCallback(callbackID, "记录不存在或已失效", true);
         return;
       }
       const next = await this.registry.mutate((rec) =>
