@@ -71,6 +71,7 @@ import {
   rememberBounded,
   safeProgress,
   safeText,
+  safeTextKeepPaths,
   safeToolTarget,
   sessionLabel,
   sessionTitle,
@@ -1783,13 +1784,15 @@ export class TelegramSessionMonitor {
 
   /**
    * 把一条待发送 SessionRecord 组装为 TG 通知文本（复用等待通知样式，
-   * 契约 sessions-relay.md §13.11）：titleLine(iconForWaitingType) +
-   * fieldTable(Type / Session 字段) + （permission 记录：解析 message JSON
-   * 后的结构化字段行 | 原文节选）；整体经 limitMessage 截断。
-   * 结构化字段仅对 type === "permission" 生效，question 记录恒走原文节选；
-   * JSON 解析失败 / 非对象 / Permission/Pattern/Title 三行均无输出 →
-   * 退回原文节选（300 字符）。HTML 转义由 fieldRow/paragraph 内部的
-   * escapeHtml 完成，文本先经 safeText 去敏（botToken/密钥/路径）再展示。
+   * 契约 sessions-relay.md §13.12）：titleLine(iconForWaitingType) +
+   * **单张** fieldTable(Type / Session / Permission / Pattern N 同表) +
+   * （permission 记录：结构化字段行 | 原文节选）。
+   * 结构化字段仅对 type === "permission" 生效：Permission/Pattern 行直接并入
+   * Type/Session 所在的同一张表；Pattern 逐项单独一行（单 `Pattern`，多
+   * `Pattern 1/2/…`），值经 safeTextKeepPaths 保留真实路径（密钥/token 仍脱敏）；
+   * Title 行不再渲染。JSON 解析失败 / 非对象 / Permission 与 Pattern 行均无输出
+   * → 在表格之后追加原文节选（300 字符，路径脱敏照旧）；question 记录恒走原文节选。
+   * HTML 转义由 fieldRow/paragraph 内部的 escapeHtml 完成。
    */
   private formatSessionRecordMessage(
     record: SessionRecord,
@@ -1804,12 +1807,12 @@ export class TelegramSessionMonitor {
       ),
     ];
 
-    let body: string;
+    let excerpt = "";
     if (record.type === "permission") {
-      // 结构化渲染（契约 §13.11）：先 JSON.parse(record.message)，解析失败 →
-      // 退回原文节选。解析结果为普通对象时，按字段来源表宽松渲染
-      // Permission/Pattern/Title 行（字段缺失/类型不符即跳过该行，不抛错）；
-      // 三行均未输出 → 同样退回原文节选。
+      // 结构化渲染（契约 §13.12，supersede §13.11）：JSON.parse(record.message)，
+      // 解析失败 → 原文节选。解析结果为普通对象时，按字段来源表宽松渲染
+      // Permission/Pattern 行并并入同一张 fieldTable（字段缺失/类型不符即跳过，
+      // 不抛错）；Permission 与 Pattern 行均未输出 → 同样退回原文节选。
       let parsed: unknown = null;
       try {
         parsed = JSON.parse(record.message);
@@ -1820,41 +1823,49 @@ export class TelegramSessionMonitor {
         typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
           ? (parsed as Record<string, unknown>)
           : null;
-      const structured: string[] = [];
+      let structuredRows = 0;
       if (obj) {
         const permission = obj.permission ?? obj.action ?? obj.type;
         if (typeof permission === "string") {
-          structured.push(
-            fieldRow("Permission", safeText(permission, 300, ctx)),
+          rows.push(
+            fieldRow(
+              "Permission",
+              safeTextKeepPaths(permission, 300, ctx),
+            ),
           );
+          structuredRows += 1;
         }
         const pattern = obj.patterns ?? obj.resources ?? obj.pattern;
         if (pattern !== undefined) {
-          const items = (Array.isArray(pattern) ? pattern : [pattern]) as unknown[];
-          const text = items
-            .filter((item): item is string => typeof item === "string")
-            .map((item) => safeText(item, 300, ctx));
-          if (text.length > 0) {
-            structured.push(fieldRow("Pattern", text.join("\n")));
-          }
-        }
-        if (typeof obj.title === "string") {
-          structured.push(fieldRow("Title", safeText(obj.title, 300, ctx)));
+          const items = (
+            Array.isArray(pattern) ? pattern : [pattern]
+          ) as unknown[];
+          const texts = items.filter(
+            (item): item is string => typeof item === "string",
+          );
+          texts.forEach((item, index) => {
+            rows.push(
+              fieldRow(
+                texts.length === 1 ? "Pattern" : `Pattern ${index + 1}`,
+                safeTextKeepPaths(item, 300, ctx),
+              ),
+            );
+            structuredRows += 1;
+          });
         }
       }
-      body =
-        structured.length > 0
-          ? fieldTable(structured)
-          : paragraph(safeText(record.message, 300, ctx));
+      if (structuredRows === 0) {
+        excerpt = paragraph(safeText(record.message, 300, ctx));
+      }
     } else {
-      body = paragraph(safeText(record.message, 300, ctx));
+      excerpt = paragraph(safeText(record.message, 300, ctx));
     }
 
     const parts = [
       titleLine(iconForWaitingType(record.type), projectLabel),
       fieldTable(rows),
-      body,
-    ];
+      excerpt,
+    ].filter((part) => part !== "");
     return limitMessage(parts.join("\n"));
   }
 

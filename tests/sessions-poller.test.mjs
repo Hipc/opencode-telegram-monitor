@@ -904,10 +904,12 @@ async function main() {
     },
   );
 
-  // ---- API-105: structured rendering (round 2) ----
-  // 契约 docs/modules/sessions-relay.md §13.11：permission 记录 message JSON
-  // 解析 → 渲染 Permission/Pattern/Title 字段行（不再输出 JSON 原文 dump）；
-  // 非法 JSON / 合法但无可识别字段（如 {}）→ 退回 300 字符原文节选。
+  // ---- API-105: structured rendering (round 3, single-table) ----
+  // 契约 docs/modules/sessions-relay.md §13.12（supersede §13.11）：permission
+  // 记录 message JSON 解析 → Permission/Pattern 行并入 Type/Session 所在的
+  // **同一张** fieldTable（单表），Pattern 逐项单独一行（单 `Pattern` / 多
+  // `Pattern 1`/`Pattern 2`/…），Title 行移除，值经 safeTextKeepPaths 展示
+  // 真实路径；非法 JSON / 合法但无可识别字段（如 {}）→ 退回 300 字符原文节选。
   // question 记录渲染不变（API-006-5/API-101-2 既有断言覆盖，不新增）。
   let api105Seq = 0;
   async function renderedText(overrides = {}) {
@@ -934,10 +936,15 @@ async function main() {
     return sent[0];
   }
 
-  // API-105-1：合法 JSON（permission/patterns/title）→ 渲染含
-  // Permission/Pattern/Title 行内容，不含未解析的 JSON dump。
+  function countSubstring(haystack, needle) {
+    return haystack.split(needle).length - 1;
+  }
+
+  // API-105-1：合法 JSON（permission + 多 patterns + title）→ 渲染为**单张**
+  // fieldTable，含 Permission 行与 `Pattern 1`/`Pattern 2` 编号行、两个 pattern
+  // 项内容；**不含** Title 行、不含未解析的 JSON dump、不含 id 泄漏。
   await runCase(
-    "API-105-1 permission valid JSON renders Permission/Pattern/Title rows, no raw JSON dump",
+    "API-105-1 permission valid JSON renders single table with Permission/Pattern 1/Pattern 2 rows, no Title row, no raw JSON dump",
     async () => {
       const rawMessage = JSON.stringify({
         id: "req-105a",
@@ -947,20 +954,26 @@ async function main() {
         metadata: { provider: "fs" },
       });
       const text = await renderedText({ message: rawMessage });
+      const tableCount = countSubstring(text, "<table");
+      if (tableCount !== 1) {
+        throw new Error(
+          `expected exactly 1 <table (single table), got ${tableCount}: ${text}`,
+        );
+      }
       if (!text.includes("Permission") || !text.includes("external_directory")) {
         throw new Error(`missing Permission row: ${text}`);
       }
-      if (!text.includes("Pattern")) {
-        throw new Error(`missing Pattern row: ${text}`);
+      if (!text.includes("Pattern 1") || !text.includes("Pattern 2")) {
+        throw new Error(`missing numbered Pattern rows: ${text}`);
       }
       if (!text.includes("*.ts") || !text.includes("*.md")) {
         throw new Error(`missing pattern items: ${text}`);
       }
-      if (
-        !text.includes("Title") ||
-        !text.includes("Allow access to external directory")
-      ) {
-        throw new Error(`missing Title row: ${text}`);
+      if (text.includes("Title")) {
+        throw new Error(`Title row must not be rendered: ${text}`);
+      }
+      if (text.includes("Allow access to external directory")) {
+        throw new Error(`Title value must not be rendered: ${text}`);
       }
       if (text.includes(rawMessage)) {
         throw new Error(`raw JSON dump must not appear: ${text}`);
@@ -996,6 +1009,43 @@ async function main() {
       }
       if (text.includes("Permission")) {
         throw new Error(`no structured rows expected for {}: ${text}`);
+      }
+    },
+  );
+
+  // ---- API-106: real pattern paths (round 3) ----
+  // 契约 docs/modules/sessions-relay.md §13.12.3：pattern 为绝对路径（40+ 字符
+  // 长）→ safeTextKeepPaths 保留完整真实路径，**不含** `<external-path>` /
+  // `<project>` / `[REDACTED_VALUE]`（决策 #1：放开路径脱敏）。
+  await runCase(
+    "API-106 absolute pattern paths appear verbatim, no path redaction markers",
+    async () => {
+      const longPath = "/home/hipc/work/git-clone/some-project/src/index.ts";
+      const otherPath = "/etc/opencode/plugins/telegram-session-monitor.ts";
+      if (longPath.length < 40 || otherPath.length < 40) {
+        throw new Error(
+          `test paths must be 40+ chars to exercise long-blob rule: ${longPath.length}/${otherPath.length}`,
+        );
+      }
+      const rawMessage = JSON.stringify({
+        permission: "read_file",
+        patterns: [longPath, otherPath],
+      });
+      const text = await renderedText({ message: rawMessage });
+      if (!text.includes(longPath)) {
+        throw new Error(`long absolute path must appear verbatim: ${text}`);
+      }
+      if (!text.includes(otherPath)) {
+        throw new Error(`other absolute path must appear verbatim: ${text}`);
+      }
+      if (text.includes("<external-path>")) {
+        throw new Error(`external-path redaction must not apply: ${text}`);
+      }
+      if (text.includes("<project>")) {
+        throw new Error(`project redaction must not apply: ${text}`);
+      }
+      if (text.includes("[REDACTED_VALUE]")) {
+        throw new Error(`long-blob redaction must not apply: ${text}`);
       }
     },
   );
