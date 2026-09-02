@@ -1,8 +1,8 @@
 # permission 详情表格化：单表 + 真实 Pattern 路径 + 逐行编号
 
-> 状态: in-progress
+> 状态: completed
 > 创建: 2026-09-02
-> 当前轮次: Round 1
+> 当前轮次: Round 1（已完成）
 > 关联文档: docs/modules/sessions-relay.md#§13.11（本轮 supersede，见 doc-prep 冻结的 §13.12）
 
 ## 背景
@@ -89,7 +89,7 @@
 
 ## Round 1
 
-### Phase 1.1: redact.ts keep-paths 脱敏变体 ⬜
+### Phase 1.1: redact.ts keep-paths 脱敏变体 ✅
 
 **目标**: 新增导出 `safeTextKeepPaths(value, limit, ctx)`——保留全部密钥类脱敏、跳过全部
 路径类脱敏（root 替换、external-path 正则、40 字符 blob 规则），供 permission 详情值展示。
@@ -117,9 +117,12 @@
 - [ ] `bun tests/redact-keep-paths.test.mjs` 全绿（纯函数测试可直接运行，无需 HOME 隔离）
 - [ ] `node scripts/build.mjs` exit 0
 
-**实现记录**: （待填）
+**实现记录**（2026-09-02，分支 `phase-r1-p1.1`，SHA `c2ce4a6`，merge `aa1e901`）：
+- 全部验收达成：REDACT-001~003 3/3；构建 exit 0（109.58KB）。
+- 实现抽三个私有 helper：`redactSecrets`（密钥链 12 条原样）、`redactPaths`（三条路径类规则，仅 safeText 用）、`finishText`（折叠/trim/截断）；`safeText = finishText(redactPaths(redactSecrets(...)))`，`safeTextKeepPaths = finishText(redactSecrets(...))`。
+- 零行为变化实证：与 git HEAD 原 safeText 逐字节对比（22 输入 × 6 limit + 边界）全部一致。
 
-### Phase 1.2: formatSessionRecordMessage 单表渲染 + Pattern 逐行 ⬜
+### Phase 1.2: formatSessionRecordMessage 单表渲染 + Pattern 逐行 ✅
 
 **目标**: permission 记录渲染为单张 fieldTable（Type/Session/Permission/Pattern N 行），
 Pattern 逐行编号、值经 safeTextKeepPaths 显示真实路径；去掉 Title 行；fallback 保持。
@@ -153,12 +156,20 @@ Pattern 逐行编号、值经 safeTextKeepPaths 显示真实路径；去掉 Titl
 - [ ] `node scripts/build.mjs` exit 0
 - [ ] 渲染产物：合法 permission 记录不含未解析 JSON 原文、不含 Title 行、pattern 为真实路径
 
-**实现记录**: （待填）
+**实现记录**（2026-09-02，分支 `phase-r1-p1.2`，SHA `124449a`，merge `ffd9f15`）：
+- 全部验收达成：sessions-poller 20/20（API-105-1 重写单表断言 + API-106 新增 + 既有全回归）；构建 exit 0（stub 本地验证时点；正式验证在合并后整体测试）。
+- 跨 phase 依赖已按序合并（1.1 → 1.2）解决；既有 API-006/101~104 断言无需修正（无 `<table` 计数断言）。
+- 实现细节：空 excerpt 用 `.filter(part => part !== "")` 剔除尾部空行；fallback 判定用结构化行计数（Permission 与 Pattern 均未输出）。
 
 ### Round 1 整体测试记录
 
-- 测试结论：（待填）
-- 失败摘要与根因归属：（待填）
+- 测试结论：【通过】（2026-09-02，main @ `ffd9f15`）
+- 54 用例 + 2 构建检查全绿：behavior 8/8 + sessions-poller 20/20（含 API-105r 单表断言、
+  API-106 真实路径、兜底 105-2/3）+ registry-sessions 15/15 + registry-concurrency 5/5 +
+  redact-keep-paths 3/3（REDACT-001~003 新增）；BUILD-001 exit 0（109.70KB）+ BUILD-002 3/3。
+- 失败摘要与根因归属：无失败。
+- 残余风险：真实 TG 端到端（单表 + 真实路径 Pattern 行 + 三按钮链路）由用户按部署清单
+  人工冒烟；tests/e2e/real-*.test.mjs（真实凭据诊断测试）刻意未运行。
 
 ## 断点记录（运输层错误续传用）
 
@@ -177,4 +188,17 @@ Pattern 逐行编号、值经 safeTextKeepPaths 显示真实路径；去掉 Titl
 
 ## 交付总结
 
-（待填）
+- **轮次**：1 轮完成（文档先行 → 批次 A 两 phase 并发 → 合并 → 整体测试【通过】）。
+- **提交链**：`86acfd5`（docs 冻结）→ `c2ce4a6`/`aa1e901`（Phase 1.1）→ `124449a`/`ffd9f15`（Phase 1.2 merge，最终 HEAD）。
+- **改动文件**：
+  - `src/format/redact.ts`：新增 `safeTextKeepPaths`（密钥脱敏保留、路径类三条规则跳过）；
+    重构出 redactSecrets/redactPaths/finishText 私有 helper，safeText 逐字节零行为变化
+  - `src/monitor.ts`：`formatSessionRecordMessage` 单表渲染（Type/Session/Permission/Pattern N
+    逐行编号，值显示真实路径，Title 行移除，fallback 保持）
+  - `tests/redact-keep-paths.test.mjs`：新建（REDACT-001~003）
+  - `tests/sessions-poller.test.mjs`：API-105-1 重写 + API-106 新增
+  - `docs/modules/sessions-relay.md`：§13.12 契约 + supersede 记录
+- **最终整体测试**：54 用例 + 2 构建检查全绿（详见 Round 1 整体测试记录）。
+- **待用户执行**：部署清单 5 步（重建 → 清旧进程 → 替换产物 → 重启 → 冒烟）——当前运行中的
+  poller 产物停在 Round 1（有按钮、无结构化渲染），不重新部署看不到新格式。
+- **遗留事项**：① question 类型按钮/回写后续做（历轮遗留）；② sessions 清理策略后续做（历轮遗留）。

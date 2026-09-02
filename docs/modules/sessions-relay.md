@@ -325,6 +325,12 @@ export function markSessionSent(
 | 本文件 §13.3「formatSessionRecordMessage 零改动」 | 1.2 不碰该函数体（文本格式不变） | Round 2.1 supersede：函数体由 Phase 2.1 修改为结构化渲染（§13.11）；「1.2 不在该轮改此函数」的约束仍成立，且发送通道/键盘/筛选条件零变化 |
 | 本文件 §13.11 渲染规则 | permission 记录 = Type/Session 表 + Permission/Pattern/Title 表（**两张** fieldTable）+ 原文节选 fallback；结构化值经 `safeText`（路径脱敏 `<external-path>`/`<project>`/40+ 长 blob） | Round 3（本轮 permission-pattern-table）supersede：**单张** fieldTable（Type/Session/Permission/Pattern N 同表）、**Title 行移除**、Pattern 逐行编号（单 `Pattern` / 多 `Pattern 1/2/…`）、结构化值改 `safeTextKeepPaths`（保留密钥/token 脱敏、**放开路径脱敏**显示真实路径）；fallback（原文节选 300 字符）与 `limitMessage` 保持（§13.12） |
 | 本文件 §13.11 编辑区间 | Round 2.1：仅 `formatSessionRecordMessage`（1791-1810）+ tests 尾部追加 API-105 | 本轮 §13.12：1.1 独占 `src/format/redact.ts` + 新测试文件 `tests/redact-keep-paths.test.mjs`；1.2 独占 `src/monitor.ts`（import 块 48-82 + 方法体 1794-1859）+ `tests/sessions-poller.test.mjs`（API-105 区块 907-1001 + 尾部追加） |
+| 本文件 §13.10「明确不做」 | 「不做 question 记录按钮/回写（决策 #2，后续轮）」 | Round 4（question-tg-wizard）**supersede**：question 记录实现 TG 交互向导 + reply/reject 回写（§14）；§13.10 其余条目保持 |
+| 本文件 §13.3 发送条件 | `send === false && resolved === false && reply == null` | Round 4 追加 `&& q_answers == null && q_reject !== true`（§14.2.2；对 permission 恒真，permission 语义不变） |
+| 本文件 §6.2 question 记录渲染 | question 记录 = message 原文节选（300 字符，`safeText`） | Round 4 supersede：question 记录发送改走向导渲染（§14.2.2 scanSessionQueue question 分支）；解析失败/无 questions 时保留原文节选 fallback（§14.2.2 步骤 1） |
+| 本文件 §13.7/§13.12.4 编辑区间 | Round 2/3 区间划分 | Round 4 区间以 §14.6 为准 |
+| 本文件 §8/§13.9 测试编号 | API-001~006/101~106 / REG-101/201 / REDACT / LOCK / BUILD | Round 4 新增 REG-301 / API-201~205（§14.5） |
+| docs/00-overview.md「question 本轮无按钮」 | 「question 与其它一切审批/回答流程仍留在 opencode，插件绝不擅自代答」（00-overview 29 行同款） | Round 4 起 question 记录支持 TG 向导交互（仅用户显式点击/输入触发；绝不主动代答）。README/00-overview 文字修订超出 doc-prep 写权限边界（∉ docs/**），由 dev-lead 另行指派执行 |
 
 ## 12. 变更记录
 
@@ -346,6 +352,16 @@ export function markSessionSent(
   与 safeText 完全一致、跳过三条路径类规则，真实路径可见）；新增 `safeTextKeepPaths` 导出契约与
   1.1/1.2 编辑区间（零交集）；fallback（原文节选 300 字符）与 `limitMessage` 保持；测试编号
   REDACT-001~003 / API-105 更新 + API-106 新增。supersede 记录见 §11。
+- 2026-09-02 冻结（Round 4 / question-tg-wizard，见 §14）：question 记录实现 TG 交互向导——
+  SessionRecord 追加 6 个 q_* 可选字段与白名单容错、5 个纯函数 + clearQuestionInputs（全局匹配 /
+  无匹配 undefined / 幂等原引用 / 只改目标字段）、发送端向导渲染（OTG_Q_CB_PREFIX +
+  buildQuestionStageText + buildQuestionKeyboard）、sendMessageWithKeyboard 最小扩展返回 message_id、
+  发送条件追加 `q_answers==null && q_reject!==true`、questionEntryID/qShortMap（64 字节核验）、
+  回调向导状态重建协议（无内存状态）与动作序列、answer 文案总表、纯文本捕获 + /cancel、
+  消费端 applyQuestionReply/Reject 与 SDK 签名核验任务（v2 嵌套 body `{ questionV2Reply: { answers } }`
+  修正早稿「body `{ answers }`」）、测试编号 REG-301/API-201~205 与锚点修正（API-006-5/API-101-2
+  既有断言最小改判归 1.2）、编辑区间零交集。**supersede §13.10「不做 question 按钮/回写」**。
+  supersede 记录见 §11。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
 
@@ -757,3 +773,355 @@ question 记录：渲染零改动（恒为 message 原文节选 paragraph，300 
 - 不新增/删除任何密钥类脱敏规则（仅路径类差异）；不碰发送通道/键盘/筛选/消费端（§13.3~§13.6）。
 - 不改 `html.ts`（fieldRow/fieldTable/titleLine 原样复用）；不改 `constants.ts`。
 - 不做 question 记录单表化（保持原文节选）；不做 fallback 走 keep-paths（路径脱敏照旧）。
+
+## 14. Round 4 扩展：question 请求 TG 交互向导（选项 + 自定义输入 + 持久化状态机）（冻结 2026-09-02）
+
+> 计划: docs/todos/question-tg-wizard.md。批次 A = [1.1（registry）] → 批次 B = [1.2（发送端）, 1.4（消费端）] → 批次 C = [1.3（回调向导）]。
+> 本文件仍是 sessions 中继子系统的唯一权威契约；本章在 §2/§4/§6/§8/§13 之上追加扩展，supersede 记录见 §11。
+> **supersede §13.10「不做 question 记录按钮/回写（后续轮）」——本轮正是那轮**：question 记录实现 TG 交互向导——
+> 选项按钮 + 多选 toggle + 自定义输入 + 导航 + 总结确认，交互对齐 TUI；**向导状态全部持久化 projects.json**
+> （注册表纯函数读写，不靠内存，进程重启后点旧按钮从盘上重建状态）；确认后由**拥有该 session 的 opencode 实例**
+> 调官方 question reply/reject API 回传。**permission 链路（§13 全部）零改动**。插件绝不擅自代答：只有用户在 TG
+> 显式点击/输入才触发回传。
+
+### 14.1 registry：向导状态字段 + 纯函数（Phase 1.1，冻结）
+
+#### 14.1.1 `SessionRecord` 追加 6 个可选字段（supersede §2/§13.1 类型定义）
+
+在 §13.1 类型上追加（其余字段及语义不变；定义位置 `src/registry/index.ts` SessionRecord，24-34）：
+
+```ts
+export type SessionRecord = {
+  // ...（§2 既有 8 字段 + §13.1 reply）
+  q_draft?: Array<Array<string>>;   // 草稿答案：长度=questions 数；每题=已选 label 数组；未答=空数组
+  q_stage?: number;                 // 当前题索引 0-based；=questions.length 表示总结阶段
+  q_input?: number | null;          // 待自定义输入题索引；显式 null=无输入态
+  q_answers?: Array<Array<string>>; // 最终提交答案（每题=label/文本数组，透传不映射）；消费端 reply 触发器
+  q_reject?: boolean;               // 放弃标记（true=用户取消整个向导）；消费端 reject 触发器
+  q_msg_id?: number;                // TG 向导消息 message_id（poller 发送成功后回写，供编辑）
+};
+```
+
+- **写入端初始不设置任何 q_\* 键**（记录保持「缺失」态；`q_answers == null` 与 `q_reject !== true` 对缺失键恒成立——旧记录天然兼容）。
+- **字段间独立**（与 §4.2 冻结理由一致）：置 q_answers/q_reject 不改 send/resolved/reply；各 q_* 字段各自独立，只由各自置位方消费。
+- **生命周期（冻结）**：发送初始消息 → q_msg_id 回写 → 向导交互（q_draft/q_stage/q_input 演变）→ 终态二选一：q_answers 写入（submit）或 q_reject=true（cancel）→ 消费端 apply（§14.4）成功后 resolved=true。resolved 后 q_* 冻结不再清理（不做回收）。
+
+#### 14.1.2 `parseSessionRecord` 白名单扩展（逐字段容错冻结，1.1）
+
+在现有校验（95-137）上追加 6 字段，与 §13.1 同款「缺失/null/合法/非法」四态：
+
+| 字段 | 键**缺失** | 显式 `null` | 合法值 | 非法值（类型/结构不符） |
+|---|---|---|---|---|
+| `q_draft` | 构造记录**不含该键**（serialize 自动省略 → 旧文件往返不新增键） | 丢弃整条记录 | `Array.isArray` 且每项为 `Array` 且元素全为 string | **丢弃整条记录**（不抛错、不影响其它记录，§3.2 严格白名单同款） |
+| `q_stage` | 不含键 | 丢弃整条记录 | `typeof === "number"`（**不校验范围/整数性**——非法值由 §14.3.1 状态重建钳制） | 丢弃整条记录 |
+| `q_input` | 不含键 | `q_input: null`（JSON null 保留 = 显式无输入态） | `typeof === "number"` | 丢弃整条记录 |
+| `q_answers` | 不含键 | 丢弃整条记录 | 同 q_draft 结构 | 丢弃整条记录 |
+| `q_reject` | 不含键 | 丢弃整条记录 | `typeof === "boolean"` | 丢弃整条记录 |
+| `q_msg_id` | 不含键 | 丢弃整条记录 | `typeof === "number"` | 丢弃整条记录 |
+
+- 既有 9 字段（8 基础 + reply）校验**零改动**；q_* 校验紧随 reply 之后追加，构造记录时按「有值才赋键」模式（同 reply）。
+
+#### 14.1.3 纯函数（5 个主函数 + 1 个辅助，1.1 新增，冻结）
+
+位置：`src/registry/index.ts` 纯函数区（`setSessionReply` 285-308 之后、`markSessionFlag` 310 之前）。
+
+统一语义（与 §4.2/§13.2 完全一致）：**全局 request_id 精确匹配**（跨全部条目找第一条，顺序 = projects 数组序 + sessions 数组序）；**无匹配 → 返回 `undefined`**（调用方透传 mutate → 不写盘、不抛错）；**匹配且目标字段与入参完全一致 → 返回原 registry 引用**（幂等，mutate 短路不写盘）；**需变更 → 返回新 registry，仅改本函数目标字段**（send/resolved/reply 及其它 q_* 不动）；返回必须是新对象引用。
+
+```ts
+// 写草稿 + 阶段（选项点击/导航/自定义输入写入共用；draft 与 stage 都为完整新值）
+export function setQuestionDraft(
+  registry: ProjectRegistry,
+  requestID: string,
+  draft: Array<Array<string>>, // 长度=questions 数
+  stage: number,               // 0..questions.length；=length 为总结阶段
+): ProjectRegistry | undefined
+
+// 写/清自定义输入态（index=题索引；null=清除）
+export function setQuestionInput(
+  registry: ProjectRegistry,
+  requestID: string,
+  index: number | null,
+): ProjectRegistry | undefined
+
+// 最终提交（消费端 reply 触发器；answers 原样透传不校验）
+export function submitQuestionAnswers(
+  registry: ProjectRegistry,
+  requestID: string,
+  answers: Array<Array<string>>,
+): ProjectRegistry | undefined
+
+// 放弃整个向导（消费端 reject 触发器；置 q_reject=true）
+export function rejectQuestion(
+  registry: ProjectRegistry,
+  requestID: string,
+): ProjectRegistry | undefined
+
+// 回写向导消息 message_id（poller 发送成功后）
+export function setQuestionMessageID(
+  registry: ProjectRegistry,
+  requestID: string,
+  messageID: number,
+): ProjectRegistry | undefined
+```
+
+辅助函数（`/cancel` 批量清除用，仍由 1.1 实现；同上三态语义但**不返回 undefined**）：
+
+```ts
+// 清除全部记录的 q_input（无任何变更 → 原引用；有变更 → 新 registry）
+export function clearQuestionInputs(registry: ProjectRegistry): ProjectRegistry
+```
+
+验收：REG-301（6 字段往返容错 + 5 函数三态「无匹配 undefined / 幂等原引用 / 只改目标字段」+ clearQuestionInputs 批量断言）；REG-101/201 与 LOCK-001~005 回归全绿。
+
+### 14.2 发送端：question 初始消息渲染 + 键盘（Phase 1.2，冻结）
+
+#### 14.2.1 format.ts 新导出（format.ts 本轮 1.2 独占）
+
+```ts
+export const OTG_Q_CB_PREFIX = "otg:q:"; // 放 format.ts（PERM_CB_PREFIX 286 旁；constants.ts 保持零新增，§13.3 决策 #9 同款）
+
+export function buildQuestionStageText(
+  projectLabel: string,
+  type: "question",
+  sessionLabel: string,       // 调用方已处理脱敏/短 ID（safeText(record.session_name || shortID(...), 100, ctx)）
+  questions: Array<QuestionV2Info>, // 解析自 record.message（SDK 形状：{question, header, options: Array<{label, description}>, multiple?, custom?}）
+  stage: number,              // 0..questions.length；=length 为总结阶段
+  draft: Array<Array<string>>,// 长度=questions.length；每题=已选 label 数组；未答=空数组
+  inputPending: boolean,      // q_input != null（输入模式提示行）
+  ctx: FormatContext,         // 脱敏上下文（safeTextKeepPaths 必需）
+): string
+```
+
+- 结构：`titleLine(iconForWaitingType("question"), projectLabel)` + **单张 fieldTable(rows)**（⚠️ 图标 + 项目名开头骨架不变）+ 整体 `limitMessage` 截断；rows 行序冻结：
+  - `Type` → `type` 字面量 `"question"`（不经脱敏，同 §13.12.2）；
+  - `Session` → `sessionLabel`；
+  - **非总结阶段**（`stage < questions.length`）：
+    - `Question m/n` → `${stage + 1}/${questions.length}`；
+    - `Header` → `questions[stage].header`（宽松跳行：值为 string 才输出）；值 = `safeTextKeepPaths(header, 300, ctx)`；
+    - 问题文本行（标签冻结 `Question`？不——问题文本与 Question m/n 合并为一行 `Question m/n` → 文本？任务要求「Question m/n/Header/问题文本/选项行」——冻结：`Question m/n` 行值 = 问题文本；`Header` 单独行。即：
+      - `Question m/n` → `${questions[stage].question}`（`safeTextKeepPaths(question, 300, ctx)`——**问题文本含路径时显示真实路径**，沿用 Round 3 keep-paths 决策）；
+      - 选项行逐项（`questions[stage].options ?? []`，宽松跳行）：每选项一行，标签为 `Option N`（N 从 1 起），值为 `${safeTextKeepPaths(label, 200, ctx)}${description ? " — " + safeTextKeepPaths(description, 200, ctx) : ""}`；**多选且该选项已选** → 前缀 `✅ `（`✅ ${label}`）；
+  - **总结阶段**（`stage === questions.length`）：每题一行 `Question m/n` → 值 = 已选答案 `labels.join("、")`（经 `safeTextKeepPaths`）或 **`（未答）`** 标注；不输出选项行；
+  - **输入模式提示行**（`inputPending === true` 时追加）：`fieldRow("输入", "✏️ 回复文本作为答案，/cancel 取消")`。
+- 任务签名补充说明：任务描述要求问题文本/答案经 `safeTextKeepPaths` 显示真实路径——脱敏需要上下文，故完整签名带 `ctx: FormatContext`（与 formatStatus/formatTerminalNotification 惯例一致，§13.12.1 同款）。
+
+```ts
+export function buildQuestionKeyboard(
+  entryID: string,
+  questions: Array<QuestionV2Info>,
+  stage: number,
+  draft: Array<Array<string>>,
+): TelegramInlineKeyboard
+```
+
+- 行序冻结（返回 `{ inline_keyboard: rows }`，复用 `TelegramInlineButton`/`TelegramInlineKeyboard`）：
+  1. **选项行**（`questions[stage].options ?? []` 逐项按钮，单行内平铺）：callback_data 统一 `${OTG_Q_CB_PREFIX}${entryID}:o${idx}`（idx = 选项数组 0-based 下标）；text = **多选**（`multiple === true`）且已选 → `✅ ${label}`，否则 `label`；
+  2. **custom 行**（仅当 `questions[stage].custom === true`）：`[{ text: "✏️ Custom", callback_data: `${OTG_Q_CB_PREFIX}${entryID}:custom` }]`；
+  3. **导航/提交行**：
+     - 多问题请求（`questions.length > 1`）非总结：`[⬅️ Prev](:prev)` `[➡️ Next](:next)` `[❌ Cancel](:cancel)`；
+     - 多问题请求总结阶段（`stage === questions.length`）：`[✅ Submit](:submit)` `[❌ Cancel](:cancel)`；
+     - **单问题请求（`questions.length === 1`）**：**无导航无提交按钮**——只有选项行（+custom 行若有）+ `[❌ Cancel](:cancel)`（点选项直接提交形态，决策 #6）。
+- `entryID` 由调用方（monitor）保证回调 ASCII 且 ≤ 64 字节（§14.2.3）；函数本身不做长度断言（同 §13.3）。
+
+#### 14.2.2 scanSessionQueue question 分支（1.2 地盘 1679-1740，冻结）
+
+- 现 question 记录走 `await this.sendMessage(text)` 原文节选（无键盘）→ 本轮改为向导发送，行为序列：
+  1. `try { parsed = JSON.parse(record.message) }` → `questions = parsed?.questions`；**宽松防御（冻结）**：解析抛错、parsed 非对象、`questions` 非数组、或首元素缺 string 型 `question` → **退化**为既有行为 `await this.sendMessage(text)`（原文节选发送，无键盘、不置 q_msg_id）——问题记录永远可达，防御不中断；
+  2. 渲染：`text = buildQuestionStageText(projectLabel, "question", sessionLabel, questions, 0, draft0, false, ctx)` + `keyboard = buildQuestionKeyboard(entryID, questions, 0, draft0)`（`draft0 = questions.map(() => [])`；`sessionLabel = safeText(record.session_name || shortID(record.session_id), 100, ctx)`）；
+  3. `entryID = this.questionEntryID(record.request_id)`；`undefined`（超限兜底 §14.2.3）→ 退化为 `sendMessage(text)` 无键盘（同 §13.4 兜底）；
+  4. `const messageID = await this.sendMessageWithKeyboard(text, keyboard)` → **messageID 非 undefined** → `registry.mutate((reg) => setQuestionMessageID(reg, record.request_id, messageID))`；undefined（响应无 message_id）→ logWarn 一次不中断（后续编辑退化为 `callback.message.message_id` 兜底，§14.3.1）；
+  5. 发送成功判定不变 = sendMessageWithKeyboard resolve（同 §13.3）；抛错 → 不置位、下轮重试（既有 try/catch 保持）；成功后才 `markSessionSent`（既有流程不变）。
+- **发送条件追加（supersede §13.3 条件，冻结）**：跳过条件改为 `record.send || record.resolved || record.reply != null || record.q_answers != null || record.q_reject === true`。语义：已提交（q_answers）/已放弃（q_reject）的未发送记录**永不发送初始消息**（走消费端 apply，§14.4）；对 permission 记录 q_* 恒空（无键 → == null / !== true），permission 语义**零变化**。
+- `formatSessionRecordMessage`（1794-1859）**零改动**——question 渲染完全由 scanSessionQueue 新分支接管，不再进该函数（其内部 question 节选路径保留为防御 dead code，不删不改）。
+
+**`sendMessageWithKeyboard` 最小扩展（1.2 独占方法体 2328-2338，冻结）**：
+
+- 现状已核验：返回 `Promise<void>`（telegramWithRetry 结果被丢弃）。扩展为返回 message_id：
+  ```ts
+  private async sendMessageWithKeyboard(
+    text: string,
+    replyMarkup: TelegramInlineKeyboard,
+  ): Promise<number | undefined> // 响应 result.message_id；无则 undefined
+  ```
+- 实现：`const response = await telegramWithRetry<{ result?: { message_id?: number } }>("sendRichMessage", {…}, ctx)` → `return response?.result?.message_id`。
+- 既有调用点（permission 键盘发送）忽略返回值，兼容；测试 stub 同步改为可返回 message_id。
+
+#### 14.2.3 questionEntryID / qShortMap（1.2，冻结）
+
+- `private qShortMap = new Map<string, string>();` + `private questionEntryID(requestID: string): string | undefined`：与 `permissionEntryID`（1759-1783）**同构**——`full = OTG_Q_CB_PREFIX + requestID + ":submit"`（`:submit` 7 字节，最长后缀）`Buffer.byteLength(full, "utf8") <= 64` → entryID = requestID；超限 → `shortID = requestID.slice(0, 44)` 复核，`qShortMap.set(shortID, requestID)`（重复 key 且 requestID 不同 → logWarn 覆盖）；仍超限 → logError + `undefined`（无键盘退化）。实测 requestID 长度结论写入 1.2 任务报告。
+- **独立映射表**：qShortMap 与 permShortMap（§13.4）分开，不得混用。
+- **不持久化 qShortMap**（同 §13.4：只存 poller 实例内存；重启后旧按钮还原 raw 找不到记录 → §14.3.1 失效分支，可接受降级）。
+- 按钮发出进程 = poller.lock 持有者（getUpdates 唯一消费方），无跨进程一致性问题。
+
+**permission 路径零改动**（§13 全部保持）——以上全部只落在 question 分支。
+
+### 14.3 回调向导状态机 + 纯文本捕获（Phase 1.3，冻结）
+
+#### 14.3.1 handleCallback q 前置分支（1.3 地盘，perm 分支后、通用正则前）
+
+- 判定：`data.startsWith(OTG_Q_CB_PREFIX)` → 正则 `^otg:q:(.+):(o\d+|prev|next|cancel|custom|submit)$`（贪婪 `(.+)` 容忍 requestID 含 `:`；后缀锚定）；不命中 → `answerCallback(id, "Unknown action", false)` + return。
+- **状态重建协议（无内存状态，本小节核心，冻结）**——每次回调从**盘上**重建，进程重启天然恢复（决策 #8）：
+  1. `requestID = this.qShortMap.get(entryID) ?? entryID`；
+  2. `registry.read()`（不加锁，最终一致）→ **全局**线性扫描全部条目全部 sessions（与纯函数全局匹配同序），找 `record.request_id === requestID` 第一条；找不到 → answer「记录不存在或已失效」（alert）+ logWarn + return（不编辑）；
+  3. **失效判定**：`record.resolved === true || record.q_answers != null || record.q_reject === true` → 同上失效 answer + return（不编辑）；
+  4. `JSON.parse(record.message)` → `questions`（解析抛错/非数组 → 失效 answer + logWarn + return）；
+  5. 重建：`draft = record.q_draft ?? questions.map(() => [])`；`stage = typeof record.q_stage === "number" ? clamp(record.q_stage, 0, questions.length) : 0`（**钳制**——parse 不校验范围，此处防御；q_stage === questions.length = 总结阶段）。
+- **动作行为序列**（每步：先 mutate 落盘；返回 undefined → 失效 answer + return 不编辑；成功 → answer 文案（§14.3.3）+ 编辑消息（§14.3.1 末））：
+  - `o<idx>`（idx 0-based；越界 → answer「选项无效」return）：
+    - 当前题**多选**（`multiple === true`）：toggle——`draft[stage]` 含 label → 移除；不含 → 追加（保持数组顺序）→ `setQuestionDraft(reg, requestID, draft, stage)` → answer `已选 {draft[stage].length} 项` → 编辑当前题（✓ 刷新）；
+    - 当前题**单选**且**多问题**：`draft[stage] = [label]` → `setQuestionDraft(reg, requestID, draft, Math.min(stage + 1, questions.length))`（=length 自然进总结）→ answer `已选「{label}」` → 编辑下一题；
+    - 当前题**单选**且**单问题请求**（`questions.length === 1`）：**直接提交** `submitQuestionAnswers(reg, requestID, [[label]])` → answer `已提交` → 编辑 ✅ Submitted（键盘移除）。
+  - `prev` / `next`：`newStage = clamp(stage + (next ? 1 : -1), 0, questions.length)`（next 上限 = 总结阶段；prev 下限 0；答案保留不丢）→ `setQuestionDraft(reg, requestID, draft, newStage)` → answer `已跳转` → 编辑目标阶段。
+  - `custom`（防御：`questions[stage].custom !== true` → answer「该题不支持自定义输入」return）：`setQuestionInput(reg, requestID, stage)` → answer `直接回复文本作为答案，/cancel 取消` → 编辑当前消息（追加输入提示行、**键盘保留**）。
+  - `submit`（防御：`stage !== questions.length`（非总结阶段）→ answer「Unknown action」return）：
+    - 校验 `draft.every((a) => a.length > 0)`；未全答 → answer `第 {n} 题未作答，请先作答`（n = 首个空数组下标 + 1）+ **不提交不编辑**；
+    - 全答 → `submitQuestionAnswers(reg, requestID, draft)` → answer `已提交` → 编辑 ✅ Submitted（键盘移除）。
+  - `cancel`（任意阶段可用）：`rejectQuestion(reg, requestID)` → answer `已取消` → 编辑 ❌ Cancelled（键盘移除）。
+- **编辑消息（可测试入口，冻结签名，放 handleCallback/editPermissionResultMessage 近旁）**：
+  ```ts
+  private async editQuestionWizardMessage(
+    chatID: number | string,
+    messageID: number,
+    text: string,                        // 完整新渲染文本（buildQuestionStageText）或 原文本 + 结果行
+    keyboard?: TelegramInlineKeyboard,   // 不传/undefined ⇒ 键盘移除（终态，决策 #4 同款）
+  )
+  ```
+  - 内部：`telegramWithRetry("editMessageText", { chat_id, message_id, text, reply_markup? }, ctx)`——**不传 reply_markup ⇒ 键盘被移除**（同 §13.5）。
+  - `messageID = record.q_msg_id ?? callback.message.message_id`（q_msg_id 缺失/重启后兜底 = 用户点击消息自身 id）。
+  - 结果行冻结（追加原文本末尾）：submit 成功 → `\n✅ Submitted`；cancel → `\n❌ Cancelled`。
+  - 编辑失败 → logWarn（消息过期/被删等），不抛错中断（answer 已发出，视为已处理，同 §13.5）。
+  - 非终态编辑（选项/导航/custom 提示）用**完整重渲染**：`editQuestionWizardMessage(chatID, messageID, buildQuestionStageText(…new state…), buildQuestionKeyboard(…new state…))`。
+- **异常兜底**：沿用 handleCallback 现有 try/catch（1891-1898 同款）——answer「操作失败，请重试」（alert）+ log error；**q 分支不得落入函数末尾的 editMenuMessage 菜单刷新**（须在编辑原消息后自行结束，同 §13.5 第 7 点）。
+
+#### 14.3.2 handleTelegramUpdate 纯文本捕获 + /cancel（1.3 地盘 1872-1914，冻结）
+
+- **插入点（澄清）**：现 `if (!match) return;`（命令正则不匹配 = 纯文本）改为 `if (!match) { await this.handleQuestionTextInput(message.text); return; }`——纯文本（非 `/` 开头命令）才走自定义输入捕获；`/cancel` 是命令形态 → 走命令 switch（不触发捕获）。chatId 匹配校验沿用既有前置条件（1910-1915 同款，已含 `message.chat.type === "private"` + bot/from id 校验）。
+- `handleQuestionTextInput(text)`（私有辅助方法，放 handleTelegramUpdate 近旁，可测试入口）：
+  1. `registry.read()` → 全局找 `type === "question" && resolved === false && q_answers == null && q_input != null` 的**第一条**记录（跨全部条目，顺序 = projects 数组序 + sessions 数组序）；找不到 → 静默 return（非命令文本保持忽略）；
+  2. 重建 questions（JSON.parse 失败/非数组 → logWarn + return）；
+  3. 写答案：`draft = record.q_draft ?? questions.map(() => [])`；`draft[q_input] = [text.trim()]`（**覆盖式**：每次回复覆盖该题草稿，TUI 输入语义同款）；
+  4. 落盘（两个 mutate 串行，冻结顺序：先清输入态 → 再推进）：
+     - `setQuestionInput(reg, requestID, null)`（清输入态）；
+     - **多问题** → `setQuestionDraft(reg, requestID, draft, Math.min(q_input + 1, questions.length))`（=length 自然进总结）；
+     - **单问题** → `submitQuestionAnswers(reg, requestID, draft)`（直接提交）。
+  5. 编辑向导消息：多问题 → `editQuestionWizardMessage` 渲染下一题（键盘保留）；单问题 → 原文本 + `\n✅ Submitted`（键盘移除）；**纯文本路径 messageID 仅用 `record.q_msg_id`**（无 callback.message 可兜底；缺失 → logWarn 跳过编辑——答案已落盘不受影响）；
+  6. 回复确认：`this.enqueueMessage(paragraph("已记录第 {n} 题答案"))`（n = q_input + 1；enqueueMessage 与命令路径一致，不阻塞）。
+- **`/cancel` 命令**：switch 追加 `case "cancel":` → `registry.mutate((reg) => clearQuestionInputs(reg))` → `this.enqueueMessage(paragraph("已取消输入模式"))` → return。**不改 `PLANNED_COMMANDS`**（已核验 constants.ts 26-33：cancel 不在其中，命令可达）。
+- 确认文案冻结：`已记录第 {n} 题答案`；`/cancel` → `已取消输入模式`。
+
+#### 14.3.3 answer 文案总表（冻结，供 API-202/203/204 断言）
+
+| 场景 | 文案 | alert |
+|---|---|---|
+| 记录不存在 / 已 resolved / 已 q_answers / 已 q_reject / message 解析失败 | `记录不存在或已失效` | true |
+| 正则不命中 / 非总结阶段 submit | `Unknown action` | false |
+| `o<idx>` 越界 | `选项无效` | false |
+| custom 但该题不支持 | `该题不支持自定义输入` | false |
+| 单选多题点选 | `已选「{label}」` | false |
+| 多选 toggle | `已选 {n} 项` | false |
+| 单问题直接提交 / submit 成功 | `已提交` | false |
+| prev / next | `已跳转` | false |
+| custom 进入输入模式 | `直接回复文本作为答案，/cancel 取消` | false |
+| submit 未全答 | `第 {n} 题未作答，请先作答` | false |
+| cancel | `已取消` | false |
+| 兜底异常 | `操作失败，请重试` | true |
+
+### 14.4 消费端：q_answers / q_reject 应用（Phase 1.4，冻结）
+
+#### 14.4.1 scanReplyQueue 筛选扩展（1.4 地盘 1588-1619）
+
+- 现 `if (record.type !== "permission") continue;` → 改为双分支（permission 分支 §13.6 **零改动**）：
+  - `record.type === "permission"`：`record.reply == null || record.resolved` → continue（原样）；
+  - `record.type === "question"`：`record.resolved || (record.q_answers == null && record.q_reject !== true)` → continue；否则：
+    - `record.q_answers != null` → `applyQuestionReply(record)`；
+    - `record.q_answers == null && record.q_reject === true` → `applyQuestionReject(record)`。
+- 逐条**串行**、单条抛错不中断整轮（既有 try/catch 保持）；返回成功应用条数（语义不变）。
+
+#### 14.4.2 applyQuestionReply / applyQuestionReject（1.4 新增，放 applySessionReply 之后）
+
+- 与 `applySessionReply`（1633-1669）**同构**：调用 → 成功 `registry.mutate(markSessionResolved)`（undefined → logWarn，下轮重试）；失败/抛错 → logWarn（token 脱敏）**不置位**，下轮 ticker 重试；不引入认领机制。
+- **透传语义（冻结）**：`answers = record.q_answers` 原样（不映射、不校验——parse 已保证 `Array<Array<string>>`）；`sessionID = record.session_id`、`requestID = record.request_id`。
+- **双路径说明（冻结）**：question.replied/rejected 事件路径（§5.3）保留**先到先得**——筛选已排除 resolved；若 read→apply 窗口内事件/其它实例先置位，本实例 API 调用以「已决」失败被捕获 → logWarn → 下轮读到 resolved=true 即跳过（§13.6 竞态收敛同款）。
+
+#### 14.4.3 SDK 签名核验先行任务（冻结）
+
+- **doc-prep 已核验事实（本机 `~/.opencode/node_modules/@opencode-ai/sdk@1.17.13`，`dist/v2/gen/`）**：
+  - root export 扁平客户端（`dist/gen/sdk.gen.d.ts`，即 `postSessionIdPermissionsPermissionId` 所在）**无任何 question 方法**（grep 实证）——本机装的是旧版，**不能**据此断言运行时方法名，必须核验目标版本；
+  - `dist/v2/gen`（OpencodeClient2）有 class 方法：`client.question.reply({ requestID, answers?: Array<QuestionAnswer> })` / `reject({ requestID })`；`client.session.question.reply({ sessionID, requestID, questionV2Reply })` / `reject({ sessionID, requestID })`；
+  - **`QuestionV2Reply = { answers: Array<Array<string>> }`**（**嵌套 body**——计划文件早稿「body `{ answers }`」表述修正为 `{ questionV2Reply: { answers } }`）；v1 `QuestionAnswer = Array<string>`（扁平 `{ answers }`）。
+- **候选扁平方法名**（按 `postSessionIdPermissionsPermissionId` 命名约定 + 路由推断）：
+  - v2 会话级：`postApiSessionSessionIDQuestionRequestIDReply({ path: { sessionID, requestID }, body: { questionV2Reply: { answers } } })`；reject `postApiSessionSessionIDQuestionRequestIDReject({ path: { sessionID, requestID } })`；
+  - v1 全局：`postQuestionRequestIDReply({ path: { requestID }, body: { answers } })`；reject `postQuestionRequestIDReject({ path: { requestID } })`。
+- **1.4 先行任务（必须先做，结果写入任务报告）**：核验运行时 SDK（目标 opencode 1.18.23）扁平方法名与 body 形状。核验途径：a) 本机/缓存中更新版 `@opencode-ai/sdk` 的 `dist/gen/sdk.gen.d.ts`；b) opencode 安装内 bundle 导出面；c) **实机冒烟**（真实 question 请求 → TG 点击提交 → 断言 TUI 侧 question toolcall 真实收到答案——部署清单第 5 步同款）。无法核验 → 按下列**兜底形态**实现并在任务报告标注「推测」。
+- **冻结兜底形态**（v2 会话级优先——与 permission session-scoped 先例一致；v1 全局为交替候选）：
+  ```ts
+  // reply
+  await this.client.postApiSessionSessionIDQuestionRequestIDReply({
+    path: { sessionID: record.session_id, requestID: record.request_id },
+    body: { questionV2Reply: { answers: record.q_answers } },
+    throwOnError: true,
+  });
+  // reject
+  await this.client.postApiSessionSessionIDQuestionRequestIDReject({
+    path: { sessionID: record.session_id, requestID: record.request_id },
+    throwOnError: true,
+  });
+  ```
+- 本契约以核验后结果为准，§14.4.3 为冻结兜底基线。
+
+### 14.5 测试编号与锚点契约（supersede §8/§13.9 新增编号）
+
+| 编号 | 定义 | 文件 | 维护 phase |
+|---|---|---|---|
+| REG-301 | q_* 6 字段往返容错（缺失/null/合法/非法丢记录不抛错）+ 5 纯函数三态（全局匹配 / 无匹配 undefined / 幂等原引用 / 只改目标字段）+ clearQuestionInputs 批量 | `tests/registry-sessions.test.mjs`（尾部追加，704 行后） | 1.1 |
+| API-201 | question 发送：初始消息单表（Type/Session/Question m/n/Header/问题文本/选项行 label+description）+ 键盘结构（选项 o<idx>；多题 ⬅️/➡️/❌；custom 题 ✏️；**单问题无导航**）+ 发送条件防御（q_answers!=null / q_reject=true 不发送）+ sendMessageWithKeyboard 返回 message_id → q_msg_id 回写；permission 路径零变化 | `tests/sessions-poller.test.mjs`（Phase 1.2 区块尾部，锚点见下） | 1.2 |
+| API-202 | 向导回调：单选多题自动跳下一题；多选 toggle ✓ 落盘；prev/next 钳制；带未答题进总结但 Submit 拒绝并提示题号；全答 Submit → q_answers + 编辑 ✅；单问题点选项直接提交；已 resolved/不存在/已 q_answers → 失效提示；**重启重建**（直接构造带 q_draft/q_stage 的记录 → 回调继续） | `tests/sessions-poller.test.mjs`（文件尾部追加） | 1.3 |
+| API-203 | 自定义输入：✏️ Custom → q_input 落盘 + answer + 编辑提示；纯文本消息 → draft[q_input] 写入 + 清输入 + 推进（多问题）/直接提交（单问题）+ 回复确认；/cancel 清除全部 q_input + 确认 | 同上 | 1.3 |
+| API-204 | 取消：任意阶段 ❌ → q_reject 落盘 + answer + 编辑 ❌ 键盘移除；已取消记录再点按钮 → 失效提示 | 同上 | 1.3 |
+| API-205 | 消费端：q_answers → reply API 透传（sessionID/requestID/answers）→ resolved=true；q_reject → reject API → resolved=true；失败不置位下轮重试；已 resolved 跳过；permission 回归（API-103/104 不受影响） | `tests/sessions-poller.test.mjs`（Phase 1.3 区块尾部 + fakeClient 扩展） | 1.4 |
+
+**同文件追加锚点（当前文件 1058 行事实；沿用 §13.9 实测经验：同锚点追加 ⇒ CONFLICT；不同锚点 ⇒ 自动干净合并）**：
+
+- **1.2 区块（API-201）**：Phase 1.2 区块**内部尾部**——API-102 用例收尾 `);` 之后（现 905 行后）、`// ---- API-105` 注释之前；区块头 `// ---- Phase 1.2 (API-201) ----`。
+  （说明：任务初稿锚点「API-006-5 收尾后」已被 Round 2 的 API-101/102 区块占用——修正为区块内尾部，仍属 1.2 地域。）
+- **1.3 区块（API-202/203/204）**：文件尾部——API-106 用例收尾 `);` 之后（现 1058 行文件尾追加）。
+- **1.4 区块（API-205）**：Phase 1.3 区块**内部尾部**——API-104 用例收尾 `);` 之后（现 369 行后）、`// API-006-3` 注释之前；区块头 `// ---- Phase 1.4 (API-205) ----`。
+  （说明：任务初稿锚点「API-006-2 收尾后」已被 Round 2 的 API-103/104 区块占用——修正为区块内尾部，仍属 1.3 消费端地域。）
+- **1.4 独立编辑点**：`fakeClient`（44-66 区）追加 question reply/reject stub（方法名以 §14.4.3 核验结果为准；先按兜底形态命名）；此点与三个区块互不相邻。
+- 定位以「紧跟指定既有用例的收尾 `);`」为准（锚定用例名/注释，不锚定行号）；区块之间必须保留至少一个既有用例作间隔。
+- **用例纪律（§13.9 沿用 + 本类补充）**：自包含 + **终态**——本类用例终态 = `resolved=true` 或 `send=true`；**不得遗留** q_answers/q_reject 已置且 unresolved 的记录（1.4 扫描器会扫到并尝试 apply，必须在用例内闭环到 resolved）。
+- **既有断言最小修正规则（冻结）**：API-101-2（question 发送**无键盘**）与 API-006-5（question 渲染为**原文节选**）的既有断言**不再成立**——question 记录本轮改走向导渲染（API-201 新断言覆盖）。这两处由 **1.2** 以最小修正更新并在任务报告注明（§13.12.3 同款规则）；其余既有用例零改动。
+
+### 14.6 编辑区间分配（supersede §7/§13.7/§13.12.4 本轮范围，冻结；行号参考，以函数名界定）
+
+| Phase | 独占文件/区间（当前行号） | 内容 |
+|---|---|---|
+| 1.1 | `src/registry/index.ts`（SessionRecord 24-34；parseSessionRecord 95-137；纯函数区 setSessionReply 285-308 之后） | 6 字段 + 白名单 + 5 纯函数 + clearQuestionInputs |
+| 1.1 | `tests/registry-sessions.test.mjs`（尾部，704 后） | REG-301 |
+| 1.2 | `src/format/format.ts`（PERM_CB_PREFIX 286 近旁 + 文件内） | OTG_Q_CB_PREFIX、buildQuestionStageText、buildQuestionKeyboard |
+| 1.2 | `src/monitor.ts` import 块（24-82 区） | 追加 3 个导入名 |
+| 1.2 | `src/monitor.ts` scanSessionQueue（1679-1740） | question 分支 + 发送条件追加 + q_msg_id 回写 |
+| 1.2 | `src/monitor.ts` sendMessageWithKeyboard（2328-2338） | 返回 message_id |
+| 1.2 | `src/monitor.ts` permissionEntryID 近旁（1759-1783 后空白） | questionEntryID + qShortMap（**不得**放进 140-146 字段区，§13.7 同款约束） |
+| 1.2 | `tests/sessions-poller.test.mjs`（Phase 1.2 区块尾 905/907 间；API-006-5 430-492、API-101-2 584-624 最小修正；makeMonitor 96-120 的 sendMessageWithKeyboard stub 改返回 message_id） | API-201 追加 + 改判 |
+| 1.3 | `src/monitor.ts` handleCallback（2097-2219） | q 前置分支分派（调用 §14.3 辅助） |
+| 1.3 | `src/monitor.ts` editPermissionResultMessage 近旁（2239-2270 后空白） | editQuestionWizardMessage + handleQuestionTextInput 等 q 辅助方法 |
+| 1.3 | `src/monitor.ts` handleTelegramUpdate（1872-1914） | 纯文本捕获分支 + /cancel case |
+| 1.3 | `tests/sessions-poller.test.mjs`（文件尾，API-106 收尾后） | API-202/203/204 |
+| 1.4 | `src/monitor.ts` scanReplyQueue（1588-1619）+ applySessionReply 后空白（1669 后） | 筛选双分支 + applyQuestionReply/applyQuestionReject |
+| 1.4 | `tests/sessions-poller.test.mjs` fakeClient（44-66）+ Phase 1.3 区块尾部（369/372 间） | question stub + API-205 |
+
+- **交集为零**：1.2 不得碰 handleCallback/handleTelegramUpdate/scanReplyQueue/applySessionReply/fakeClient/registry；1.3 不得碰 scanSessionQueue/sendMessageWithKeyboard/import 块/format.ts/registry/scanReplyQueue；1.4 不得碰 scanSessionQueue/handleCallback/handleTelegramUpdate/format.ts/registry/import 块。
+- `src/registry/index.ts` 全文件归 1.1；`src/format/format.ts` 全文件归 1.2；`src/constants.ts`、`src/types.ts` **零改动**（本轮无类型/常量扩展需求）。
+- makeMonitor（96-120）的 sendMessageWithKeyboard stub 由 1.2 改为「返回 message_id」形态——1.3/1.4 只读该 helper 的既有参数（sendStub 签名不动），不编辑该函数。
+
+### 14.7 明确不做（防过度实现）
+
+- **不动 permission 链路**：§13 全部（键盘/回调/消费端/渲染）零改动——唯一例外是 scanSessionQueue 发送条件追加 `q_answers/q_reject`（对 permission 恒空，语义不变）。
+- **不删 `notifyWaiting`**（源码保留、调用点维持现状）。
+- **不做向导超时回收**：无 q_created 字段、无过期清理（与 §10 一致）。
+- **不持久化 qShortMap**（§14.2.3）。
+- **不新增 TG 命令**（除 `/cancel`；`/sessions` 等仍为 PLANNED_COMMANDS）。
+- **不做多实例向导并发治理**：同记录并发点击由 mutate 幂等（同值原引用）+ 消费端 resolved 收敛，不引入认领机制（§13.6 同款）。
+- **不改 constants.ts**（OTG_Q_CB_PREFIX 放 format.ts，§13.3 决策 #9 同款）。
+- **不改 mutate/锁/缓存/serialized/PollerLock/SharedFileStore**（projects-registry.md §3/§4 保持零改动）。
