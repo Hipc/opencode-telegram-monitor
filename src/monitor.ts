@@ -1710,98 +1710,188 @@ export class TelegramSessionMonitor {
     }
   }
 
+  /** 实例级缓存：question apply 分层通道中首次成功的通道序号（§14.8.1）。 */
+  private questionApplyChannel?: 1 | 2 | 3 | undefined;
+
   /**
    * 把一条 question 记录的 q_answers 应用到 opencode 会话（契约 §14.4.2）。
    * 透传语义（决策 #8）：answers = record.q_answers 原样（不映射不校验，parse
-   * 已保证 Array<Array<string>>）。SDK 签名核验结论（1.4 任务报告）：本机
-   * @opencode-ai/sdk@1.17.13 root 扁平客户端无任何 question 方法（grep 实证）、
-   * v2 为 class 方法（Question2.reply({ sessionID, requestID, questionV2Reply })，
-   * 路由 POST /api/session/{sessionID}/question/{requestID}/reply，body 嵌套
-   * { questionV2Reply: { answers } }）——目标运行时 1.18.23 的扁平方法名无法
-   * 在本机核验，按契约 §14.4.3 兜底形态实现（命名沿用 postSessionIdPermissions
-   * PermissionId 先例约定）：
-   *   client.postApiSessionSessionIDQuestionRequestIDReply({
-   *     path: { sessionID, requestID },
-   *     body: { questionV2Reply: { answers: record.q_answers } },
-   *     throwOnError: true,
-   *   })
-   * 成功（API resolve）→ mutate(markSessionResolved)；失败/抛错 → logWarn
-   * 不置位（resolved 保持 false，下轮重试）。已 resolved 记录由调用方筛选跳过。
+   * 已保证 Array<Array<string>>）。调用通道（§14.8.1，supersede §14.4.3 兜底
+   * 形态）：运行时扁平客户端无任何 question 方法（实机实证），改走分层通道
+   * ① 扁平方法（typeof 检查，未来 SDK 若有则直用）→ ② v2 会话级路由
+   * （POST /api/session/{sessionID}/question/{requestID}/reply，body 顶层
+   * { answers }，经 (client as any)._client.post 走同一 transport 继承
+   * baseUrl/auth）→ ③ v2 全局路由（/question/{requestID}/reply，
+   * query.directory = root）。任一成功即用并缓存通道；某通道抛错判定
+   * 「不存在」（§14.8.2）→ 立即终态置 resolved 不重试；非 404 维持
+   * logWarn + rethrow 下轮重试。已 resolved 记录由调用方筛选跳过。
    */
   private async applyQuestionReply(record: SessionRecord) {
     if (record.q_answers == null) return;
-    try {
-      await this.client.postApiSessionSessionIDQuestionRequestIDReply({
-        path: { sessionID: record.session_id, requestID: record.request_id },
-        body: { questionV2Reply: { answers: record.q_answers } },
-        throwOnError: true,
-      });
-    } catch (error) {
-      // 失败不置位：resolved 保持 false，下轮 ticker 重试（「已决」等错误在
-      // 下轮读到 resolved=true 后自然跳过，双路径先到先得，§14.4.2）。
-      await this.log(
-        "warn",
-        "Question reply apply failed; resolved stays false, will retry on next scan",
-        {
-          requestId: record.request_id,
-          sessionId: record.session_id,
-          error: errorCategory(error, {
-            root: this.root,
-            botToken: this.config.botToken,
-          }),
-        },
-      );
-      throw error;
-    }
-    const next = await this.registry.mutate((reg) =>
-      markSessionResolved(reg, record.request_id),
-    );
-    if (next === undefined) {
-      // 抢锁超时或记录已被删除：resolved 未置位属安全重试态，静默容忍。
-      await this.log(
-        "warn",
-        "markSessionResolved skipped (no match or lock timeout); will retry on next scan",
-        { requestId: record.request_id },
-      );
-    }
+    await this.questionApply("reply", record);
   }
 
   /**
    * 把一条 question 记录的 q_reject 应用到 opencode 会话（契约 §14.4.2）。
-   * 与 applyQuestionReply 同构（reject API 无 body）——SDK 兜底形态同 §14.4.3：
-   *   client.postApiSessionSessionIDQuestionRequestIDReject({
-   *     path: { sessionID, requestID },
-   *     throwOnError: true,
-   *   })
-   * 成功 → mutate(markSessionResolved)；失败/抛错 → logWarn 不置位下轮重试。
+   * 与 applyQuestionReply 同构（reject API 无 body，路由 .../reject），分层
+   * 通道与 404 终态语义一致（§14.8.1/§14.8.2）。
    */
   private async applyQuestionReject(record: SessionRecord) {
     if (record.q_reject !== true) return;
-    try {
-      await this.client.postApiSessionSessionIDQuestionRequestIDReject({
+    await this.questionApply("reject", record);
+  }
+
+  /**
+   * question reply/reject 分层调用（§14.8.1，两方法共用）：每次按序尝试通道
+   * （① 扁平方法 typeof → ② v2 会话级 → ③ v2 全局），任一成功即用并缓存已
+   * 成功通道（questionApplyChannel，下次先试缓存仍按序降级）；某通道抛错判定
+   * 「不存在」→ 立即终态（markSessionResolved + log info + 不 rethrow，下轮
+   * 读到 resolved=true 自然跳过）；全部通道失败且非「不存在」→ logWarn
+   * （token 脱敏）+ rethrow（下轮重试）。
+   */
+  private async questionApply(kind: "reply" | "reject", record: SessionRecord) {
+    const ctx = { root: this.root, botToken: this.config.botToken };
+    let lastError: unknown;
+    for (const channel of this.questionChannels(kind)) {
+      try {
+        await this.questionApplyViaChannel(channel, kind, record);
+        this.questionApplyChannel = channel;
+        await this.markQuestionResolved(record);
+        return;
+      } catch (error) {
+        if (this.isQuestionNotFoundError(error)) {
+          // §14.8.2 404 终态：问题/session 已不存在 → 置 resolved 不再重试。
+          await this.log(
+            "info",
+            "question no longer exists; marking resolved",
+            {
+              requestId: record.request_id,
+              sessionId: record.session_id,
+            },
+          );
+          await this.markQuestionResolved(record);
+          return;
+        }
+        lastError = error;
+      }
+    }
+    const failedVerb = kind === "reply" ? "reply" : "reject";
+    await this.log(
+      "warn",
+      `Question ${failedVerb} apply failed; resolved stays false, will retry on next scan`,
+      {
+        requestId: record.request_id,
+        sessionId: record.session_id,
+        error: errorCategory(lastError, ctx),
+      },
+    );
+    throw lastError;
+  }
+
+  /**
+   * 分层通道候选（§14.8.1）：① 仅当对应扁平方法存在才纳入；缓存通道优先，
+   * 其余仍按序降级。
+   */
+  private questionChannels(kind: "reply" | "reject"): Array<1 | 2 | 3> {
+    const client = this.client as {
+      postApiSessionSessionIDQuestionRequestIDReply?: unknown;
+      postApiSessionSessionIDQuestionRequestIDReject?: unknown;
+    };
+    const flatMethod =
+      kind === "reply"
+        ? client?.postApiSessionSessionIDQuestionRequestIDReply
+        : client?.postApiSessionSessionIDQuestionRequestIDReject;
+    const base: Array<1 | 2 | 3> =
+      typeof flatMethod === "function" ? [1, 2, 3] : [2, 3];
+    if (this.questionApplyChannel === undefined) return base;
+    return [
+      this.questionApplyChannel,
+      ...base.filter((ch) => ch !== this.questionApplyChannel),
+    ];
+  }
+
+  /**
+   * 单通道调用（§14.8.1）：②③ 走 (client as any)._client.post（v2 gen 内部
+   * 即此形态，同一 transport，自动继承 baseUrl/auth 含代理与根目录配置）。
+   * body 为顶层 { answers }（实证，非 §14.4.3 的嵌套形态）；reject 无 body。
+   */
+  private async questionApplyViaChannel(
+    channel: 1 | 2 | 3,
+    kind: "reply" | "reject",
+    record: SessionRecord,
+  ): Promise<void> {
+    const client = this.client as any;
+    const suffix = kind === "reply" ? "reply" : "reject";
+    const body = kind === "reply" ? { answers: record.q_answers } : undefined;
+    if (channel === 1) {
+      const methodName =
+        kind === "reply"
+          ? "postApiSessionSessionIDQuestionRequestIDReply"
+          : "postApiSessionSessionIDQuestionRequestIDReject";
+      if (typeof client[methodName] !== "function") {
+        throw new Error(`question flat method ${methodName} not available`);
+      }
+      const options: Record<string, unknown> = {
         path: { sessionID: record.session_id, requestID: record.request_id },
         throwOnError: true,
-      });
-    } catch (error) {
-      await this.log(
-        "warn",
-        "Question reject apply failed; resolved stays false, will retry on next scan",
-        {
-          requestId: record.request_id,
-          sessionId: record.session_id,
-          error: errorCategory(error, {
-            root: this.root,
-            botToken: this.config.botToken,
-          }),
-        },
-      );
-      throw error;
+      };
+      if (body !== undefined) options.body = body;
+      await client[methodName](options);
+      return;
     }
+    if (channel === 2) {
+      const options: Record<string, unknown> = {
+        url: `/api/session/{sessionID}/question/{requestID}/${suffix}`,
+        path: { sessionID: record.session_id, requestID: record.request_id },
+        headers: { "Content-Type": "application/json" },
+        throwOnError: true,
+      };
+      if (body !== undefined) options.body = body;
+      await client._client.post(options);
+      return;
+    }
+    const options: Record<string, unknown> = {
+      url: `/question/{requestID}/${suffix}`,
+      path: { requestID: record.request_id },
+      query: { directory: this.root },
+      headers: { "Content-Type": "application/json" },
+      throwOnError: true,
+    };
+    if (body !== undefined) options.body = body;
+    await client._client.post(options);
+  }
+
+  /**
+   * 判定 question apply 错误为「对象不存在」（§14.8.2）：error 的
+   * status/statusCode === 404（SDK APIError 形态），或 errorCategory 字符串
+   * 含 404/QuestionNotFound/SessionNotFound。
+   */
+  private isQuestionNotFoundError(error: unknown): boolean {
+    const status = (error as { status?: unknown; statusCode?: unknown })
+      ?.status;
+    const statusCode = (error as { status?: unknown; statusCode?: unknown })
+      ?.statusCode;
+    if (status === 404 || statusCode === 404) return true;
+    const category = errorCategory(error, {
+      root: this.root,
+      botToken: this.config.botToken,
+    });
+    return (
+      category.includes("404") ||
+      category.includes("QuestionNotFound") ||
+      category.includes("SessionNotFound")
+    );
+  }
+
+  /**
+   * 成功路径与 404 终态共用：markSessionResolved；mutate 返回 undefined
+   * （抢锁超时/记录消失）→ logWarn（resolved 未置位属安全重试态）。
+   */
+  private async markQuestionResolved(record: SessionRecord) {
     const next = await this.registry.mutate((reg) =>
       markSessionResolved(reg, record.request_id),
     );
     if (next === undefined) {
-      // 抢锁超时或记录已被删除：resolved 未置位属安全重试态，静默容忍。
       await this.log(
         "warn",
         "markSessionResolved skipped (no match or lock timeout); will retry on next scan",
@@ -3206,21 +3296,44 @@ export class TelegramSessionMonitor {
     }, { config: this.config, signal: this.abortController.signal });
   }
 
+  /** 实例级 flag：sendMessageWithKeyboard 首次响应键名诊断已记录（§14.8.3）。 */
+  private sendRichMessageKeysLogged = false;
+
   private async sendMessageWithKeyboard(
     text: string,
     replyMarkup: TelegramInlineKeyboard,
   ): Promise<number | undefined> {
     if (this.abortController.signal.aborted) return undefined;
     const response = await telegramWithRetry<{
-      result?: { message_id?: number };
+      result?: {
+        message_id?: number;
+        message?: { message_id?: number };
+        messageId?: number;
+      };
     }>("sendRichMessage", {
       chat_id: this.config.chatId,
       rich_message: { html: limitMessage(text) },
       reply_markup: replyMarkup,
     }, { config: this.config, signal: this.abortController.signal });
-    // 契约 §14.2.2 最小扩展：返回响应 result.message_id（无则 undefined）。
-    // 既有调用点（permission 键盘发送）忽略返回值，兼容。
-    return response?.result?.message_id;
+    // 契约 §14.8.3：三形态防御解析（官方/非官方通道响应键名形态不同；实机
+    // 观察 sendRichMessage 无 result.message_id 导致 q_msg_id 缺失）。既有
+    // 调用点（permission 键盘发送）忽略返回值，兼容。
+    const messageID =
+      response?.result?.message_id ??
+      response?.result?.message?.message_id ??
+      (response as { result?: { messageId?: number } } | undefined)?.result
+        ?.messageId ??
+      undefined;
+    // 首次发送成功时记录响应键名形态（仅键名、不含任何内容，天然脱敏）
+    // 供诊断响应形态演进。
+    if (!this.sendRichMessageKeysLogged) {
+      this.sendRichMessageKeysLogged = true;
+      dline(
+        "sendMessageWithKeyboard response keys: " +
+          Object.keys(response?.result ?? {}).join(","),
+      );
+    }
+    return messageID;
   }
 
   private async sleep(ms: number) {
