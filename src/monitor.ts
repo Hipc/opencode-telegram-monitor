@@ -144,6 +144,12 @@ export class TelegramSessionMonitor {
   // 同生共死，仅锁持有者运行；sessionsScanInFlight 防止上一轮未跑完时重叠。
   private sessionsScanTimer?: ReturnType<typeof setInterval>;
   private sessionsScanInFlight = false;
+  // reply 消费扫描 ticker（契约 sessions-relay.md §13.6）：每个 opencode 实例
+  // 独立运行（与 poller.lock 无关），发现 TG 按钮写入的 reply 后调 opencode
+  // reply API 应用，成功后置 resolved=true；replyScanInFlight 防止上一轮未跑完
+  // 时重叠（决策 #5）。
+  private replyScanTimer?: ReturnType<typeof setInterval>;
+  private replyScanInFlight = false;
 
   constructor(
     private readonly client: PluginInput["client"],
@@ -166,6 +172,7 @@ export class TelegramSessionMonitor {
     void this.bootstrap();
     this.scheduleRegistration();
     this.scheduleSelfUpdate();
+    this.startReplyScan();
   }
 
   /**
@@ -437,6 +444,13 @@ export class TelegramSessionMonitor {
       clearTimeout(this.selfUpdateTimer);
       this.selfUpdateTimer = undefined;
     }
+
+    // reply 消费扫描 ticker 清理（契约 sessions-relay.md §13.6：dispose 后无残留 interval）。
+    if (this.replyScanTimer) {
+      clearInterval(this.replyScanTimer);
+      this.replyScanTimer = undefined;
+    }
+    this.replyScanInFlight = false;
 
     await Promise.allSettled([...this.tasks, this.sendTail]);
     await this.pollerLock.release();
@@ -1520,6 +1534,133 @@ export class TelegramSessionMonitor {
     if (this.sessionsScanTimer) {
       clearInterval(this.sessionsScanTimer);
       this.sessionsScanTimer = undefined;
+    }
+  }
+
+  /**
+   * 启动 reply 消费扫描 ticker（契约 sessions-relay.md §13.6）：每个 opencode
+   * 实例独立运行 1s 扫描自己项目的条目，发现 TG 按钮写入的 reply 后调
+   * opencode reply API 应用，成功后置 resolved=true。与 poller.lock 无关
+   * （决策 #5）；上一轮未跑完时跳过本轮（in-flight 守卫）。ticker 不负责任何
+   * 决策，只做周期调用。
+   */
+  private startReplyScan() {
+    if (this.replyScanTimer || this.disposed) return;
+    dline("reply scan: starting 1s ticker");
+    this.replyScanTimer = setInterval(() => {
+      if (this.replyScanInFlight) return;
+      this.replyScanInFlight = true;
+      this.track(
+        (async () => {
+          try {
+            await this.scanReplyQueue();
+          } finally {
+            this.replyScanInFlight = false;
+          }
+        })(),
+        "Reply queue scan failed",
+      );
+    }, SESSIONS_SCAN_INTERVAL_MS);
+  }
+
+  /** 停止并清理 reply 消费扫描 ticker（与 dispose 成对出现，幂等）。 */
+  private stopReplyScan() {
+    if (this.replyScanTimer) {
+      clearInterval(this.replyScanTimer);
+      this.replyScanTimer = undefined;
+    }
+    this.replyScanInFlight = false;
+  }
+
+  /**
+   * 扫描一轮 reply 队列（可测试入口，契约 sessions-relay.md §13.6；setInterval
+   * 只负责周期调用本方法，测试直接调用即可驱动）：
+   * registry.read()（不加锁，最终一致）→ findRegistryEntry(reg, this.root)
+   * 只看自己条目 → 筛选 type === "permission" && reply != null &&
+   * resolved === false → 逐条串行 applySessionReply（单条异常不中断整轮，
+   * 失败已由 applySessionReply logWarn，下轮 ticker 重试）。返回本轮成功
+   * 应用条数。
+   */
+  private async scanReplyQueue(): Promise<number> {
+    if (this.disposed) return 0;
+    const registry = await this.registry.read();
+    const entry = findRegistryEntry(registry, this.root);
+    const sessions = entry?.sessions;
+    if (!sessions) return 0;
+    let applied = 0;
+    for (const record of sessions) {
+      if (record.type !== "permission") continue;
+      // reply == null 覆盖缺失与显式 null（未回复）；resolved 双路径跳过
+      // （决策 #6：TUI replied 事件可能已先置位）。
+      if (record.reply == null || record.resolved) continue;
+      try {
+        await this.applySessionReply(record);
+        applied += 1;
+      } catch (error) {
+        // 单条失败不中断整轮；applySessionReply 已 logWarn，这里只继续。
+        await this.log(
+          "warn",
+          "applySessionReply failed; will retry on next reply scan",
+          {
+            requestId: record.request_id,
+            error: errorCategory(error, {
+              root: this.root,
+              botToken: this.config.botToken,
+            }),
+          },
+        );
+      }
+    }
+    return applied;
+  }
+
+  /**
+   * 把一条 permission 记录的 reply 应用到 opencode 会话（契约 §13.6/§13.8）。
+   * 透传语义（决策 #1）：response = record.reply 原样（"once"|"always"|"reject"），
+   * 不映射不校验（parse 已保证合法）。SDK 签名已核验（本机 opencode 安装
+   * @opencode-ai/sdk types.gen.d.ts）：
+   *   client.postSessionIdPermissionsPermissionId({
+   *     path: { id: sessionID, permissionID: requestID },
+   *     body: { response },
+   *   })
+   * 成功（API resolve）→ mutate(markSessionResolved)；失败/抛错 → logWarn
+   * 不置位（resolved 保持 false，下轮重试）。已 resolved 记录由调用方筛选跳过。
+   */
+  private async applySessionReply(record: SessionRecord) {
+    if (record.reply == null) return;
+    try {
+      // throwOnError: true —— HTTP 错误（400/404，如 permission 已被 TUI 处理）
+      // 会抛错被捕获 → logWarn 不置位，下轮读到 resolved=true 即跳过。
+      await this.client.postSessionIdPermissionsPermissionId({
+        path: { id: record.session_id, permissionID: record.request_id },
+        body: { response: record.reply },
+        throwOnError: true,
+      });
+    } catch (error) {
+      await this.log(
+        "warn",
+        "Permission reply apply failed; resolved stays false, will retry on next scan",
+        {
+          requestId: record.request_id,
+          sessionId: record.session_id,
+          error: errorCategory(error, {
+            root: this.root,
+            botToken: this.config.botToken,
+          }),
+        },
+      );
+      throw error;
+    }
+    const next = await this.registry.mutate((reg) =>
+      markSessionResolved(reg, record.request_id),
+    );
+    if (next === undefined) {
+      // 抢锁超时或记录已被删除：resolved 未置位属安全重试态，静默容忍。
+      await this.log(
+        "warn",
+        "markSessionResolved skipped (no match or lock timeout); will retry on next scan",
+        { requestId: record.request_id },
+      );
     }
   }
 

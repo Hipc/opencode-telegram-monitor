@@ -37,10 +37,15 @@ async function main() {
   const { TelegramSessionMonitor } = await import(srcMonitorURL.href);
   const registryModule = await import(srcRegistryURL.href);
   const { ProjectRegistryStore } = registryModule;
-  const { appendSessionRecord, registerProject } = registryModule;
+  const { appendSessionRecord, markSessionResolved, registerProject } =
+    registryModule;
 
   // fake client 最小面：scanSessionQueue 只经 sendMessage（被 stub）与
   // this.log（client.app.log）交互；bootstrap 不会被调用（不调 initialize()）。
+  // Phase 1.3（API-103/104）：追加 permission reply API stub —— 测试经
+  // replyCalls 断言透传、replyError 控制成功/失败（方法名/参数形状以本机 SDK
+  // 核验为准：client.postSessionIdPermissionsPermissionId({ path: { id,
+  // permissionID }, body: { response } })，契约 §13.8）。
   const fakeClient = {
     app: { log: async () => {} },
     session: {
@@ -48,6 +53,17 @@ async function main() {
       status: async () => ({ data: {} }),
       get: async ({ path }) => ({ data: { id: path.id, title: "Test session" } }),
     },
+    postSessionIdPermissionsPermissionId: async (options) => {
+      fakeClient.replyCalls.push({
+        id: options?.path?.id,
+        permissionID: options?.path?.permissionID,
+        response: options?.body?.response,
+      });
+      if (fakeClient.replyError) throw fakeClient.replyError;
+      return { data: true };
+    },
+    replyCalls: [],
+    replyError: undefined,
   };
 
   // 假配置（字面值）；绝不真发。
@@ -202,6 +218,154 @@ async function main() {
         );
       }
       await monitor.dispose();
+    },
+  );
+
+  // ---- API-103/104: reply apply loop (phase 1.3) ----
+  // 契约 docs/modules/sessions-relay.md §13.6/§13.9：消费端扫描器直接驱动
+  // scanReplyQueue()（不真实起轮询），stub reply API 断言透传与置位。
+  // API-103：reply 记录被应用（sessionID/requestID/response 透传正确）→
+  // resolved=true；reply=null 或已 resolved 的记录不触发调用。
+  await runCase(
+    "API-103 reply apply passes sessionID/requestID/response, sets resolved=true, skips reply=null and already-resolved",
+    async () => {
+      fakeClient.replyCalls = [];
+      fakeClient.replyError = undefined;
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-r1", reply: "once" }),
+        ),
+      );
+      // reply=null（显式未回复）与已 resolved 的记录：均不触发调用。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-r2", reply: null }),
+        ),
+      );
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-r3", reply: "always", resolved: true }),
+        ),
+      );
+      const monitor = makeMonitor(async () => {});
+      const applied = await monitor.scanReplyQueue();
+      if (applied !== 1) {
+        throw new Error(`expected 1 applied, got ${applied}`);
+      }
+      if (fakeClient.replyCalls.length !== 1) {
+        throw new Error(
+          `expected exactly 1 reply API call, got ${fakeClient.replyCalls.length}`,
+        );
+      }
+      const call = fakeClient.replyCalls[0];
+      if (call.id !== "ses_testp0001") {
+        throw new Error(`sessionID mismatch: ${call.id}`);
+      }
+      if (call.permissionID !== "req-r1") {
+        throw new Error(`requestID mismatch: ${call.permissionID}`);
+      }
+      if (call.response !== "once") {
+        throw new Error(`response mismatch: ${call.response}`);
+      }
+      const persisted = await findRecord("req-r1");
+      if (!persisted || persisted.resolved !== true) {
+        throw new Error(
+          `resolved not true after successful apply: ${JSON.stringify(persisted)}`,
+        );
+      }
+      const r2 = await findRecord("req-r2");
+      if (!r2 || r2.resolved !== false) {
+        throw new Error(
+          `reply=null record must stay unresolved: ${JSON.stringify(r2)}`,
+        );
+      }
+      const r3 = await findRecord("req-r3");
+      if (!r3 || r3.resolved !== true) {
+        throw new Error(
+          `already-resolved record state must not change: ${JSON.stringify(r3)}`,
+        );
+      }
+      // 用例终态（契约 §13.9）：req-r2 是 reply=null 且未 resolved 的记录，
+      // 不能被扫描器消费；但需显式置 resolved，避免遗留 send=false &&
+      // resolved=false 的记录污染后续 scanSessionQueue 用例计数。
+      await registry.mutate((reg) => markSessionResolved(reg, "req-r2"));
+      await monitor.dispose();
+    },
+  );
+
+  // API-104：① apply 失败 → resolved 保持 false，下轮 ticker 重试成功；
+  // ② 记录先被 replied 事件路径（markSessionResolved）置 resolved → 扫描器
+  // 跳过不调 API（双路径，决策 #6）。
+  await runCase(
+    "API-104 apply failure keeps resolved=false and retries to success; TUI-resolved record is skipped",
+    async () => {
+      fakeClient.replyCalls = [];
+      // ① 首轮 apply 失败（stub 抛错，如 permission 已被 TUI 处理）→ 不置位。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-r4", reply: "reject" }),
+        ),
+      );
+      fakeClient.replyError = new Error("permission already decided (404)");
+      const monitor = makeMonitor(async () => {});
+      const first = await monitor.scanReplyQueue();
+      if (first !== 0) {
+        throw new Error(`expected 0 applied on failure, got ${first}`);
+      }
+      let persisted = await findRecord("req-r4");
+      if (!persisted || persisted.resolved !== false) {
+        throw new Error(
+          `resolved must stay false after failed apply: ${JSON.stringify(persisted)}`,
+        );
+      }
+      // 下轮重试：stub 恢复成功 → resolved=true。
+      fakeClient.replyError = undefined;
+      const second = await monitor.scanReplyQueue();
+      if (second !== 1) {
+        throw new Error(`expected 1 applied on retry, got ${second}`);
+      }
+      persisted = await findRecord("req-r4");
+      if (!persisted || persisted.resolved !== true) {
+        throw new Error(
+          `resolved not true after retry success: ${JSON.stringify(persisted)}`,
+        );
+      }
+      if (fakeClient.replyCalls.length !== 2) {
+        throw new Error(
+          `expected 2 reply API calls total, got ${fakeClient.replyCalls.length}`,
+        );
+      }
+      await monitor.dispose();
+
+      // ② replied 事件路径先置位（markSessionResolved）→ 扫描器跳过不调 API。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-r5", reply: "always" }),
+        ),
+      );
+      await registry.mutate((reg) => markSessionResolved(reg, "req-r5"));
+      const callsBefore = fakeClient.replyCalls.length;
+      const monitor2 = makeMonitor(async () => {});
+      const third = await monitor2.scanReplyQueue();
+      if (third !== 0) {
+        throw new Error(`expected 0 applied for TUI-resolved, got ${third}`);
+      }
+      if (fakeClient.replyCalls.length !== callsBefore) {
+        throw new Error(
+          `reply API must not be called for already-resolved record`,
+        );
+      }
+      await monitor2.dispose();
     },
   );
 
