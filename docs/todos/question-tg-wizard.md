@@ -1,8 +1,8 @@
 # question 请求 TG 交互向导：选项按钮 + 自定义输入 + 持久化状态机
 
-> 状态: in-progress
+> 状态: completed
 > 创建: 2026-09-02
-> 当前轮次: Round 2（实机反馈修复轮）
+> 当前轮次: Round 2（已完成）
 > 关联文档: docs/modules/sessions-relay.md（§13 permission 闭环 + 本轮新增 §14 question 向导契约，doc-prep 冻结）
 
 ## 背景
@@ -349,7 +349,7 @@ scanSessionQueue/handleCallback/format.ts。
    按钮仍可用（状态在盘上）；另对 sendRichMessage 响应做防御性多形态 message_id 解析 +
    诊断日志。
 
-### Phase 2.1: 消费端 API 通道修复 ⬜
+### Phase 2.1: 消费端 API 通道修复 ✅
 
 **目标**: applyQuestionReply/applyQuestionReject 改走可达通道（分层策略），404 终态，
 q_msg_id 响应解析。
@@ -395,9 +395,16 @@ handleQuestionCallback/handleQuestionTextInput/scanSessionQueue。
 - [ ] `HOME=$(mktemp -d) bun tests/sessions-poller.test.mjs` 全绿（API-206 + API-205 改判 + 既有回归）
 - [ ] `node scripts/build.mjs` exit 0
 
-**实现记录**: （待填）
+**实现记录**（2026-09-02，分支 `phase-r2-p2.1`，SHA `e73859d`，merge `0be4012`）：
+- 全部验收达成：sessions-poller 45/45（API-206×4 + API-205×3 改判 + 全回归）+ 构建 exit 0。
+- 实现：`questionApplyChannel` 实例缓存 + `questionApply(kind, record)` 共用循环（404 立即终态
+  不再降级）+ `questionChannels`（①typeof 扁平检查）+ 通道②③走 `(client as any)._client.post`；
+  `isQuestionNotFoundError`（status/statusCode===404 或 name 含 404/QuestionNotFound/SessionNotFound）；
+  sendMessageWithKeyboard 三形态 message_id 解析 + 首次 dline 记录响应键名。
+- **观察点（实机冒烟验证）**：errorCategory 只返回 error.name——若真实 SDK 404 以 message 形态
+  出现（name 不含 404），终态不触发、日志持续「will retry」，届时需扩展判定检查 message 原文。
 
-### Phase 2.2: 交互修复（Custom 恒显示 + 汇总 Prev + 输入兜底） ⬜
+### Phase 2.2: 交互修复（Custom 恒显示 + 汇总 Prev + 输入兜底） ✅
 
 **目标**: ✏️ Custom 每题恒显示；总结阶段加 ⬅️ Prev；自定义输入后无 q_msg_id 时发新向导消息。
 **契约**: docs/modules/sessions-relay.md §14.8.4（Custom 恒显示，supersede §14.2.1 custom 行
@@ -436,12 +443,26 @@ handleQuestionCallback/handleQuestionTextInput/scanSessionQueue。
 - [ ] `HOME=$(mktemp -d) bun tests/sessions-poller.test.mjs` 全绿（API-207 + API-203-4 改判 + 既有回归）
 - [ ] `node scripts/build.mjs` exit 0
 
-**实现记录**: （待填）
+**实现记录**（2026-09-02，分支 `phase-r2-p2.2`，SHA `7fd9430`，merge `55f1f58`）：
+- 全部验收达成：sessions-poller 45/45（API-207×4 + API-203-4 改判 + 全回归）+ 构建 exit 0。
+- 契约核验补充：API-201-2/API-202-8 的键盘**行数断言**因 Custom 恒显示需 +1（2→3 行，
+  cancelRow/submitRow 索引 1→2）——契约 §14.8.7 原判「不受影响」不准确，已最小修正并注明。
+- 单问题兜底发送：`sendMessageWithKeyboard(text, undefined as unknown as TelegramInlineKeyboard)`
+  ——reply_markup: undefined 经 JSON.stringify 自然忽略（等效无键盘），保留 message_id 返回。
+- 汇总阶段键盘 = 单行 [⬅️ Prev] [✅ Submit] [❌ Cancel]（stage===length 时 current undefined
+  天然无选项/Custom 行）。
 
 ### Round 2 整体测试记录
 
-- 测试结论：（待填）
-- 失败摘要与根因归属：（待填）
+- 测试结论：【通过】（2026-09-02，main @ `55f1f58`）
+- 88 用例 + 构建链全绿：behavior 8/8 + sessions-poller 49/49（API-206×4 / API-207×4 新增 +
+  API-205×3 与 API-203-4 改判 + API-201-2/API-202-8 行数断言修正 + 全部既有回归）+
+  registry-sessions 20/20 + LOCK 5/5 + REDACT 3/3；BUILD-001 exit 0（140.64KB）+ BUILD-002 3/3。
+- 失败摘要与根因归属：无失败（测试编排过程中 T-03 一次派发层 subagent_type 拼写事故重派，
+  非业务失败）。
+- 残余风险：① 真实 SDK 404 错误形态（name vs message）决定终态判定是否触发——实机冒烟观察
+  tgdiag.log；② 真实 TG 端到端由用户按 Round 2 部署清单人工冒烟（重点：**重启所有 opencode
+  窗口**，否则消费端不应用）。
 
 ### 部署清单（Round 2 修复后，用户手工执行——重点变化）
 
@@ -492,3 +513,23 @@ handleQuestionCallback/handleQuestionTextInput/scanSessionQueue。
   实现记录的「两处调用 + stub 名」同步修正）。
 - **遗留事项**：① SDK 签名实机确认（上述）；② 向导无超时回收（记录未答永远挂在盘上，TUI 侧
   仍可答——双路径保留）；③ 3 个 real-*.test.mjs 诊断测试未入库（维持历轮决策）。
+
+## 交付总结（Round 2 追加，2026-09-02）
+
+- **Round 2**（实机反馈修复）：1 轮通过。三个问题根因——① 真实 payload 从不带 custom:true
+  （Custom 按钮恒不出现）；② 汇总键盘缺 Prev；③ 运行时扁平客户端无任何 question 方法
+  （Phase 1.4 推测方法名必然 not-a-function，实证自最新 npm + 本机 SDK）+ 部署偏差（session
+  所属实例跑旧插件无消费逻辑，16:24 卡住记录的直接原因）。
+- **修复内容**：2.1 消费端分层调用通道（①扁平 typeof 检查 ②`(client)._client.post` v2 会话
+  路由 `/api/session/{sessionID}/question/{requestID}/reply`（body 顶层 `{answers}`）③v2 全局
+  路由 + query directory，实例级缓存已成功策略）+ 404 终态 + sendRichMessage message_id 三形态
+  解析与诊断日志；2.2 Custom 恒显示 + 汇总 [⬅️ Prev] + 无 q_msg_id 发新向导消息兜底。
+- **提交链（Round 2）**：`301b20e`（docs 冻结）→ `e73859d`/`0be4012`（2.1）→ `7fd9430`/
+  `55f1f58`（2.2 merge，最终 HEAD）。
+- **最终整体测试（Round 2）**：88 用例 + 构建链全绿（sessions-poller 49/49 含全部改判与新用例）。
+- **待用户执行**：Round 2 部署清单——**必须关闭并重启所有 opencode 窗口**（不只 poller 所在
+  窗口，消费端跑在 session 所属实例上）；实机冒烟重点：提交后 TUI 侧 question 工具真实收到
+  答案并继续执行，若仍不动回报 tgdiag.log「Question reply apply failed」告警（顺带观察 404
+  错误形态——终态判定依赖 name/status 形态）。
+- **遗留事项（Round 2 后）**：① 404 错误形态实机观察点；② 向导无超时回收；③ real-*.test.mjs
+  未入库。
