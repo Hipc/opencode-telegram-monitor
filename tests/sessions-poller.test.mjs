@@ -2707,9 +2707,10 @@ ${expectedResultLine}`) ||
     },
   );
 
-  // API-203-3：/cancel 命令清除全部 q_input + 确认文案；无输入态纯文本静默。
+  // API-203-3：/cancel 命令逐条取消待输入记录（新文案 + 清 q_input + 重渲染）；
+  // 无 pending 再次 /cancel 静默；无输入态纯文本静默。
   await runCase(
-    "API-203-3 /cancel clears all q_input and confirms; plain text without pending input is silent",
+    "API-203-3 /cancel cancels pending inputs with new format and stays silent when idle; plain text without pending input is silent",
     async () => {
       const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
       const sent = [];
@@ -2740,35 +2741,85 @@ ${expectedResultLine}`) ||
         if (sent.length !== 0) {
           throw new Error(`no confirmation expected for idle text: ${JSON.stringify(sent)}`);
         }
-        // 再建两条 q_input 待输入记录，/cancel → 全部清除（键删除）＋ 确认文案。
+        // 再建两条 q_input 待输入记录，/cancel → 全部清除 ＋ 逐条发送取消消息 ＋ 重渲染。
         await registry.mutate((reg) => {
           let next = reg;
           next = appendSessionRecord(next, root, questionWizardRecord("req-203c", [
-            { question: "Q", options: [], custom: true },
-          ], { q_input: 0 }));
+            { question: "Q1", options: [], custom: true },
+          ], { q_input: 0, q_msg_id: 1001 }));
           return appendSessionRecord(next, root, questionWizardRecord("req-203d", [
-            { question: "Q", options: [], custom: true },
-          ], { q_input: 1 }));
+            { question: "Q1", options: [], custom: true },
+            { question: "Q2", options: [], custom: true },
+          ], { q_input: 1, q_msg_id: 1002 }));
         });
-        // 注意：必须先 handleTelegramUpdate 再 dispose（enqueueMessage 在
-        // disposed 后短路）。
-        await monitor.handleTelegramUpdate({
-          update_id: 2,
-          message: {
-            message_id: 102,
-            text: "/cancel",
-            from: { id: 123 },
-            chat: { id: 123, type: "private" },
-          },
-        });
+        const cancelFetches = [];
+        await stubFetch(cancelFetches);
+        try {
+          await monitor.handleTelegramUpdate({
+            update_id: 2,
+            message: {
+              message_id: 102,
+              text: "/cancel",
+              from: { id: 123 },
+              chat: { id: 123, type: "private" },
+            },
+          });
+        } finally {
+          restoreFetch();
+        }
+        await monitor.sendTail;
+        // ① sent 收到 2 条取消消息，逐条为 `${projectLabel} 的 {label} 输入被取消`
+        if (sent.length !== 2) {
+          throw new Error(`expected 2 cancel messages, got: ${JSON.stringify(sent)}`);
+        }
+        if (!sent[0].includes("project 的 Q1 输入被取消") || !sent[1].includes("project 的 Q2 输入被取消")) {
+          throw new Error(`cancel messages mismatch: ${JSON.stringify(sent)}`);
+        }
+        // ② 两条 q_input 全清（盘上 findRecord 断言）
         const c = await findRecord("req-203c");
         const d = await findRecord("req-203d");
-        if ((c && c.q_input !== undefined) || (d && d.q_input !== undefined)) {
+        if ((c && c.q_input != null) || (d && d.q_input != null)) {
           throw new Error(`/cancel must clear all q_input: ${JSON.stringify({ c, d })}`);
         }
-        await monitor.dispose();
-        if (!sent.join(" ").includes("已取消输入模式")) {
-          throw new Error(`/cancel confirmation missing: ${JSON.stringify(sent)}`);
+        // ③ ≥2 条 editMessageText 重渲染（text 不含输入提示行、keyboard 保留）
+        const edits = cancelFetches.filter((call) => call.url.includes("editMessageText"));
+        if (edits.length < 2) {
+          throw new Error(`expected at least 2 edits, got: ${JSON.stringify(cancelFetches)}`);
+        }
+        for (const edit of edits) {
+          const text = edit.body.rich_message?.html ?? edit.body.text;
+          if (text.includes("✏️")) {
+            throw new Error(`re-rendered message must not include input hint: ${text}`);
+          }
+          if (!edit.body.reply_markup?.inline_keyboard) {
+            throw new Error(`re-rendered message must keep keyboard: ${JSON.stringify(edit.body)}`);
+          }
+        }
+        // ④ 再发一次 /cancel（现无 pending）→ 静默（sent 不增长、editCount 不增）
+        const secondCancelFetches = [];
+        await stubFetch(secondCancelFetches);
+        try {
+          await monitor.handleTelegramUpdate({
+            update_id: 3,
+            message: {
+              message_id: 103,
+              text: "/cancel",
+              from: { id: 123 },
+              chat: { id: 123, type: "private" },
+            },
+          });
+        } finally {
+          restoreFetch();
+        }
+        await monitor.sendTail;
+        if (sent.length !== 2) {
+          throw new Error(`sent must not grow on idle /cancel: ${JSON.stringify(sent)}`);
+        }
+        if (editCount(secondCancelFetches) !== 0) {
+          throw new Error(`editCount must not grow on idle /cancel: ${JSON.stringify(secondCancelFetches)}`);
+        }
+        if (sent.join(" ").includes("已取消输入模式")) {
+          throw new Error(`legacy confirmation text must not appear: ${JSON.stringify(sent)}`);
         }
       } finally {
         await registry.mutate((reg) => markSessionResolved(reg, "req-203c"));
@@ -3542,6 +3593,257 @@ ${expectedResultLine}`) ||
       } finally {
         restoreFetch();
         await registry.mutate((reg) => markSessionResolved(reg, requestId));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // ---- Round 1 (API-208) ----
+
+  // API-208-1：多记录取消主链路（契约 §14.9.5，决策 #3/#7）——A 待输入（无 header），
+  // 点 B Custom → A 的取消消息（问题正文兜底）+ A.q_input 清除 + A 消息编辑去输入提示行
+  // 键盘保留 + B.q_input=0 落盘 + B 弹窗新文案。
+  await runCase(
+    "API-208-1 entering custom on record B cancels pending custom input on record A",
+    async () => {
+      await registry.mutate((reg) => {
+        let next = reg;
+        next = appendSessionRecord(
+          next,
+          root,
+          questionWizardRecord("req-208a", [
+            { question: "问题正文A", options: [{ label: "选项A" }] },
+          ], { q_input: 0, q_msg_id: 42 }),
+        );
+        return appendSessionRecord(
+          next,
+          root,
+          questionWizardRecord("req-208b", [
+            { question: "问题正文B", header: "头部B", options: [{ label: "选项B" }] },
+          ], { q_msg_id: 43 }),
+        );
+      });
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
+      try {
+        const fetches = await runQCallback(monitor, "otg:q:req-208b:custom");
+        await monitor.sendTail;
+
+        // ① sent 收到 A 的取消消息 `${projectLabel} 的 {A 问题正文} 输入被取消`
+        if (sent.length !== 1 || !sent[0].includes("project 的 问题正文A 输入被取消")) {
+          throw new Error(`expected cancel message for A: ${JSON.stringify(sent)}`);
+        }
+        // ② A.q_input 清除（盘上）
+        const a = await findRecord("req-208a");
+        if (a && a.q_input != null) {
+          throw new Error(`A.q_input must be cleared: ${JSON.stringify(a)}`);
+        }
+        // ③ fetches 含 A 的 editMessageText（message_id === 42、text 不含输入提示行、keyboard 保留）
+        const aEdit = fetches.find(
+          (call) => call.url.includes("editMessageText") && call.body.message_id === 42,
+        );
+        if (!aEdit) {
+          throw new Error(`A message edit expected for message_id 42: ${JSON.stringify(fetches)}`);
+        }
+        const aText = aEdit.body.rich_message?.html ?? aEdit.body.text;
+        if (aText.includes("✏️")) {
+          throw new Error(`A edit must not include input hint: ${aText}`);
+        }
+        if (!aEdit.body.reply_markup?.inline_keyboard) {
+          throw new Error(`A edit must keep keyboard: ${JSON.stringify(aEdit.body)}`);
+        }
+        // ④ B.q_input === 0（盘上）+ B 弹窗为新文案
+        const b = await findRecord("req-208b");
+        if (!b || b.q_input !== 0) {
+          throw new Error(`B.q_input must be 0: ${JSON.stringify(b)}`);
+        }
+        const ans = answersOf(fetches);
+        if (
+          ans.length !== 1 ||
+          ans[0].body.text !== "请输入 project 的 头部B 答案，如果放弃输入请输入 /cancel"
+        ) {
+          throw new Error(`B custom toast mismatch: ${JSON.stringify(ans)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-208a"));
+        await registry.mutate((reg) => markSessionResolved(reg, "req-208b"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-208-2：失效静默（契约 §14.9.5，决策 #6）——A 残留 q_input 但已 resolved，
+  // 点 B Custom → 无取消消息 + A.q_input 静默清 + B 正常进入输入模式。
+  await runCase(
+    "API-208-2 resolved question with residual q_input is silently cleared without cancel message",
+    async () => {
+      await registry.mutate((reg) => {
+        let next = reg;
+        next = appendSessionRecord(
+          next,
+          root,
+          questionWizardRecord("req-208c", [
+            { question: "失效问题C", options: [] },
+          ], { q_input: 0, resolved: true, q_msg_id: 44 }),
+        );
+        return appendSessionRecord(
+          next,
+          root,
+          questionWizardRecord("req-208d", [
+            { question: "活问题D", header: "头部D", options: [] },
+          ], { q_msg_id: 45 }),
+        );
+      });
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
+      try {
+        const fetches = await runQCallback(monitor, "otg:q:req-208d:custom");
+        await monitor.sendTail;
+
+        // ① sent 为空（无取消消息，A 失效静默）
+        if (sent.length !== 0) {
+          throw new Error(`expected no cancel message for resolved record: ${JSON.stringify(sent)}`);
+        }
+        // ② A.q_input 清除（盘上）
+        const a = await findRecord("req-208c");
+        if (a && a.q_input != null) {
+          throw new Error(`A.q_input must be cleared silently: ${JSON.stringify(a)}`);
+        }
+        // ③ B.q_input === 0 + B 弹窗新文案
+        const b = await findRecord("req-208d");
+        if (!b || b.q_input !== 0) {
+          throw new Error(`B.q_input must be 0: ${JSON.stringify(b)}`);
+        }
+        const ans = answersOf(fetches);
+        if (
+          ans.length !== 1 ||
+          ans[0].body.text !== "请输入 project 的 头部D 答案，如果放弃输入请输入 /cancel"
+        ) {
+          throw new Error(`B custom toast mismatch: ${JSON.stringify(ans)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-208c"));
+        await registry.mutate((reg) => markSessionResolved(reg, "req-208d"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-208-3：同记录幂等（契约 §14.9.5，决策 #5）——单条记录连续两次点 Custom，
+  // exclude 自己不取消，q_input 不被清，第二次仍发弹窗提示。
+  await runCase(
+    "API-208-3 repeated custom click on the same record is idempotent and does not cancel itself",
+    async () => {
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord("req-208e", [
+            { question: "问题E", header: "头部E", options: [{ label: "选项E" }] },
+          ], { q_msg_id: 46 }),
+        ),
+      );
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
+      try {
+        const fetches1 = await runQCallback(monitor, "otg:q:req-208e:custom");
+        const fetches2 = await runQCallback(monitor, "otg:q:req-208e:custom");
+        await monitor.sendTail;
+
+        // ① sent 为空（exclude 自己不取消）
+        if (sent.length !== 0) {
+          throw new Error(`expected no cancel message on idempotent custom click: ${JSON.stringify(sent)}`);
+        }
+        // ② q_input 不被清（两次后仍为原值 0）
+        const rec = await findRecord("req-208e");
+        if (!rec || rec.q_input !== 0) {
+          throw new Error(`q_input must stay 0: ${JSON.stringify(rec)}`);
+        }
+        // ③ 第二次仍发弹窗提示（answerCallbackQuery 恰 2 条）
+        const ans1 = answersOf(fetches1);
+        const ans2 = answersOf(fetches2);
+        if (ans1.length !== 1 || ans2.length !== 1) {
+          throw new Error(`expected 1 toast per click: ${JSON.stringify({ ans1, ans2 })}`);
+        }
+        if (ans2[0].body.text !== "请输入 project 的 头部E 答案，如果放弃输入请输入 /cancel") {
+          throw new Error(`second toast text mismatch: ${JSON.stringify(ans2)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-208e"));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // API-208-4：/cancel 无 pending 静默 + 失效残留静默清（契约 §14.9.5，决策 #4）——
+  // 一条 resolved: true 但 q_input 残留 + 一条无 q_input，/cancel → 静默且失效残留被清。
+  await runCase(
+    "API-208-4 /cancel with no active pending input is silent and silently clears stale input",
+    async () => {
+      await registry.mutate((reg) => {
+        let next = reg;
+        next = appendSessionRecord(
+          next,
+          root,
+          questionWizardRecord("req-208f", [
+            { question: "失效F", options: [] },
+          ], { q_input: 0, resolved: true, q_msg_id: 47 }),
+        );
+        return appendSessionRecord(
+          next,
+          root,
+          questionWizardRecord("req-208g", [
+            { question: "无输入G", options: [] },
+          ], { q_msg_id: 48 }),
+        );
+      });
+      const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
+      try {
+        const fetches = [];
+        await stubFetch(fetches);
+        try {
+          await monitor.handleTelegramUpdate({
+            update_id: 1,
+            message: {
+              message_id: 201,
+              text: "/cancel",
+              from: { id: 123 },
+              chat: { id: 123, type: "private" },
+            },
+          });
+        } finally {
+          restoreFetch();
+        }
+        await monitor.sendTail;
+
+        // ① sent 为空、editCount === 0（无活取消静默）
+        if (sent.length !== 0) {
+          throw new Error(`expected no messages on idle /cancel: ${JSON.stringify(sent)}`);
+        }
+        if (editCount(fetches) !== 0) {
+          throw new Error(`expected no edits on idle /cancel: ${JSON.stringify(fetches)}`);
+        }
+        // ② 失效残留 q_input 被静默清（盘上）
+        const f = await findRecord("req-208f");
+        if (f && f.q_input != null) {
+          throw new Error(`stale q_input must be cleared: ${JSON.stringify(f)}`);
+        }
+      } finally {
+        await registry.mutate((reg) => markSessionResolved(reg, "req-208f"));
+        await registry.mutate((reg) => markSessionResolved(reg, "req-208g"));
         await monitor.dispose();
       }
     },
