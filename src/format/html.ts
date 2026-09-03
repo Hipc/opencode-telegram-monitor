@@ -1,11 +1,14 @@
 /**
- * Build a compact two-column Rich-Message table out of field rows. The
- * `compact` attribute keeps cell indents small so rows do not waste height;
- * label/value cells size themselves to the content, so long values wrap
- * inside their own cell instead of running back to the left margin.
+ * Build a bordered two-column Rich-Message table out of field rows. The
+ * `bordered compact` attributes give the table native Telegram grid borders
+ * (feat/bordered-rich-tables) while keeping cell indents small so rows do not
+ * waste height; label/value cells size themselves to the content, so long
+ * values wrap inside their own cell instead of running back to the left
+ * margin. All field-table consumers share this single exit point, so the
+ * presentation choice is global by construction.
  */
 export function fieldTable(rows: string[]): string {
-  return `<table compact>${rows.join("")}</table>`;
+  return `<table bordered compact>${rows.join("")}</table>`;
 }
 
 /**
