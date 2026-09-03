@@ -343,6 +343,12 @@ export function markSessionSent(
 | 本文件 §14.3.1（editQuestionWizardMessage 终态编辑） | 终态文本 = `${message.text ?? ""} + 结果行`（callback.message.text 依赖）；wire 形态 = 官方 `editMessageText` | **Round 5 supersede**：终态文本 = 当前阶段服务器侧重渲染 + 结果行（§15.4，与纯文本输入路径同源）；wire 形态统一走 `richEditMessage`（§15.3）探针赢家形态；重渲染/键盘两态不变 |
 | 本文件 §13.5/§14.3.1 编辑 wire 形态 + editMenuMessage | 三条编辑路径各自 `telegramWithRetry("editMessageText", { chat_id, message_id, text, reply_markup? })` | **Round 5 supersede**：三条路径全部迁移到统一 `richEditMessage`（§15.3）；wire 形态 = probe gate 赢家（§15.2，候选 A 对称 `editRichMessage`+`rich_message.html` 优先）；menu 刷新 `<p>` 泄漏随富文本载体修复（§15.1/§15.3） |
 | 本文件 §8/§13.9/§14.5 测试编号 | API-001~207 / REG-101~301 / REDACT / LOCK / BUILD；real 探针 E2E-20x | **Round 5 新增** REAL-RICH-EDIT-001~005（探针，§15.2）与 API-301~304（编辑统一形态/终态文本源/菜单/menu/首发达标回归，§15.5） |
+| 本文件 §14.3.1 custom 动作文案 | custom 弹窗 = `直接回复文本作为答案，/cancel 取消`（纯文本 toast） | **Round 1（question-custom-input-ux）supersede**：弹窗文案改为 `请输入 {project} 的 {question} 答案，如果放弃输入请输入 /cancel`（questionInputPromptText，外层 safeText 200 截断；§14.9.1） |
+| 本文件 §14.2.1 输入模式提示行 | `fieldRow("输入", "✏️ 回复文本作为答案，/cancel 取消")` | **Round 1 supersede**：`fieldRow("输入", \`✏️ ${questionInputPromptText(projectLabel, current, ctx)}\`)`（§14.9.1；✏️ 前缀保留在值内） |
+| 本文件 §14.3.2 第 5 步 /cancel | `clearQuestionInputs` 一锅端 + 无条件发「已取消输入模式」 | **Round 1 supersede**：逐条取消新格式（cancelPendingQuestionInputs，§14.9.2）+ 无活取消时静默（§14.9.3）；`clearQuestionInputs` 保留不删（REG-301 仍测）但 monitor 不再调用 |
+| 本文件 §14.3.3 文案表 custom 行 / §14.8.4 中文案行 | 均为 `直接回复文本作为答案，/cancel 取消` | **Round 1 supersede**：升级为 questionInputPromptText 新文案（§14.9.1）；custom 恒显示语义不变（§14.8.4 其余保持） |
+| 本文件 §8/§13.9/§14.5/§14.8.7 测试编号 | API-001~207 / API-301~304 / REG / REDACT / LOCK / BUILD | **Round 1 新增** API-208-1~4（§14.9.5）与 API-203-1/3/4 改判（§14.9.5）；维护归属见 §14.9.5 |
+| 本文件 §14.6/§14.8 编辑区间 | Round 4 / Round 2 区间划分 | Round 1 区间以 §14.9.6 为准（1.1/1.2 严格顺序：批次 A → 批次 B） |
 
 ## 12. 变更记录
 
@@ -404,6 +410,16 @@ export function markSessionSent(
   （logWarn + errorCategory 脱敏 + 不抛错）与键盘两态不变；测试编号 API-301~304 与既有
   `editMessageText` 断言最小改判锚点（§15.5）；编辑区间单 phase 零交集（§15.6）。
   supersede 记录见 §11。
+- 2026-09-03 冻结（Round 1 / question-custom-input-ux，见 §14.9）：question Custom 输入提示
+  两点增强——① 提示带标识：format.ts 新增 3 个导出纯函数 questionLabel（header trim 非空直用，
+  否则问题正文 safeTextKeepPaths 60 截断兜底，截断加 ASCII `...`）/ questionInputPromptText /
+  questionInputCancelledText，弹窗（safeText 200 截断）与向导提示行（`✏️ ` 前缀保留）接入新模板
+  （§14.9.1，supersede §14.2.1/§14.3.1/§14.3.3/§14.8.4 文案行）；② 单活输入模式：新私有方法
+  cancelPendingQuestionInputs（点新 Custom 自动取消旧待输入——失效残留静默清、活记录发取消消息 +
+  清 q_input + renderQuestionStage 重渲染回正常视图，§14.9.2）+ /cancel 重写为逐条取消新格式、
+  无活取消静默（§14.9.3，supersede §14.3.2 第 5 步；clearQuestionInputs 保留不删但 monitor 不再
+  调用）+ rebuildQuestionState 三处状态重建去重（§14.9.4）；测试 API-203-1/3/4 改判 + API-208-1~4
+  新增（§14.9.5）；编辑区间 1.1/1.2 严格顺序批次 A → 批次 B（§14.9.6）。supersede 记录见 §11。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
 
@@ -1363,6 +1379,259 @@ private questionApplyChannel?: 1 | 2 | 3 | undefined; // 实例级缓存：某�
 - 既有断言不受影响核验：API-201-1 的 custom 行断言为正向（Q1 构造 custom:true），恒显示后仍成立；
   API-202-1 总结键盘断言用 `some()` 非硬编码行数，加 Prev 后仍成立；API-201-2/3/4 无 custom/总结断言。
 - 用例纪律（§14.5 沿用）：终态 = resolved=true 或 send=true；不得遗留 q_answers/q_reject 未闭环记录。
+
+### 14.9 Round 1 修订：question Custom 输入提示增强（单活输入模式 + 提示带项目/问题标识）（冻结 2026-09-03）
+
+> 计划: docs/todos/question-custom-input-ux.md（其 Round 1；本模块契约 §14 的修订段，紧跟 §14.8 顺延）。
+> 批次 A = [1.1（文案模板层）] → 批次 B = [1.2（单活取消 + /cancel 统一）]（**1.2 依赖 1.1 的
+> format.ts 新导出函数 questionInputCancelledText，须 1.1 合并后开始**）。
+> 两点增强（用户 grilling 确认）：① Custom 提示（弹窗 toast + 向导消息提示行两处）带项目名/问题
+> 标识——`请输入 <project> 的 <question> 答案，如果放弃输入请输入 /cancel`；② **单活输入模式**——
+> 点新 Custom 自动取消旧待输入（发取消消息 + 清旧 q_input + 旧向导消息重渲染回正常视图），
+> /cancel 统一逐条取消新格式、无待输入时静默。
+> 本小节 supersede/修订 §14.2.1（输入模式提示行）/§14.3.1（custom 动作文案）/§14.3.2（第 5 步
+> /cancel）/§14.3.3（文案表 custom 行）/§14.8.4（中文案行）相应条款，supersede 总表见 §11。
+
+#### 14.9.1 文案模板与纯函数（Phase 1.1 冻结）
+
+`src/format/format.ts` 新增 3 个**导出纯函数**（barrel `export *` 自动透出；`safeTextKeepPaths`
+已在 format.ts 内 import，format.ts:33 `import { safeText, safeTextKeepPaths } from "./redact"`——
+函数内部直接调用，无需新 import）：
+
+```ts
+// 问题标识：header trim 后非空 → 返回 trim 后的 header；否则问题正文
+// safeTextKeepPaths 截断 60 兜底。question 可 undefined（防御：取消路径解析
+// 失败/越界时仍要发取消消息，label 兜底为空串）。
+export function questionLabel(
+  question: QuestionV2Info | undefined,
+  ctx: FormatContext,
+): string
+
+// 进入输入模式提示文案（弹窗 toast 与向导消息提示行共用）：
+// `请输入 ${projectLabel} 的 ${questionLabel(question, ctx)} 答案，如果放弃输入请输入 /cancel`
+export function questionInputPromptText(
+  projectLabel: string,
+  question: QuestionV2Info, // 调用点（custom 分支）已有 current 判空守卫，可非空
+  ctx: FormatContext,
+): string
+
+// 输入被取消文案（取消旧待输入时经 enqueueMessage + paragraph 发送）：
+// `${projectLabel} 的 ${questionLabel(question, ctx)} 输入被取消`
+// question 可 undefined（防御，见 questionLabel）
+export function questionInputCancelledText(
+  projectLabel: string,
+  question: QuestionV2Info | undefined,
+  ctx: FormatContext,
+): string
+```
+
+- **questionLabel 语义（冻结）**：
+  - `header = question?.header`；`typeof header === "string" && header.trim() !== ""` →
+    返回 `header.trim()`（trim 后直用，前后空白不进入消息模板）；
+  - 否则 → `safeTextKeepPaths(question?.question ?? "", 60, ctx)`。
+  - **核验事实（截断形态）**：`safeTextKeepPaths` 截断走 `finishText`（redact.ts 69-75）——
+    空白折叠 + trim；超限 → `slice(0, limit - 3) + "..."`，追加 **ASCII 三个点 `...`**（不是 `…`）；
+    未超限 → 原样返回。密钥/token 脱敏链同 safeText，跳过三条路径类规则（保留真实路径，§13.12.1）。
+  - `question === undefined` → 走兜底路径返回 `safeTextKeepPaths("", 60, ctx)` = `""`（空 label，
+    取消消息仍照发——决策 #7 防御语义）。
+- **提示行形态（supersede §14.2.1「输入模式提示行」，buildQuestionStageText 373-375）**：
+  ```ts
+  if (inputPending) {
+    rows.push(fieldRow("输入", `✏️ ${questionInputPromptText(projectLabel, current, ctx)}`));
+  }
+  ```
+  ——`current = questions[stage]`（339 行）判空防御保留（无 current 不渲染提示行）；`✏️ ` 前缀
+  保留在 fieldRow 值内（决策 #1）。**buildQuestionStageText 无需加参数**（projectLabel/ctx 已在
+  作用域，§14.2.1 签名冻结不变）。
+- **弹窗形态（supersede §14.3.1 custom 动作文案 + §14.3.3 文案表 custom 行 + §14.8.4 中文案行，
+  monitor.ts custom 分支 3103-3107）**：
+  ```ts
+  await this.answerCallback(
+    callbackID,
+    safeText(questionInputPromptText(projectLabel, current, ctx), 200, ctx), // 外层 safeText 防御截断
+    false,
+  );
+  ```
+  ——Telegram answerCallbackQuery `text` 上限 **200 字符**，外层 `safeText(..., 200, ctx)` 兜底
+  （弹窗是纯文本不走 HTML，无需转义；safeText 的路径脱敏副作用可接受——提示行保留路径、弹窗
+  重脱敏，两者形态以本节为准）。
+  - **ctx 构造（核验事实）**：custom 分支位于 `handleQuestionCallback` 内，函数顶部已构造
+    `ctx`（monitor.ts 2903-2909：`{ root: this.root, botToken: this.config.botToken,
+    projectLabel: this.projectLabel, sessions: this.sessions, sessionInfo: this.sessionInfo }`）。
+    `safeText`/`safeTextKeepPaths` 只读 `RedactionContext` 字段（root/botToken），`ctx.projectLabel`
+    字段不参与脱敏；`projectLabel` 标识本身以**参数**传入 questionInputPromptText（与 ctx.projectLabel
+    无关）——**直接复用函数顶部 ctx 即可**；如需 per-record ctx，按 questionStageText 现场同法
+    （monitor.ts 3228-3234：`{ root, botToken, projectLabel, sessions, sessionInfo }`）构造，两者等价。
+- **取消消息通道（§14.9.2 消费）**：`enqueueMessage(paragraph(text))`——paragraph 内部
+  escapeHtml 自动转义（HTML 安全，无需手工转义）；enqueueMessage → `sendMessage`（tests 以
+  `monitor.sendMessage` stub 捕获 `sent` 数组断言）。
+- **两 phase 共用（1.2 依赖 1.1 的接口点）**：`questionInputCancelledText` 由 Phase 1.2 的
+  cancelPendingQuestionInputs 调用；monitor.ts import 块（49-88 区，字母序）由 Phase 1.1 追加
+  `questionInputCancelledText` / `questionInputPromptText` / `questionLabel` 三个导出名。
+
+#### 14.9.2 单活取消：cancelPendingQuestionInputs（Phase 1.2 冻结）
+
+```ts
+private async cancelPendingQuestionInputs(
+  excludeRequestID?: string, // 排除自己（同记录重复点 Custom 幂等刷新不取消，决策 #5）
+): Promise<number>           // 返回实际发出取消消息的条数（活记录数；失效静默清与 mutate 未命中不计）
+```
+
+**行为规格（完整，冻结）**：
+
+1. `registry.read()` → **全局线性扫描**全部条目全部 sessions（顺序 = projects 数组序 +
+   sessions 数组序，与 handleQuestionCallback/handleQuestionTextInput 同款），匹配条件
+   `record.type === "question" && record.q_input != null && record.request_id !== excludeRequestID`。
+2. 每条匹配记录分类处理（per-record `projectLabel = basename(entry.path) || this.projectLabel`
+   ——与现有各扫描点 1918/2332/2918 同款）：
+   - **失效记录**（`resolved === true || q_answers != null || q_reject === true`）→ **仅静默**
+     `await this.registry.mutate((rec) => setQuestionInput(rec, record.request_id, null))`
+     （决策 #6）；**不发消息、不重渲染、不计数**。
+   - **活记录**：
+     a. `await this.registry.mutate((rec) => setQuestionInput(rec, record.request_id, null))`
+        ——清 q_input（草稿保留、向导仍可用，决策 #3）；**返回 undefined → logWarn + 跳过本条**
+        （并发已清理/无匹配防御，不发消息不计数，与 handleQuestionCallback 的 undefined 防御同款）；
+     b. `const questions = this.parseQuestionPayload(record.message)`（monitor.ts 3194-3214，
+        解析失败返回 undefined）；
+     c. `enqueueMessage(paragraph(questionInputCancelledText(projectLabel,
+        questions ? questions[record.q_input] : undefined, ctx)))`——取消消息**照发**（决策 #7：
+        解析失败也发，label 兜底空串）；`questions[record.q_input]` 越界/缺题 → undefined →
+        label 兜底空串（防御）；
+     d. **parseQuestionPayload 成功 且 `record.q_msg_id` 存在（number）** →
+        `await this.renderQuestionStage(record, projectLabel, record.request_id, questions,
+        stage, draft, false, this.config.chatId, record.q_msg_id)`——重渲染回正常阶段视图
+        （inputPending=false 去输入提示行、键盘保留，决策 #3）；`stage`/`draft` 来自
+        `this.rebuildQuestionState(record, questions)`（§14.9.4，第三处使用点）；
+     e. 解析失败 或 `q_msg_id` 缺失 → **跳过重渲染**（取消消息本身已是提示，决策 #7）；
+     f. `count += 1`。
+   - ctx：每记录按 questionStageText 同法（3228-3234）构造（root/botToken/projectLabel(per-record)/
+     sessions/sessionInfo），或以 per-record projectLabel 传入参数（safeText 系只读 root/botToken，
+     任选其一，行为等价）。
+3. `return count`。
+
+**调用点（custom 分支前置，Phase 1.2 地盘）**：custom 分支（3090-3120）在
+`setQuestionInput(rec, requestID, stage)`（3096-3098）**之前**插入
+`await this.cancelPendingQuestionInputs(requestID)`（排除自己 = 幂等刷新不取消，决策 #5）；
+随后原流程不变（setQuestionInput → 弹窗新文案（§14.9.1）→ renderQuestionStage inputPending=true）。
+
+#### 14.9.3 /cancel 新语义（supersede §14.3.2 第 5 步 /cancel，Phase 1.2 冻结）
+
+- `/cancel` 分支（2291-2296）重写为：
+  ```ts
+  case "cancel":
+    await this.cancelPendingQuestionInputs(); // 不排除任何记录（exclude=undefined）
+    return;
+  ```
+- **无活取消（返回 0）→ 静默**：不再发「已取消输入模式」确认消息、不调用 clearQuestionInputs
+  （决策 #4）。失效残留记录被静默清不计入返回，亦无任何消息。
+- **有活取消**：取消消息已由 cancelPendingQuestionInputs 逐条发出（§14.9.2 步骤 2c），本分支
+  不追加任何消息。
+- `clearQuestionInputs`（registry/index.ts 500-520）**保留不删**（REG-301 仍测它），monitor
+  **不再调用**——registry import 块中的 `clearQuestionInputs`（monitor.ts:92）由 Phase 1.2
+  移除（避免 unused import；bun build 不报错，但按整洁移除）。
+
+#### 14.9.4 rebuildQuestionState（Phase 1.2 冻结）
+
+```ts
+private rebuildQuestionState(
+  record: SessionRecord,
+  questions: Array<QuestionV2Info>,
+): { draft: Array<Array<string>>; stage: number }
+```
+
+- 语义（与现有内联**逐字等价**，冻结）：
+  ```ts
+  const rawDraft = record.q_draft ?? [];
+  const draft = questions.map((_, index) =>
+    Array.isArray(rawDraft[index]) ? [...rawDraft[index]!] : [],
+  );
+  const stage =
+    typeof record.q_stage === "number"
+      ? Math.min(Math.max(record.q_stage, 0), questions.length) // 钳制 0..length（=length 总结阶段）
+      : 0;
+  return { draft, stage };
+  ```
+- **替换三处**：
+  1. `handleQuestionCallback`（现 2953-2960：draft 2953-2956、stage 2957-2960）→
+     `const { draft, stage } = this.rebuildQuestionState(record, questions);`（逐字等价，行为不变）；
+  2. `handleQuestionTextInput`（现 2362-2365）→ `const { draft } = this.rebuildQuestionState(
+     record, questions);`（该路径不用 stage，只解构 draft；等价重构）；
+  3. `cancelPendingQuestionInputs` 重渲染（§14.9.2 步骤 2d，第三处使用）。
+- 放置：handleQuestionCallback 近旁（q 辅助方法区，与 cancelPendingQuestionInputs 相邻）。
+
+#### 14.9.5 测试编号与锚点契约（supersede §14.5/§14.8.7 新增编号，Phase 1.1/1.2 冻结）
+
+测试文件 `tests/sessions-poller.test.mjs`（当前 3555 行）。
+
+**测试 projectLabel 核验事实**：`root = join(baseDir, "project")`（100 行）→
+`basename(root) = "project"` = monitor.projectLabel（monitor.ts:176 `basename(this.root) || this.root`）；
+各扫描点 `basename(entry.path) || this.projectLabel` 亦恒为 `"project"`——**断言可硬编码字面量
+`"project"`**。测试 import 区（第 21 行 `join` from node:path，未 import basename）**不改**
+（避免两 phase 共改该行）。
+
+**API-203-1/4 改判（Phase 1.1 独占，冻结）**：
+- API-203-1（2556-2643）：Q1 questions **增加 `header` 字段**（如 `header: "补充说明头"`，label =
+  header 直用）；弹窗断言（2587-2590）改为插值模板
+  `请输入 project 的 补充说明头 答案，如果放弃输入请输入 /cancel`；提示行断言（2591-2594）改为含
+  `✏️ 请输入 project 的 补充说明头 答案，如果放弃输入请输入 /cancel`；键盘保留断言（2595-2597）
+  不变；draft/q_input/q_stage 落盘断言不变。改判于任务报告注明（§14.5 最小修正规则沿用）。
+- API-203-4（2780-2822）：弹窗（2800-2805）与提示行（2807-2809）断言同 API-203-1 改判
+  （custom 恒可用语义不变；questions 需加 header）。
+
+**API-203-3 改写（Phase 1.2 独占，冻结，2709-2778）**：
+- 保留：part 1「无输入态纯文本静默」（2736-2741：editCount===0、sent 为空）。
+- 改写主链路：两条待输入记录（req-203c/req-203d，q_input 分别为 0/1，**各加 q_msg_id** 以断言
+  重渲染；questions 无 header → label = 问题正文兜底短文本）→ /cancel → ① sent 收到 2 条取消消息，
+  逐条为 `${projectLabel} 的 {label} 输入被取消`；② 两条 q_input 全清（盘上 findRecord 断言）；
+  ③ ≥2 条 editMessageText 重渲染（text 不含输入提示行、keyboard 保留）；④ **再发一次 /cancel
+  （现无 pending）→ 静默**（sent 不增长、editCount 不增）——无 pending 静默语义（决策 #4）。
+- 移除：旧「已取消输入模式」确认断言（2768-2771）。
+
+**API-208-1~4 新增（Phase 1.2 独占，冻结；锚点：文件尾 API-304 用例收尾 `);`（3547）之后、
+`await rm(baseDir, ...)`（3549）之前，区块头 `// ---- Round 1 (API-208) ----`）**：
+
+| 编号 | 场景 | 前置 | 断言 |
+|---|---|---|---|
+| API-208-1 | 多记录取消主链路（决策 #3/#7） | A：`{ q_input: 0, q_msg_id: 42 }`、question **无 header**（取消消息 label = 问题正文兜底短文本）；B：另一条待输入记录（带 q_msg_id） | 点 B 的 ✏️ Custom（runQCallback）→ ① dispose 后 sent 收到 A 的取消消息 `${projectLabel} 的 {A 问题正文} 输入被取消`；② A.q_input 清除（盘上）；③ fetches 含 A 的 editMessageText（message_id === A.q_msg_id、text 不含输入提示行、keyboard 保留）；④ B.q_input === 0（盘上）+ B 弹窗（answerCallbackQuery）为 `请输入 project 的 {B label} 答案，如果放弃输入请输入 /cancel` |
+| API-208-2 | 失效静默（决策 #6） | A：`{ q_input: 0, resolved: true }`（残留）；B：正常待输入记录 | 点 B Custom → ① sent 为空（无取消消息，A 失效静默）；② A.q_input 清除（盘上）；③ B.q_input === 0 + B 弹窗新文案 |
+| API-208-3 | 同记录幂等（决策 #5） | 单条记录（q_msg_id 有） | 连续两次点同一记录 Custom → ① sent 为空（exclude 自己不取消）；② q_input 不被清（两次后仍为原值）；③ 第二次仍发弹窗提示（answerCallbackQuery 恰 2 条） |
+| API-208-4 | /cancel 无 pending 静默（决策 #4） | 一条 `resolved: true` 但 q_input 残留（失效）+ 一条无 q_input | /cancel → ① sent 为空、editCount === 0（无活取消静默）；② 失效残留 q_input 被静默清（盘上，不发消息不计入） |
+
+用例纪律（§14.5 沿用）：自包含 + 终态（resolved=true / send=true）；不得遗留
+q_answers/q_reject 未闭环记录；API-208 各用例 A/B 未到终态的在 finally 内 markSessionResolved 闭环。
+
+#### 14.9.6 编辑区间分配（supersede §14.6/§14.8 本轮范围，冻结；行号参考，以函数名界定）
+
+| Phase | 独占文件/区间（当前行号） | 内容 |
+|---|---|---|
+| 1.1 | `src/format/format.ts`（buildQuestionStageText 近旁 + 373-375） | 3 个新纯函数（§14.9.1）+ 提示行改用 promptText |
+| 1.1 | `src/monitor.ts` import 块（49-88 区，字母序） | 追加 questionLabel / questionInputPromptText / questionInputCancelledText |
+| 1.1 | `src/monitor.ts` custom 分支弹窗（3103-3107） | 文案改 questionInputPromptText + safeText 200 截断 |
+| 1.1 | `tests/sessions-poller.test.mjs` API-203-1（2565-2594）/ API-203-4（2791-2809） | questions 加 header + 弹窗/提示行断言改判 |
+| 1.2 | `src/monitor.ts` custom 分支前置（3096 setQuestionInput 之前） | `await this.cancelPendingQuestionInputs(requestID)` |
+| 1.2 | `src/monitor.ts` q 辅助方法区（handleQuestionCallback 近旁） | cancelPendingQuestionInputs + rebuildQuestionState 新增 |
+| 1.2 | `src/monitor.ts` handleQuestionCallback（2953-2960）/ handleQuestionTextInput（2362-2365） | 状态重建替换为 rebuildQuestionState 调用 |
+| 1.2 | `src/monitor.ts` /cancel 分支（2291-2296） | 重写为逐条取消 + 无 pending 静默 |
+| 1.2 | `src/monitor.ts` registry import 块（92） | 移除 clearQuestionInputs（不再调用） |
+| 1.2 | `tests/sessions-poller.test.mjs` API-203-3（2709-2778）+ 文件尾（3547/3549 间） | API-203-3 改写 + API-208-1~4 新增 |
+
+- 两 phase **严格顺序**（批次 A → 批次 B）：1.2 依赖 1.1 的 format.ts 新导出
+  （questionInputCancelledText），须 1.1 合并后开始；顺序执行下无并发冲突。
+- 交集说明：1.1 与 1.2 均触 monitor.ts custom 分支/import 块/tests，但编辑区间不同（1.1 只改
+  3103-3107 弹窗与 49-88 import 字母序追加；1.2 改 3096 前置与 92 行移除）且顺序执行——无冲突。
+- 约束：1.1 不得碰 /cancel、handleQuestionTextInput、registry、API-203-3/API-208 区块；1.2 不得碰
+  format.ts、API-203-1/4 区块（1.1 地盘）。
+- **不碰**：`src/registry/*`（clearQuestionInputs 保留）、`src/constants.ts`、`src/types.ts`、
+  `src/telegram/*`、`src/format/redact.ts`、`src/format/html.ts`、根 `monitor.ts` 构建产物。
+
+#### 14.9.7 明确不做（防过度实现）
+
+- 不改纯文本捕获逻辑（handleQuestionTextInput 扫描条件与顺序）：单活语义下第一条 = 唯一条
+  （决策 #8）。
+- Custom 恒显示、键盘结构、向导其它状态机（选项/导航/submit/cancel 回调）均不动。
+- 取消消息不加 emoji 前缀（按用户模板原文，决策 #8）。
+- 不动 permission 链路（§13 全部）、不动消费端（§14.4）、不动发送端（§14.2.2）。
+- 不做多实例取消竞态治理：mutate 幂等 + undefined 防御已覆盖（§14.7 同款）。
 
 ## 15. Round 5 扩展：Telegram 富文本消息编辑统一（probe gate 驱动的富文本 edit 契约）（冻结 2026-09-03）
 
