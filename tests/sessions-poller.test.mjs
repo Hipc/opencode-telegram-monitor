@@ -37,7 +37,7 @@ async function main() {
   const { TelegramSessionMonitor } = await import(srcMonitorURL.href);
   const registryModule = await import(srcRegistryURL.href);
   const { ProjectRegistryStore } = registryModule;
-  const { appendSessionRecord, markSessionResolved, registerProject } =
+  const { appendSessionRecord, removeSessionRecord, registerProject } =
     registryModule;
 
   // 假 client 最小面：scanSessionQueue 只经 sendMessage（被 stub）与
@@ -269,12 +269,13 @@ async function main() {
   );
 
   // ---- API-103/104: reply apply loop (phase 1.3) ----
-  // 契约 docs/modules/sessions-relay.md §13.6/§13.9：消费端扫描器直接驱动
-  // scanReplyQueue()（不真实起轮询），stub reply API 断言透传与置位。
+  // 契约 docs/modules/sessions-relay.md §13.6/§13.9 + §16（Round 6 改判：apply
+  // 成功 = 删除记录，不再是置 resolved=true）：消费端扫描器直接驱动
+  // scanReplyQueue()（不真实起轮询），stub reply API 断言透传与删除。
   // API-103：reply 记录被应用（sessionID/requestID/response 透传正确）→
-  // resolved=true；reply=null 或已 resolved 的记录不触发调用。
+  // 记录被删除；reply=null 或已 resolved 的记录不触发调用。
   await runCase(
-    "API-103 reply apply passes sessionID/requestID/response, sets resolved=true, skips reply=null and already-resolved",
+    "API-103 reply apply passes sessionID/requestID/response, deletes record, skips reply=null and already-resolved",
     async () => {
       fakeClient.replyCalls = [];
       fakeClient.replyError = undefined;
@@ -320,10 +321,11 @@ async function main() {
       if (call.response !== "once") {
         throw new Error(`response mismatch: ${call.response}`);
       }
+      // Round 6 改判：apply 成功 = 记录删除（终态），不再是 resolved=true。
       const persisted = await findRecord("req-r1");
-      if (!persisted || persisted.resolved !== true) {
+      if (persisted !== undefined) {
         throw new Error(
-          `resolved not true after successful apply: ${JSON.stringify(persisted)}`,
+          `record must be deleted after successful apply: ${JSON.stringify(persisted)}`,
         );
       }
       const r2 = await findRecord("req-r2");
@@ -338,22 +340,22 @@ async function main() {
           `already-resolved record state must not change: ${JSON.stringify(r3)}`,
         );
       }
-      // 用例终态（契约 §13.9）：req-r2 是 reply=null 且未 resolved 的记录，
-      // 不能被扫描器消费；但需显式置 resolved，避免遗留 send=false &&
+      // 用例终态（契约 §13.9 + §16）：req-r2 是 reply=null 且未 resolved 的
+      // 记录，不能被扫描器消费；需显式删除，避免遗留 send=false &&
       // resolved=false 的记录污染后续 scanSessionQueue 用例计数。
-      await registry.mutate((reg) => markSessionResolved(reg, "req-r2"));
+      await registry.mutate((reg) => removeSessionRecord(reg, "req-r2"));
       await monitor.dispose();
     },
   );
 
-  // API-104：① apply 失败 → resolved 保持 false，下轮 ticker 重试成功；
-  // ② 记录先被 replied 事件路径（markSessionResolved）置 resolved → 扫描器
-  // 跳过不调 API（双路径，决策 #6）。
+// API-104：① apply 失败 → 记录保留（resolved 保持 false），下轮 ticker 重试
+  // 成功 → 记录删除；② 记录先被 replied 事件路径（Round 6 = removeSessionRecord）
+  // 删除 → 扫描器跳过不调 API（双路径，决策 #6）。
   await runCase(
-    "API-104 apply failure keeps resolved=false and retries to success; TUI-resolved record is skipped",
+    "API-104 apply failure keeps record, retries to success and deletes; event-path-deleted record is skipped",
     async () => {
       fakeClient.replyCalls = [];
-      // ① 首轮 apply 失败（stub 抛错，如 permission 已被 TUI 处理）→ 不置位。
+      // ① 首轮 apply 失败（stub 抛错，如 permission 已被 TUI 处理）→ 不删除。
       await registry.mutate((reg) =>
         appendSessionRecord(
           reg,
@@ -370,19 +372,19 @@ async function main() {
       let persisted = await findRecord("req-r4");
       if (!persisted || persisted.resolved !== false) {
         throw new Error(
-          `resolved must stay false after failed apply: ${JSON.stringify(persisted)}`,
+          `record must stay unresolved after failed apply: ${JSON.stringify(persisted)}`,
         );
       }
-      // 下轮重试：stub 恢复成功 → resolved=true。
+      // 下轮重试：stub 恢复成功 → 记录删除（终态）。
       fakeClient.replyError = undefined;
       const second = await monitor.scanReplyQueue();
       if (second !== 1) {
         throw new Error(`expected 1 applied on retry, got ${second}`);
       }
       persisted = await findRecord("req-r4");
-      if (!persisted || persisted.resolved !== true) {
+      if (persisted !== undefined) {
         throw new Error(
-          `resolved not true after retry success: ${JSON.stringify(persisted)}`,
+          `record must be deleted after retry success: ${JSON.stringify(persisted)}`,
         );
       }
       if (fakeClient.replyCalls.length !== 2) {
@@ -392,7 +394,8 @@ async function main() {
       }
       await monitor.dispose();
 
-      // ② replied 事件路径先置位（markSessionResolved）→ 扫描器跳过不调 API。
+      // ② replied 事件路径先删除（Round 6：事件路径 = removeSessionRecord）
+      // → 扫描器跳过不调 API。
       await registry.mutate((reg) =>
         appendSessionRecord(
           reg,
@@ -400,16 +403,18 @@ async function main() {
           makeRecord({ request_id: "req-r5", reply: "always" }),
         ),
       );
-      await registry.mutate((reg) => markSessionResolved(reg, "req-r5"));
+      await registry.mutate((reg) => removeSessionRecord(reg, "req-r5"));
       const callsBefore = fakeClient.replyCalls.length;
       const monitor2 = makeMonitor(async () => {});
       const third = await monitor2.scanReplyQueue();
       if (third !== 0) {
-        throw new Error(`expected 0 applied for TUI-resolved, got ${third}`);
+        throw new Error(
+          `expected 0 applied for event-path-deleted, got ${third}`,
+        );
       }
       if (fakeClient.replyCalls.length !== callsBefore) {
         throw new Error(
-          `reply API must not be called for already-resolved record`,
+          `reply API must not be called for event-path-deleted record`,
         );
       }
       await monitor2.dispose();
@@ -417,15 +422,16 @@ async function main() {
   );
 
   // ---- Phase 1.4 (API-205) ----
-  // 契约 docs/modules/sessions-relay.md §14.4/§14.5：消费端 q_answers/q_reject
+  // 契约 docs/modules/sessions-relay.md §14.4/§14.5 + §16（Round 6 改判：apply
+  // 成功 = 删除记录，不再是置 resolved=true）：消费端 q_answers/q_reject
   // 应用。question 双分支：q_answers != null → applyQuestionReply（透传
-  // sessionID/requestID/answers → resolved=true）；q_reject === true →
-  // applyQuestionReject；失败不置位下轮重试；已 resolved 跳过（双路径先到先得）；
-  // permission 分支（API-103/104）不受影响。
-  // API-205-1：q_answers → reply API 透传置位；q_reject → reject API 置位；
+  // sessionID/requestID/answers → 删除记录）；q_reject === true →
+  // applyQuestionReject；失败保留记录下轮重试；事件路径已删除跳过（双路径
+  // 先到先得）；permission 分支（API-103/104）不受影响。
+  // API-205-1：q_answers → reply API 透传删除；q_reject → reject API 删除；
   // 未达终态的 question 记录不触发；permission reply 记录仍走原 API。
   await runCase(
-    "API-205 question reply/reject apply: answers passthrough, both set resolved=true, permission path unchanged",
+    "API-205 question reply/reject apply: answers passthrough, both delete the record, permission path unchanged",
     async () => {
       fakeClient.postCalls = [];
       fakeClient.postError = undefined;
@@ -555,17 +561,17 @@ async function main() {
           `permission reply requestID mismatch: ${fakeClient.replyCalls[0].permissionID}`,
         );
       }
-      // resolved 置位断言（终态）。
+      // Round 6 改判：apply 成功 = 记录删除（终态），q3 未达终态保留。
       const r1 = await findRecord("req-q1");
-      if (!r1 || r1.resolved !== true) {
+      if (r1 !== undefined) {
         throw new Error(
-          `q1 resolved not true after reply apply: ${JSON.stringify(r1)}`,
+          `q1 record must be deleted after reply apply: ${JSON.stringify(r1)}`,
         );
       }
       const r2 = await findRecord("req-q2");
-      if (!r2 || r2.resolved !== true) {
+      if (r2 !== undefined) {
         throw new Error(
-          `q2 resolved not true after reject apply: ${JSON.stringify(r2)}`,
+          `q2 record must be deleted after reject apply: ${JSON.stringify(r2)}`,
         );
       }
       const r3 = await findRecord("req-q3");
@@ -574,19 +580,19 @@ async function main() {
           `q3 (no flag) must stay unresolved: ${JSON.stringify(r3)}`,
         );
       }
-      // 用例终态纪律（契约 §14.5）：req-q3 无触发标志、无法被扫描器消费，
-      // 需显式置 resolved，避免遗留 send=false && resolved=false 的 question
-      // 记录污染后续 scanSessionQueue 用例计数。
-      await registry.mutate((reg) => markSessionResolved(reg, "req-q3"));
+      // 用例终态纪律（契约 §14.5 + §16）：req-q3 无触发标志、无法被扫描器
+      // 消费，需显式删除（终态 = 删除），避免遗留 send=false && resolved=false
+      // 的 question 记录污染后续 scanSessionQueue 用例计数。
+      await registry.mutate((reg) => removeSessionRecord(reg, "req-q3"));
       await monitor.dispose();
     },
   );
 
-  // API-205-2：apply 失败 → resolved 保持 false、下轮重试成功（reply 与
-  // reject 双路径各验证一次；postError 使两条记录都失败，单条失败不中断
-  // 整轮，成功计数为 0）。
+  // API-205-2：apply 失败 → 记录保留（resolved 保持 false）、下轮重试成功
+  // 删除（reply 与 reject 双路径各验证一次；postError 使两条记录都失败，
+  // 单条失败不中断整轮，成功计数为 0）。
   await runCase(
-    "API-205 question apply failure keeps resolved=false and retries to success (reply + reject)",
+    "API-205 question apply failure keeps record and retries to deletion (reply + reject)",
     async () => {
       fakeClient.postCalls = [];
       fakeClient.postError = undefined;
@@ -615,7 +621,7 @@ async function main() {
         ),
       );
       // ① apply 失败（postError 抛非 404 错误，如「已决」）→ 两条记录均
-      // 不置位（单条失败不中断整轮，成功计数为 0）。
+      // 保留（单条失败不中断整轮，成功计数为 0）。
       fakeClient.postError = new Error("question already decided");
       const monitor = makeMonitor(async () => {});
       const first = await monitor.scanReplyQueue();
@@ -625,31 +631,31 @@ async function main() {
       let r5 = await findRecord("req-q5");
       if (!r5 || r5.resolved !== false) {
         throw new Error(
-          `q5 resolved must stay false after failed reply apply: ${JSON.stringify(r5)}`,
+          `q5 must stay unresolved after failed reply apply: ${JSON.stringify(r5)}`,
         );
       }
       let r6 = await findRecord("req-q6");
       if (!r6 || r6.resolved !== false) {
         throw new Error(
-          `q6 resolved must stay false after failed reject apply: ${JSON.stringify(r6)}`,
+          `q6 must stay unresolved after failed reject apply: ${JSON.stringify(r6)}`,
         );
       }
-      // ② 下轮重试：postError 清除 → 两路径均成功置位。
+      // ② 下轮重试：postError 清除 → 两路径均成功 → 记录删除。
       fakeClient.postError = undefined;
       const second = await monitor.scanReplyQueue();
       if (second !== 2) {
         throw new Error(`expected 2 applied on retry, got ${second}`);
       }
       r5 = await findRecord("req-q5");
-      if (!r5 || r5.resolved !== true) {
+      if (r5 !== undefined) {
         throw new Error(
-          `q5 resolved not true after retry success: ${JSON.stringify(r5)}`,
+          `q5 record must be deleted after retry success: ${JSON.stringify(r5)}`,
         );
       }
       r6 = await findRecord("req-q6");
-      if (!r6 || r6.resolved !== true) {
+      if (r6 !== undefined) {
         throw new Error(
-          `q6 resolved not true after retry success: ${JSON.stringify(r6)}`,
+          `q6 record must be deleted after retry success: ${JSON.stringify(r6)}`,
         );
       }
       // 每记录每轮：非 404 失败 → 通道② + 降级通道③ 各一次；首轮 2 记录 × 2
@@ -663,10 +669,11 @@ async function main() {
     },
   );
 
-  // API-205-3：双路径先到先得——question.replied/rejected 事件路径先置位
-  // （markSessionResolved）→ 扫描器跳过，不调任何 question API。
+  // API-205-3：双路径先到先得——question.replied/rejected 事件路径先删除
+  // 记录（Round 6：事件路径 = removeSessionRecord）→ 扫描器跳过，不调任何
+  // question API。
   await runCase(
-    "API-205 already-resolved question record is skipped (event path first)",
+    "API-205 event-path-deleted question record is skipped (event path first)",
     async () => {
       fakeClient.postCalls = [];
       fakeClient.postError = undefined;
@@ -682,15 +689,17 @@ async function main() {
           }),
         ),
       );
-      await registry.mutate((reg) => markSessionResolved(reg, "req-q7"));
+      await registry.mutate((reg) => removeSessionRecord(reg, "req-q7"));
       const monitor = makeMonitor(async () => {});
       const applied = await monitor.scanReplyQueue();
       if (applied !== 0) {
-        throw new Error(`expected 0 applied for resolved, got ${applied}`);
+        throw new Error(
+          `expected 0 applied for event-path-deleted, got ${applied}`,
+        );
       }
       if (fakeClient.postCalls.length !== 0) {
         throw new Error(
-          `question _client.post must not be called for already-resolved record`,
+          `question _client.post must not be called for event-path-deleted record`,
         );
       }
       await monitor.dispose();
@@ -778,13 +787,18 @@ async function main() {
       if (jc.query !== undefined) {
         throw new Error(`channel 2 reject must not carry query, got ${JSON.stringify(jc.query)}`);
       }
+      // Round 6 改判：apply 成功 = 记录删除（终态），不再是 resolved=true。
       const r1 = await findRecord("req-a1");
-      if (!r1 || r1.resolved !== true) {
-        throw new Error(`a1 resolved not true after reply apply: ${JSON.stringify(r1)}`);
+      if (r1 !== undefined) {
+        throw new Error(
+          `a1 record must be deleted after reply apply: ${JSON.stringify(r1)}`,
+        );
       }
       const r2 = await findRecord("req-a2");
-      if (!r2 || r2.resolved !== true) {
-        throw new Error(`a2 resolved not true after reject apply: ${JSON.stringify(r2)}`);
+      if (r2 !== undefined) {
+        throw new Error(
+          `a2 record must be deleted after reject apply: ${JSON.stringify(r2)}`,
+        );
       }
       await monitor.dispose();
     },
@@ -865,13 +879,18 @@ async function main() {
         if (fj.options.body !== undefined) {
           throw new Error(`flat reject must carry no body, got ${JSON.stringify(fj.options.body)}`);
         }
+        // Round 6 改判：扁平 apply 成功 = 记录删除（终态）。
         const r3 = await findRecord("req-a3");
-        if (!r3 || r3.resolved !== true) {
-          throw new Error(`a3 resolved not true after flat reply apply: ${JSON.stringify(r3)}`);
+        if (r3 !== undefined) {
+          throw new Error(
+            `a3 record must be deleted after flat reply apply: ${JSON.stringify(r3)}`,
+          );
         }
         const r4 = await findRecord("req-a4");
-        if (!r4 || r4.resolved !== true) {
-          throw new Error(`a4 resolved not true after flat reject apply: ${JSON.stringify(r4)}`);
+        if (r4 !== undefined) {
+          throw new Error(
+            `a4 record must be deleted after flat reject apply: ${JSON.stringify(r4)}`,
+          );
         }
         await monitor.dispose();
       } finally {
@@ -881,9 +900,9 @@ async function main() {
     },
   );
 
-  // API-206-3：404 → resolved 终态，不再重试（下一轮 scan 不再调用）。
+  // API-206-3：404 → 记录删除（终态），不再重试（下一轮 scan 自然跳过）。
   await runCase(
-    "API-206 404 marks question resolved (terminal), no retry on next scan",
+    "API-206 404 deletes the question record (terminal), no retry on next scan",
     async () => {
       fakeClient.postCalls = [];
       fakeClient.postError = Object.assign(new Error("question not found"), {
@@ -913,11 +932,14 @@ async function main() {
           `expected 1 _client.post call before 404 terminal, got ${fakeClient.postCalls.length}`,
         );
       }
+      // Round 6 改判：404 终态 = 记录删除。
       const r5 = await findRecord("req-a5");
-      if (!r5 || r5.resolved !== true) {
-        throw new Error(`a5 must be resolved after 404: ${JSON.stringify(r5)}`);
+      if (r5 !== undefined) {
+        throw new Error(
+          `a5 record must be deleted after 404: ${JSON.stringify(r5)}`,
+        );
       }
-      // 下一轮 scan：resolved=true → 跳过，不再调用 _client.post。
+      // 下一轮 scan：记录已删除 → 自然跳过，不再调用 _client.post。
       const callsAfter = fakeClient.postCalls.length;
       const second = await monitor.scanReplyQueue();
       if (second !== 0) {
@@ -931,9 +953,10 @@ async function main() {
   );
 
   // API-206-4：非 404 失败仍重试——② 失败降级尝试 ③（v2 全局路由，query
-  // directory=root）后仍失败 → 不置位；下轮 postError 清除 → 重试成功。
+  // directory=root）后仍失败 → 记录保留；下轮 postError 清除 → 重试成功
+  // 删除。
   await runCase(
-    "API-206 non-404 failure retries and degrades to channel 3 (global route), then succeeds",
+    "API-206 non-404 failure retries and degrades to channel 3 (global route), then deletes",
     async () => {
       fakeClient.postCalls = [];
       fakeClient.postError = new Error("boom");
@@ -980,15 +1003,17 @@ async function main() {
       if (!r6 || r6.resolved !== false) {
         throw new Error(`a6 must stay unresolved after non-404 failure: ${JSON.stringify(r6)}`);
       }
-      // 下轮重试：postError 清除 → 通道②成功置位。
+      // 下轮重试：postError 清除 → 通道②成功 → 记录删除。
       fakeClient.postError = undefined;
       const second = await monitor.scanReplyQueue();
       if (second !== 1) {
         throw new Error(`expected 1 applied on retry, got ${second}`);
       }
       const r6b = await findRecord("req-a6");
-      if (!r6b || r6b.resolved !== true) {
-        throw new Error(`a6 resolved not true after retry success: ${JSON.stringify(r6b)}`);
+      if (r6b !== undefined) {
+        throw new Error(
+          `a6 record must be deleted after retry success: ${JSON.stringify(r6b)}`,
+        );
       }
       await monitor.dispose();
     },
@@ -1442,7 +1467,7 @@ ${expectedResultLine}`) ||
       }
       // 终态纪律（契约 §13.9）：resolved=true 收尾，防遗留干扰后续用例。
       await registry.mutate((reg) =>
-        registryModule.markSessionResolved(reg, requestId),
+        removeSessionRecord(reg, requestId),
       );
       await monitor.dispose();
     } finally {
@@ -1945,8 +1970,8 @@ ${expectedResultLine}`) ||
         throw new Error(`expected 0 sends, got ${calls.length}`);
       }
       // 终态纪律：用例内闭环到 resolved，避免遗留 q_* 已置且 unresolved 记录。
-      await registry.mutate((reg) => markSessionResolved(reg, "req-201c"));
-      await registry.mutate((reg) => markSessionResolved(reg, "req-201d"));
+      await registry.mutate((reg) => removeSessionRecord(reg, "req-201c"));
+      await registry.mutate((reg) => removeSessionRecord(reg, "req-201d"));
     },
   );
 
@@ -2276,7 +2301,7 @@ ${expectedResultLine}`) ||
         }
       } finally {
         // 终态纪律：q_answers 未置 → 用例内闭环到 resolved。
-        await registry.mutate((reg) => markSessionResolved(reg, "req-202a"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-202a"));
         await monitor.dispose();
       }
     },
@@ -2362,7 +2387,7 @@ ${expectedResultLine}`) ||
           );
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-202b"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-202b"));
         await monitor.dispose();
       }
     },
@@ -2426,7 +2451,7 @@ ${expectedResultLine}`) ||
           throw new Error(`prev edit should render Q3 (stage 2): ${JSON.stringify(fetches)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-202c"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-202c"));
         await monitor.dispose();
       }
     },
@@ -2516,7 +2541,7 @@ ${expectedResultLine}`) ||
           throw new Error(`terminal edit must drop keyboard: ${JSON.stringify(edit.body)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-202d"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-202d"));
         await monitor.dispose();
       }
     },
@@ -2555,7 +2580,7 @@ ${expectedResultLine}`) ||
           throw new Error(`direct submit edit must be ✅ without keyboard: ${JSON.stringify(fetches)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-202e"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-202e"));
         await monitor.dispose();
       }
     },
@@ -2634,7 +2659,7 @@ ${expectedResultLine}`) ||
         }
       } finally {
         for (const requestID of ["req-202f1", "req-202f2", "req-202f3", "req-202f4", "req-202f5"]) {
-          await registry.mutate((reg) => markSessionResolved(reg, requestID));
+          await registry.mutate((reg) => removeSessionRecord(reg, requestID));
         }
         await monitor.dispose();
       }
@@ -2683,7 +2708,7 @@ ${expectedResultLine}`) ||
           throw new Error(`resumed submit edit expected: ${JSON.stringify(fetches2)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-202g"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-202g"));
         await monitor.dispose();
       }
     },
@@ -2777,7 +2802,7 @@ ${expectedResultLine}`) ||
           throw new Error(`custom entry prompt message missing: ${JSON.stringify(sent)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-203a"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-203a"));
         await monitor.dispose();
       }
     },
@@ -2841,7 +2866,7 @@ ${expectedResultLine}`) ||
           throw new Error(`confirmation message missing: ${JSON.stringify(sent)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-203b"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-203b"));
         await monitor.dispose();
       }
     },
@@ -2962,8 +2987,8 @@ ${expectedResultLine}`) ||
           throw new Error(`legacy confirmation text must not appear: ${JSON.stringify(sent)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-203c"));
-        await registry.mutate((reg) => markSessionResolved(reg, "req-203d"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-203c"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-203d"));
         await monitor.dispose();
       }
     },
@@ -3016,7 +3041,7 @@ ${expectedResultLine}`) ||
           throw new Error(`q_input must be set to 0: ${JSON.stringify(persisted)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-203e"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-203e"));
         await monitor.dispose();
       }
     },
@@ -3065,7 +3090,7 @@ ${expectedResultLine}`) ||
           throw new Error(`cancelled record click must not edit: ${JSON.stringify(later)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-204a"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-204a"));
         await monitor.dispose();
       }
     },
@@ -3106,8 +3131,8 @@ ${expectedResultLine}`) ||
           throw new Error(`input-mode cancel edit expected: ${JSON.stringify(fetches2)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-204b"));
-        await registry.mutate((reg) => markSessionResolved(reg, "req-204c"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-204b"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-204c"));
         await monitor.dispose();
       }
     },
@@ -3224,7 +3249,7 @@ ${expectedResultLine}`) ||
           throw new Error(`terminal edit must drop keyboard: ${JSON.stringify(edit.body)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-202h"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-202h"));
         await monitor.dispose();
       }
     },
@@ -3286,7 +3311,7 @@ ${expectedResultLine}`) ||
           );
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-207a"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-207a"));
         await monitor.dispose();
       }
     },
@@ -3350,7 +3375,7 @@ ${expectedResultLine}`) ||
           );
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-207b"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-207b"));
         await monitor.dispose();
       }
     },
@@ -3445,7 +3470,7 @@ ${expectedResultLine}`) ||
           throw new Error(`confirmation missing: ${JSON.stringify(sent)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-207c"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-207c"));
         await monitor.dispose();
       }
     },
@@ -3524,7 +3549,7 @@ ${expectedResultLine}`) ||
           throw new Error(`confirmation missing: ${JSON.stringify(sent)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-207d"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-207d"));
         await monitor.dispose();
       }
     },
@@ -3591,7 +3616,7 @@ ${expectedResultLine}`) ||
           throw new Error(`submit edit must drop keyboard: ${JSON.stringify(editSubmit.body)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-301a"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-301a"));
         await monitor.dispose();
       }
     },
@@ -3654,7 +3679,7 @@ ${expectedResultLine}`) ||
         }
       } finally {
         restoreFetch();
-        await registry.mutate((reg) => markSessionResolved(reg, requestId));
+        await registry.mutate((reg) => removeSessionRecord(reg, requestId));
         await monitor.dispose();
       }
     },
@@ -3741,7 +3766,7 @@ ${expectedResultLine}`) ||
         }
       } finally {
         restoreFetch();
-        await registry.mutate((reg) => markSessionResolved(reg, requestId));
+        await registry.mutate((reg) => removeSessionRecord(reg, requestId));
         await monitor.dispose();
       }
     },
@@ -3822,8 +3847,8 @@ ${expectedResultLine}`) ||
           throw new Error(`B custom toast mismatch: ${JSON.stringify(ans)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-208a"));
-        await registry.mutate((reg) => markSessionResolved(reg, "req-208b"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-208a"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-208b"));
         await monitor.dispose();
       }
     },
@@ -3886,8 +3911,8 @@ ${expectedResultLine}`) ||
           throw new Error(`B custom toast mismatch: ${JSON.stringify(ans)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-208c"));
-        await registry.mutate((reg) => markSessionResolved(reg, "req-208d"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-208c"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-208d"));
         await monitor.dispose();
       }
     },
@@ -3940,7 +3965,7 @@ ${expectedResultLine}`) ||
           throw new Error(`second toast text mismatch: ${JSON.stringify(ans2)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-208e"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-208e"));
         await monitor.dispose();
       }
     },
@@ -4004,10 +4029,115 @@ ${expectedResultLine}`) ||
           throw new Error(`stale q_input must be cleared: ${JSON.stringify(f)}`);
         }
       } finally {
-        await registry.mutate((reg) => markSessionResolved(reg, "req-208f"));
-        await registry.mutate((reg) => markSessionResolved(reg, "req-208g"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-208f"));
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-208g"));
         await monitor.dispose();
       }
+    },
+  );
+
+  // ---- Round 6 (API-504: TTL sweep in scanSessionQueue, §16 path ③) ----
+  // 契约 docs/modules/sessions-relay.md §16：scanSessionQueue 在 read 之前先
+  // 跑一轮 removeExpiredSessionRecords(reg, Date.now())（SESSIONS_RECORD_TTL_MS
+  // = 7 天）——8 天前的记录被删除且从未发送；新鲜记录正常发送置 send=true。
+  // 无过期记录时纯函数返回原引用，mutate 短路零写盘（断言扫描行为不受影响）。
+  await runCase(
+    "API-504 scanSessionQueue TTL sweep removes 8-day-old records before send, fresh records sent normally",
+    async () => {
+      const TTL = 7 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-ttl-old",
+            created_at: new Date(now - TTL - 24 * 60 * 60 * 1000).toISOString(), // 8 天前
+          }),
+        ),
+      );
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-ttl-fresh",
+            created_at: new Date(now - 60_000).toISOString(), // 1 分钟前
+          }),
+        ),
+      );
+      const sent = [];
+      const monitor = makeMonitor(async (text) => {
+        sent.push(text);
+      });
+      const handled = await monitor.scanSessionQueue();
+      if (handled !== 1) {
+        throw new Error(`expected 1 handled (fresh only), got ${handled}`);
+      }
+      // 旧记录从未被发送。
+      if (sent.some((text) => text.includes("req-ttl-old"))) {
+        throw new Error(`expired record must never be sent: ${JSON.stringify(sent)}`);
+      }
+      const oldRec = await findRecord("req-ttl-old");
+      if (oldRec !== undefined) {
+        throw new Error(
+          `8-day-old record must be deleted by sweep: ${JSON.stringify(oldRec)}`,
+        );
+      }
+      const freshRec = await findRecord("req-ttl-fresh");
+      if (!freshRec || freshRec.send !== true) {
+        throw new Error(
+          `fresh record must be sent and marked send=true: ${JSON.stringify(freshRec)}`,
+        );
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // API-504b：无过期记录时第二次扫描行为不变（sweep 短路零写盘；记录不丢、
+  // 不重复发送）——send=true 的记录不再发送，剩余 pending 记录仍可发送。
+  await runCase(
+    "API-504b TTL sweep with nothing expired is a no-op (records untouched, scan proceeds)",
+    async () => {
+      const now = Date.now();
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-ttl-a",
+            created_at: new Date(now - 60_000).toISOString(),
+          }),
+        ),
+      );
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({
+            request_id: "req-ttl-b",
+            created_at: new Date(now - 60_000).toISOString(),
+            send: true, // 已发送：本轮不重发
+          }),
+        ),
+      );
+      const sent = [];
+      const monitor = makeMonitor(async (text) => {
+        sent.push(text);
+      });
+      const handled = await monitor.scanSessionQueue();
+      if (handled !== 1) {
+        throw new Error(`expected 1 handled (req-ttl-a only), got ${handled}`);
+      }
+      const a = await findRecord("req-ttl-a");
+      if (!a || a.send !== true) {
+        throw new Error(`req-ttl-a must be sent normally: ${JSON.stringify(a)}`);
+      }
+      const b = await findRecord("req-ttl-b");
+      if (!b || b.send !== true) {
+        throw new Error(`req-ttl-b must stay untouched: ${JSON.stringify(b)}`);
+      }
+      await monitor.dispose();
     },
   );
 

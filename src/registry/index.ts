@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { PollerLock } from "../infra/poller-lock";
+import { SESSIONS_RECORD_TTL_MS } from "../constants";
 
 export type RegistryEntry = {
   path: string;
@@ -19,11 +20,12 @@ export type RegistryEntry = {
 };
 
 // 等待状态落盘记录（契约 docs/modules/sessions-relay.md §2 冻结；Round 2 扩展
-// §13.1；Round 4 扩展 §14.1.1）。
-// message 为完整事件 payload 的 JSON 字符串；resolved 为终态（轮询不再补发）；
+// §13.1；Round 4 扩展 §14.1.1；Round 6 §16 起 resolved 不再由回写置位——
+// 终态 = 删除记录（removeSessionRecord），resolved 字段仅历史数据/解析兼容）。
+// message 为完整事件 payload 的 JSON 字符串；send 为 poller 发送置位；
 // reply 为可选字段：null/缺失 = 未回复；三值 = 用户选定回复（透传不映射）。
 // q_* 为 question 向导可选字段（§14.1.1）：写入端初始不设置任何 q_* 键；
-// q_answers 写入 / q_reject=true 为向导终态（消费端 apply 后 resolved=true）。
+// q_answers 写入 / q_reject=true 为向导终态（消费端 apply 后删除记录）。
 export type SessionRecord = {
   session_id: string; // opencode sessionID（事件 properties.sessionID）
   session_name: string; // 展示名：ensureSessionInfo 拉取 info.title；拉不到兜底 sessionID
@@ -310,29 +312,102 @@ export function appendSessionRecord(
 }
 
 /**
- * 按 request_id 全局精确标记 resolved=true（请求 ID 全局唯一，跨条目全局找
- * 第一条；顺序 = projects 数组序 + sessions 数组序）。无匹配 → undefined
- * （mutate 不写盘不抛错）；已置位 → 返回原引用（幂等，mutate 短路不写盘）；
- * send 保持不动（决策 #6：resolved 即终态，即使 send=false 也不补发）。
- * 契约 docs/modules/sessions-relay.md §4.2（冻结）。
+ * 按 request_id 全局删除记录（supersede markSessionResolved，契约
+ * sessions-relay.md §16，Round 6：终态 = 删除而非置 resolved）。请求 ID
+ * 全局唯一；跨进程竞态可能产生同 request_id 的多份副本——**删除全部匹配
+ * 记录**（防止删除后副本残留再次发送）。三态语义：
+ * - 无匹配（全条目无该 request_id）→ 返回 undefined（mutate 不写盘不抛错，
+ *   与 markSessionResolved 的「无可标记记录」路径一致）；
+ * - 有匹配 → 返回新 registry：删除该 request_id 的全部记录；记录所在条目
+ *   的 sessions 数组若因此为空，**保留 `sessions: []` 键**（不删键），条目
+ *   本身保留（与 parse 容错 §3.2「全数组过滤后为空则保留空数组」一致）。
+ * - 不区分 resolved/send/reply/q_* 状态：删除的就是整条记录，无字段保留。
  */
-export function markSessionResolved(
+export function removeSessionRecord(
   registry: ProjectRegistry,
   requestID: string,
 ): ProjectRegistry | undefined {
-  return markSessionFlag(registry, requestID, "resolved");
+  let changed = false;
+  const projects = registry.projects.map((entry) => {
+    const sessions = entry.sessions;
+    if (!sessions || sessions.every((record) => record.request_id !== requestID))
+      return entry;
+    changed = true;
+    return {
+      ...entry,
+      sessions: sessions.filter((record) => record.request_id !== requestID),
+    };
+  });
+  return changed ? { projects } : undefined;
+}
+
+/**
+ * 按 session_id 全局删除记录（契约 sessions-relay.md §16，Round 6；会话终结
+ * 清理路径：session.error cancelled / session.deleted 后调用）。一个会话的
+ * 全部记录（无论 resolved/reply/q_* 状态——死会话的记录全是死记录）跨全部
+ * 条目删除；无匹配 → undefined；有匹配 → 新 registry（空 sessions 保留键，
+ * 同 removeSessionRecord）。
+ */
+export function removeSessionRecordsForSession(
+  registry: ProjectRegistry,
+  sessionID: string,
+): ProjectRegistry | undefined {
+  let changed = false;
+  const projects = registry.projects.map((entry) => {
+    const sessions = entry.sessions;
+    if (!sessions || sessions.every((record) => record.session_id !== sessionID))
+      return entry;
+    changed = true;
+    return {
+      ...entry,
+      sessions: sessions.filter((record) => record.session_id !== sessionID),
+    };
+  });
+  return changed ? { projects } : undefined;
+}
+
+/**
+ * 按创建时间全局删除过期记录（契约 sessions-relay.md §16，Round 6；TTL 扫除
+ * 兜底——force-close 孤儿与历史遗留记录的回收）。跨全部条目删除
+ * `Date.parse(record.created_at)` 为有限数且 `< now - SESSIONS_RECORD_TTL_MS`
+ * （7 天）的记录；**不可解析/非法的 created_at → 保留**（无法定龄的记录永不
+ * 删除）。边界：`created_at` 与截止线恰好相等（`=== cutoff`）**不删**
+ * （严格 `<`）。无任何删除 → 返回**原 registry 引用**（mutate 短路零写盘——
+ * 每秒扫除一次，无过期时必须零磁盘写入）。
+ */
+export function removeExpiredSessionRecords(
+  registry: ProjectRegistry,
+  now: number,
+): ProjectRegistry {
+  const cutoff = now - SESSIONS_RECORD_TTL_MS;
+  let changed = false;
+  const projects = registry.projects.map((entry) => {
+    const sessions = entry.sessions;
+    if (!sessions) return entry;
+    const next = sessions.filter((record) => {
+      const t = Date.parse(record.created_at);
+      // 未超期（含恰好等于 cutoff）与无法定龄的记录保留
+      return !(Number.isFinite(t) && t < cutoff);
+    });
+    if (next.length === sessions.length) return entry;
+    changed = true;
+    return { ...entry, sessions: next };
+  });
+  return changed ? { projects } : registry;
 }
 
 /**
  * 按 request_id 全局精确标记 send=true（poller 发送成功后置位）。无匹配 →
  * undefined；已置位 → 原引用；resolved 保持不动（poller 只置 send）。
- * 契约 docs/modules/sessions-relay.md §4.2（冻结）。
+ * 契约 docs/modules/sessions-relay.md §4.2（冻结）；Round 6（§16）起仅存
+ * send 一个置位方向（resolved 终态已由删除语义取代，markSessionResolved
+ * 移除）。
  */
 export function markSessionSent(
   registry: ProjectRegistry,
   requestID: string,
 ): ProjectRegistry | undefined {
-  return markSessionFlag(registry, requestID, "send");
+  return markSessionFlag(registry, requestID);
 }
 
 /**
@@ -519,10 +594,15 @@ export function clearQuestionInputs(
   return changed ? { projects } : registry;
 }
 
+/**
+ * 私有实现（supersede §4.2 的 markSessionFlag）：Round 6 起仅服务 send 置位，
+ * 不再需要 resolved 分支（resolved 终态已由删除语义取代，见 §16）。
+ * 全局 request_id 精确匹配（跨全部条目找第一条）；无匹配 → undefined；已
+ * 置位 → 原引用（幂等）；否则新 registry 仅改 send=true（resolved 不动）。
+ */
 function markSessionFlag(
   registry: ProjectRegistry,
   requestID: string,
-  flag: "send" | "resolved",
 ): ProjectRegistry | undefined {
   for (let i = 0; i < registry.projects.length; i++) {
     const entry = registry.projects[i]!;
@@ -530,16 +610,13 @@ function markSessionFlag(
     if (!sessions) continue;
     for (let j = 0; j < sessions.length; j++) {
       if (sessions[j]!.request_id !== requestID) continue;
-      if (sessions[j]![flag] === true) return registry; // 已置位：幂等，原引用
+      if (sessions[j]!.send === true) return registry; // 已置位：幂等，原引用
       const projects = registry.projects.slice();
       projects[i] = {
         ...entry,
-        sessions: sessions.map((record, k) => {
-          if (k !== j) return record;
-          return flag === "resolved"
-            ? { ...record, resolved: true }
-            : { ...record, send: true };
-        }),
+        sessions: sessions.map((record, k) =>
+          k !== j ? record : { ...record, send: true },
+        ),
       };
       return { projects };
     }

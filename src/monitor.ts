@@ -95,10 +95,12 @@ import {
   deleteProjectByPath,
   findEntryByToken,
   findRegistryEntry,
-  markSessionResolved,
   markSessionSent,
   registerProject,
   rejectQuestion,
+  removeExpiredSessionRecords,
+  removeSessionRecord,
+  removeSessionRecordsForSession,
   setProjectEnabled,
   setQuestionDraft,
   setQuestionInput,
@@ -608,6 +610,12 @@ export class TelegramSessionMonitor {
         if (this.selectedSessionID === id) this.selectedSessionID = undefined;
         if (this.lastCompletedSessionID === id)
           this.lastCompletedSessionID = undefined;
+        // Round 6（§16）：会话终结 → 删除该 session 的全部落盘记录
+        // （path ②）；mutate undefined（锁超时/无记录）由方法内 logWarn 容忍。
+        this.track(
+          this.cleanupSessionRecords(id),
+          "Session deleted records cleanup failed",
+        );
         if (
           root.sessionID !== id &&
           root.status === "idle" &&
@@ -640,10 +648,26 @@ export class TelegramSessionMonitor {
           );
           return;
         }
-        this.ensureSession(sessionID).pendingError = summarizeError(
+        const projection = this.ensureSession(sessionID);
+        projection.pendingError = summarizeError(
           properties.error,
           { root: this.root, botToken: this.config.botToken },
         );
+        if (projection.pendingError?.cancelled) {
+          // ESC abort（MessageAbortedError，契约 §16 path ②）：opencode 服务端
+          // 对 abort 的取消 finalizer 只清内存 pending map，不发布
+          // permission/question 终结事件——插件只收到 session.error 且
+          // cancelled=true。镜像 session.deleted 清理（~603-605）：取消去抖
+          // 定时器、清 waitingByRequestID，再删除该 session 全部落盘记录。
+          for (const requestID of projection.waitingByRequestID.keys() ?? []) {
+            this.cancelWaitingNotify(requestID);
+          }
+          projection.waitingByRequestID.clear();
+          this.track(
+            this.cleanupSessionRecords(sessionID),
+            "Session cancelled records cleanup failed",
+          );
+        }
         return;
       }
 
@@ -741,10 +765,11 @@ export class TelegramSessionMonitor {
           this.cancelWaitingNotify(requestID);
           this.ensureSession(sessionID).waitingByRequestID.delete(requestID);
           if (!debounceActive) {
-            // 记录已落盘（去抖窗口已过）：按 request_id 回写 resolved=true
+            // 记录已落盘（去抖窗口已过）：删除该 request_id 的落盘记录
+            // （Round 6 §16 supersede：终态 = 删除，不再是置 resolved=true）。
             this.track(
               this.resolveWaitingRecord(requestID),
-              "Session resolved mark failed",
+              "Session resolved record removal failed",
             );
           }
         }
@@ -787,10 +812,11 @@ export class TelegramSessionMonitor {
           this.cancelWaitingNotify(requestID);
           this.ensureSession(sessionID).waitingByRequestID.delete(requestID);
           if (!debounceActive) {
-            // 记录已落盘（question 立即写入，无去抖窗口）：回写 resolved=true
+            // 记录已落盘（question 立即写入，无去抖窗口）：删除该记录
+            // （Round 6 §16 supersede：终态 = 删除，不再是置 resolved=true）。
             this.track(
               this.resolveWaitingRecord(requestID),
-              "Session resolved mark failed",
+              "Session resolved record removal failed",
             );
           }
         }
@@ -1013,20 +1039,41 @@ export class TelegramSessionMonitor {
   }
 
   /**
-   * replied/rejected 事件回写（决策 #5，契约 §5.3）：按 request_id 置
-   * resolved=true。调用方已先 cancelWaitingNotify 并确认去抖窗口已过
-   * （waitingNotifyTimers 无该 requestID —— 写入已发生或从未发生）。
+   * replied/rejected 事件回写（决策 #5，契约 §5.3；Round 6 §16 supersede：
+   * 终态 = 删除记录而非置 resolved=true）——按 request_id 全局删除该记录
+   * （removeSessionRecord 同时清除跨进程竞态产生的同 request_id 副本）。
+   * 调用方已先 cancelWaitingNotify 并确认去抖窗口已过（waitingNotifyTimers
+   * 无该 requestID —— 写入已发生或从未发生）。
    * mutate 返回 undefined（抢锁超时或无匹配记录）→ logWarn，静默容忍。
    */
   private async resolveWaitingRecord(requestID: string) {
     const next = await this.registry.mutate((reg) =>
-      markSessionResolved(reg, requestID),
+      removeSessionRecord(reg, requestID),
     );
     if (next === undefined) {
       await this.log(
         "warn",
-        "Session resolved mark skipped: registry mutate timeout or no matching record",
+        "Session record removal skipped: registry mutate timeout or no matching record",
         { requestID },
+      );
+    }
+  }
+
+  /**
+   * 会话终结清理（契约 §16 path ②，Round 6）：删除该 session_id 的全部
+   * 落盘记录（session.error cancelled / session.deleted 后调用）。镜像
+   * resolveWaitingRecord 风格：mutate 返回 undefined（抢锁超时或无匹配
+   * 记录）→ logWarn 一次，静默容忍，不抛错。
+   */
+  private async cleanupSessionRecords(sessionID: string) {
+    const next = await this.registry.mutate((reg) =>
+      removeSessionRecordsForSession(reg, sessionID),
+    );
+    if (next === undefined) {
+      await this.log(
+        "warn",
+        "Session records cleanup skipped: registry mutate timeout or no matching records",
+        { sessionID },
       );
     }
   }
@@ -1671,14 +1718,15 @@ export class TelegramSessionMonitor {
    *     path: { id: sessionID, permissionID: requestID },
    *     body: { response },
    *   })
-   * 成功（API resolve）→ mutate(markSessionResolved)；失败/抛错 → logWarn
-   * 不置位（resolved 保持 false，下轮重试）。已 resolved 记录由调用方筛选跳过。
+   * 成功（API resolve）→ mutate(removeSessionRecord)（Round 6 §16 supersede：
+   * 终态 = 删除记录，不再置 resolved=true）；失败/抛错 → logWarn 不置位
+   * （下轮重试）。已 resolved 记录由调用方筛选跳过（兼容历史数据）。
    */
   private async applySessionReply(record: SessionRecord) {
     if (record.reply == null) return;
     try {
       // throwOnError: true —— HTTP 错误（400/404，如 permission 已被 TUI 处理）
-      // 会抛错被捕获 → logWarn 不置位，下轮读到 resolved=true 即跳过。
+      // 会抛错被捕获 → logWarn 不删除，下轮读到记录已消失即跳过。
       await this.client.postSessionIdPermissionsPermissionId({
         path: { id: record.session_id, permissionID: record.request_id },
         body: { response: record.reply },
@@ -1687,7 +1735,7 @@ export class TelegramSessionMonitor {
     } catch (error) {
       await this.log(
         "warn",
-        "Permission reply apply failed; resolved stays false, will retry on next scan",
+        "Permission reply apply failed; record kept, will retry on next scan",
         {
           requestId: record.request_id,
           sessionId: record.session_id,
@@ -1700,13 +1748,13 @@ export class TelegramSessionMonitor {
       throw error;
     }
     const next = await this.registry.mutate((reg) =>
-      markSessionResolved(reg, record.request_id),
+      removeSessionRecord(reg, record.request_id),
     );
     if (next === undefined) {
-      // 抢锁超时或记录已被删除：resolved 未置位属安全重试态，静默容忍。
+      // 抢锁超时或记录已被删除：记录未删除属安全重试态，静默容忍。
       await this.log(
         "warn",
-        "markSessionResolved skipped (no match or lock timeout); will retry on next scan",
+        "removeSessionRecord skipped (no match or lock timeout); will retry on next scan",
         { requestId: record.request_id },
       );
     }
@@ -1747,9 +1795,9 @@ export class TelegramSessionMonitor {
    * question reply/reject 分层调用（§14.8.1，两方法共用）：每次按序尝试通道
    * （① 扁平方法 typeof → ② v2 会话级 → ③ v2 全局），任一成功即用并缓存已
    * 成功通道（questionApplyChannel，下次先试缓存仍按序降级）；某通道抛错判定
-   * 「不存在」→ 立即终态（markSessionResolved + log info + 不 rethrow，下轮
-   * 读到 resolved=true 自然跳过）；全部通道失败且非「不存在」→ logWarn
-   * （token 脱敏）+ rethrow（下轮重试）。
+   * 「不存在」→ 立即终态（删除记录 + log info + 不 rethrow，下轮自然跳过，
+   * Round 6 §16 supersede：终态 = removeSessionRecord 而非置 resolved）；
+   * 全部通道失败且非「不存在」→ logWarn（token 脱敏）+ rethrow（下轮重试）。
    */
   private async questionApply(kind: "reply" | "reject", record: SessionRecord) {
     const ctx = { root: this.root, botToken: this.config.botToken };
@@ -1762,10 +1810,11 @@ export class TelegramSessionMonitor {
         return;
       } catch (error) {
         if (this.isQuestionNotFoundError(error)) {
-          // §14.8.2 404 终态：问题/session 已不存在 → 置 resolved 不再重试。
+          // §14.8.2 404 终态：问题/session 已不存在 → 删除记录不再重试
+          // （Round 6 §16 supersede：终态 = 删除，不再是置 resolved）。
           await this.log(
             "info",
-            "question no longer exists; marking resolved",
+            "question no longer exists; removing session record",
             {
               requestId: record.request_id,
               sessionId: record.session_id,
@@ -1780,7 +1829,7 @@ export class TelegramSessionMonitor {
     const failedVerb = kind === "reply" ? "reply" : "reject";
     await this.log(
       "warn",
-      `Question ${failedVerb} apply failed; resolved stays false, will retry on next scan`,
+      `Question ${failedVerb} apply failed; record kept, will retry on next scan`,
       {
         requestId: record.request_id,
         sessionId: record.session_id,
@@ -1886,17 +1935,18 @@ export class TelegramSessionMonitor {
   }
 
   /**
-   * 成功路径与 404 终态共用：markSessionResolved；mutate 返回 undefined
-   * （抢锁超时/记录消失）→ logWarn（resolved 未置位属安全重试态）。
+   * 成功路径与 404 终态共用：removeSessionRecord（Round 6 §16 supersede：
+   * 终态 = 删除记录，不再置 resolved=true）。mutate 返回 undefined
+   * （抢锁超时/记录消失）→ logWarn（记录未删除属安全重试态）。
    */
   private async markQuestionResolved(record: SessionRecord) {
     const next = await this.registry.mutate((reg) =>
-      markSessionResolved(reg, record.request_id),
+      removeSessionRecord(reg, record.request_id),
     );
     if (next === undefined) {
       await this.log(
         "warn",
-        "markSessionResolved skipped (no match or lock timeout); will retry on next scan",
+        "removeSessionRecord skipped (no match or lock timeout); will retry on next scan",
         { requestId: record.request_id },
       );
     }
@@ -1912,6 +1962,19 @@ export class TelegramSessionMonitor {
    */
   private async scanSessionQueue(): Promise<number> {
     if (this.disposed) return 0;
+    // TTL 扫除（契约 §16 path ③，Round 6）：先于 read 清掉过期记录，防止
+    // 强关孤儿/历史遗留记录被再次扫描。仅在本方法内运行（= poller.lock
+    // 持有者每秒一次）；无过期时纯函数返回原 registry 引用，mutate 短路
+    // 零写盘。mutate 返回 undefined（抢锁超时）→ logWarn 一次，容忍不抛错。
+    const swept = await this.registry.mutate((reg) =>
+      removeExpiredSessionRecords(reg, Date.now()),
+    );
+    if (swept === undefined) {
+      await this.log(
+        "warn",
+        "Session TTL sweep skipped: registry mutate timeout",
+      );
+    }
     const registry = await this.registry.read();
     let handled = 0;
     for (const entry of registry.projects) {

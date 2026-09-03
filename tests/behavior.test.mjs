@@ -6,8 +6,12 @@
 //   API-001 auto-approve（asked + 1s 内 replied）→ 0 条记录（去抖取消写入）
 //   API-002 真待审批（仅 asked，等 2.5s）→ 恰 1 条完整记录（type/message/send/resolved/request_id/created_at/session_name）
 //   API-003 question.asked → 立即 1 条记录（不去抖），message=完整调用内容 JSON
-//   API-004 replied/rejected（含 v2/permissionID 变体）→ 按 request_id 置 resolved=true
+//   API-004 replied/rejected（含 v2/permissionID 变体）→ 按 request_id **删除**记录
+//     （Round 6 §16 supersede：终态 = 删除，不再是 resolved=true）
 //   API-005 短时多个 permission.asked（不同 request_id）→ 全部追加保留
+//   API-501 ESC abort（session.error MessageAbortedError）→ 该 session 落盘记录删除
+//   API-502 去抖窗口内 ESC abort → 记录从未写入（timer 取消）
+//   API-503 session.deleted → 该 session 全部落盘记录删除
 // 旧直发 TG 通知（notifyWaiting 调用点）已停用，本文件不再断言直发文本。
 //
 // 用法：
@@ -287,9 +291,10 @@ async function main() {
     },
   );
 
-  // API-004a: 记录落盘后 permission.replied（标准 requestID 变体）→ resolved=true，send 保持 false。
+  // API-004a: 记录落盘后 permission.replied（标准 requestID 变体）→ 记录被删除
+  // （Round 6 §16 supersede：终态 = 删除，不再是置 resolved=true）。
   await runCase(
-    "API-004a permission.replied after persist -> resolved=true, send stays false",
+    "API-004a permission.replied after persist -> record deleted",
     async ({ monitor, registry, root }) => {
       monitor.accept({
         id: "evt-004a-1",
@@ -306,23 +311,19 @@ async function main() {
         type: "permission.replied",
         properties: { sessionID: "s-1", requestID: "perm-4a" },
       });
-      await sleep(400); // 回写 mutate 异步完成
+      await sleep(400); // 删除 mutate 异步完成
       const after = await readSessions(registry, root);
-      if (after.length !== 1) {
-        throw new Error(`expected 1 record, got ${after.length}`);
-      }
-      if (after[0].resolved !== true) {
-        throw new Error(`expected resolved=true, got ${after[0].resolved}`);
-      }
-      if (after[0].send !== false) {
-        throw new Error(`send must stay false for resolved record (no backfill)`);
+      if (after.length !== 0) {
+        throw new Error(
+          `expected record deleted after replied, got ${after.length}: ${JSON.stringify(after)}`,
+        );
       }
     },
   );
 
-  // API-004b: permission.v2.replied 且 properties 只有 permissionID → 按 permissionID 提取匹配回写。
+  // API-004b: permission.v2.replied 且 properties 只有 permissionID → 按 permissionID 提取匹配删除。
   await runCase(
-    "API-004b permission.v2.replied with permissionID -> resolved=true",
+    "API-004b permission.v2.replied with permissionID -> record deleted",
     async ({ monitor, registry, root }) => {
       monitor.accept({
         id: "evt-004b-1",
@@ -337,17 +338,17 @@ async function main() {
       });
       await sleep(400);
       const after = await readSessions(registry, root);
-      if (after.length !== 1 || after[0].resolved !== true) {
+      if (after.length !== 0) {
         throw new Error(
-          `expected resolved=true via permissionID, got ${JSON.stringify(after)}`,
+          `expected record deleted via permissionID, got ${JSON.stringify(after)}`,
         );
       }
     },
   );
 
-  // API-004c: question.rejected 变体 → 立即落盘后回写 resolved=true。
+  // API-004c: question.rejected 变体 → 立即落盘后删除记录。
   await runCase(
-    "API-004c question.rejected after persist -> resolved=true",
+    "API-004c question.rejected after persist -> record deleted",
     async ({ monitor, registry, root }) => {
       monitor.accept({
         id: "evt-004c-1",
@@ -370,17 +371,17 @@ async function main() {
       });
       await sleep(400);
       const after = await readSessions(registry, root);
-      if (after.length !== 1 || after[0].resolved !== true) {
+      if (after.length !== 0) {
         throw new Error(
-          `expected resolved=true after question.rejected, got ${JSON.stringify(after)}`,
+          `expected record deleted after question.rejected, got ${JSON.stringify(after)}`,
         );
       }
     },
   );
 
-  // API-004d: question.v2.asked + question.v2.replied 变体 → 回写 resolved=true。
+  // API-004d: question.v2.asked + question.v2.replied 变体 → 删除记录。
   await runCase(
-    "API-004d question.v2 asked + v2.replied -> resolved=true",
+    "API-004d question.v2 asked + v2.replied -> record deleted",
     async ({ monitor, registry, root }) => {
       monitor.accept({
         id: "evt-004d-1",
@@ -399,9 +400,9 @@ async function main() {
       });
       await sleep(400);
       const after = await readSessions(registry, root);
-      if (after.length !== 1 || after[0].resolved !== true) {
+      if (after.length !== 0) {
         throw new Error(
-          `expected resolved=true after question.v2.replied, got ${JSON.stringify(after)}`,
+          `expected record deleted after question.v2.replied, got ${JSON.stringify(after)}`,
         );
       }
     },
@@ -443,10 +444,145 @@ async function main() {
     },
   );
 
+  // API-501: ESC abort（session.error + error.name=MessageAbortedError）→ 该
+  // session 已落盘的等待记录被删除（契约 §16 path ②：服务端 abort 不发布
+  // permission/question 终结事件，仅 session.error cancelled=true 可观测）。
+  await runCase(
+    "API-501 ESC abort deletes the persisted session records",
+    async ({ monitor, registry, root }) => {
+      monitor.accept({
+        id: "evt-501-1",
+        type: "permission.asked",
+        properties: { sessionID: "s-501", id: "perm-501", permission: "read" },
+      });
+      await sleep(2500); // 落盘（去抖窗口已过）
+      monitor.accept({
+        id: "evt-501-2",
+        type: "question.asked",
+        properties: {
+          sessionID: "s-501",
+          id: "q-501",
+          questions: [{ header: "Abort me?" }],
+        },
+      });
+      await sleep(500); // question 立即落盘
+      let sessions = await readSessions(registry, root);
+      if (sessions.length !== 2) {
+        throw new Error(
+          `expected 2 records before abort, got ${sessions.length}: ${JSON.stringify(sessions)}`,
+        );
+      }
+      monitor.accept({
+        id: "evt-501-3",
+        type: "session.error",
+        properties: {
+          sessionID: "s-501",
+          error: { name: "MessageAbortedError" },
+        },
+      });
+      await sleep(400); // cleanup mutate 异步完成
+      sessions = await readSessions(registry, root);
+      if (sessions.length !== 0) {
+        throw new Error(
+          `expected all records deleted after ESC abort, got ${sessions.length}: ${JSON.stringify(sessions)}`,
+        );
+      }
+    },
+  );
+
+  // API-502: 去抖窗口内 ESC abort → permission 记录从未写入（timer 被取消），
+  // question 记录同样删除。
+  await runCase(
+    "API-502 ESC abort within debounce window -> permission never written",
+    async ({ monitor, registry, root }) => {
+      monitor.accept({
+        id: "evt-502-1",
+        type: "permission.asked",
+        properties: { sessionID: "s-502", id: "perm-502", permission: "read" },
+      });
+      // 立即 abort（< WAITING_NOTIFY_DEBOUNCE_MS=1000）：cancelWaitingNotify
+      // 取消待写入 timer → 零落盘；cleanupSessionRecords 无记录可删（容忍）。
+      monitor.accept({
+        id: "evt-502-2",
+        type: "session.error",
+        properties: {
+          sessionID: "s-502",
+          error: { name: "MessageAbortedError" },
+        },
+      });
+      await sleep(2500); // 越过去抖窗口：若 timer 未被取消则此处会写入
+      const sessions = await readSessions(registry, root);
+      if (sessions.length !== 0) {
+        throw new Error(
+          `expected 0 records (debounce cancelled by abort), got ${sessions.length}: ${JSON.stringify(sessions)}`,
+        );
+      }
+    },
+  );
+
+  // API-503: session.deleted → 该 session 的全部落盘记录删除；其它 session
+  // 的记录保留。
+  await runCase(
+    "API-503 session.deleted removes that session's persisted records",
+    async ({ monitor, registry, root }) => {
+      monitor.accept({
+        id: "evt-503-1",
+        type: "permission.asked",
+        properties: { sessionID: "s-503a", id: "perm-503a", permission: "read" },
+      });
+      monitor.accept({
+        id: "evt-503-2",
+        type: "permission.asked",
+        properties: { sessionID: "s-503b", id: "perm-503b", permission: "write" },
+      });
+      await sleep(2500); // 两条 permission 记录都落盘
+      let sessions = await readSessions(registry, root);
+      if (sessions.length !== 2) {
+        throw new Error(
+          `expected 2 records before delete, got ${sessions.length}`,
+        );
+      }
+      // session.deleted 需要 info（session() 校验 id+title）。
+      monitor.accept({
+        id: "evt-503-3",
+        type: "session.deleted",
+        properties: {
+          sessionID: "s-503a",
+          info: { id: "s-503a", title: "Deleted session" },
+        },
+      });
+      await sleep(400);
+      sessions = await readSessions(registry, root);
+      if (sessions.length !== 1 || sessions[0].request_id !== "perm-503b") {
+        throw new Error(
+          `expected only s-503b record to survive, got ${JSON.stringify(sessions)}`,
+        );
+      }
+      // 残留记录收尾：删除（终端 ttl 兜底不依赖；直接清理避免影响其它用例）
+      monitor.accept({
+        id: "evt-503-4",
+        type: "session.deleted",
+        properties: {
+          sessionID: "s-503b",
+          info: { id: "s-503b", title: "Other session" },
+        },
+      });
+      await sleep(400);
+      sessions = await readSessions(registry, root);
+      if (sessions.length !== 0) {
+        throw new Error(
+          `expected all records cleaned, got ${JSON.stringify(sessions)}`,
+        );
+      }
+    },
+  );
+
   const passed = total - failures;
   console.log(`\n${passed}/${total} cases passed`);
   // 显式退出：bootstrap 的 withTimeout 会遗留 8s 探活 timers，让事件循环
   // 空挂约 8s；先 flush stdout 再退出。
+  await sleep(20);
+  process.exit(failures === 0 ? 0 : 1);
   await sleep(20);
   process.exit(failures === 0 ? 0 : 1);
 }

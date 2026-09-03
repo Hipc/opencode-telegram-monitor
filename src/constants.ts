@@ -11,6 +11,10 @@ export const WAITING_NOTIFY_DEBOUNCE_MS = 1_000;
 // sessions 落盘 → TG 中继的扫描间隔：poller.lock 持有者每秒扫描 projects.json
 // 中 send=false && resolved=false 的等待记录并推送（契约 docs/modules/sessions-relay.md §6.1）。
 export const SESSIONS_SCAN_INTERVAL_MS = 1_000;
+// SessionRecord 落盘记录的 TTL 兜底（契约 sessions-relay.md §16，Round 6）：
+// scanSessionQueue 每秒扫除 created_at 早于 now-TTL 的记录（强关孤儿与历史
+// 遗留记录回收；resolved 终态删除与会话终结清理的三条清理路径之一）。
+export const SESSIONS_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const TELEGRAM_POLL_SECONDS = 25;
 export const TELEGRAM_POLL_TIMEOUT_MS = 35_000;
 export const TELEGRAM_SEND_TIMEOUT_MS = 15_000;

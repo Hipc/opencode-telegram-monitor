@@ -1,12 +1,14 @@
 // tests/registry-sessions.test.mjs
 //
 // 纯函数测试：SessionRecord 承载（sessions-relay.md §3/§4，REG-101；Round 2
-// 扩展 §13.1/§13.2，REG-201）。
+// 扩展 §13.1/§13.2，REG-201；Round 6 扩展 §16，REG-401~403）。
 // 覆盖：parse/serialize 白名单往返保留全字段、旧文件无 sessions 键、非数组丢弃、
 // 损坏记录容错、append 追加不覆盖、mark* 按 request_id 精确匹配（无匹配
 // undefined / 已置位幂等原引用 / 两字段互不联动）、既有 parse 语义保持、
 // mutate 集成（写盘 + undefined 不写盘）、reply 字段四态往返与容错、
-// setSessionReply 三态（写入/无匹配 undefined/幂等原引用/send、resolved 不受影响）。
+// setSessionReply 三态（写入/无匹配 undefined/幂等原引用/send、resolved 不受影响）、
+// Round 6 删除三函数（removeSessionRecord / removeSessionRecordsForSession /
+// removeExpiredSessionRecords 三态 + TTL 边界，supersede markSessionResolved）。
 //
 // 用例全部使用 mkdtemp 临时目录隔离，绝不触碰真实 ~/.otg。
 // 运行：bun tests/registry-sessions.test.mjs
@@ -20,7 +22,9 @@ const {
   parseRegistry,
   serializeRegistry,
   appendSessionRecord,
-  markSessionResolved,
+  removeSessionRecord,
+  removeSessionRecordsForSession,
+  removeExpiredSessionRecords,
   markSessionSent,
   setSessionReply,
   setQuestionDraft,
@@ -301,72 +305,85 @@ await runCase("REG-101 append with missing path returns original registry", asyn
   assert(next === reg, "must return original reference for missing path");
 });
 
-// REG-101: markSessionResolved 按 request_id 全局精确匹配（跨条目第一条）；
-// 无匹配 undefined；已置位幂等返回原引用；send 保持不动；前缀不匹配。
-await runCase("REG-101 markSessionResolved matches by request_id", async (baseDir) => {
+// REG-401: removeSessionRecord 按 request_id 全局删除（supersede
+// markSessionResolved，契约 §16）：无匹配 undefined；单条删除；
+// 同 request_id 多副本（跨条目/同条目）全删；空 sessions 数组保留键；
+// 前缀不匹配；其它记录与条目不动。
+await runCase("REG-401 removeSessionRecord deletes by request_id (all copies, keeps empty key)", async (baseDir) => {
   const reg = regWith([
     {
       path: join(baseDir, "p"),
       enabled: true,
       addedAt: "2026-01-01T00:00:00.000Z",
-      sessions: [makeRecord({ request_id: "req-1", send: false })],
+      sessions: [
+        makeRecord({ request_id: "req-1", send: false }),
+        makeRecord({ request_id: "req-2", resolved: true }), // 终态记录同样可删
+      ],
     },
     {
       path: join(baseDir, "q"),
       enabled: true,
       addedAt: "2026-01-01T00:00:00.000Z",
-      sessions: [makeRecord({ request_id: "req-2" })],
+      sessions: [makeRecord({ request_id: "req-2" })], // 跨条目副本
     },
   ]);
   assert(
-    markSessionResolved(reg, "req-missing") === undefined,
+    removeSessionRecord(reg, "req-missing") === undefined,
     "no match must return undefined",
   );
   assert(
-    markSessionResolved(reg, "req-") === undefined,
+    removeSessionRecord(reg, "req-") === undefined,
     "prefix must not match (exact match only)",
   );
-  const next = markSessionResolved(reg, "req-2"); // 跨条目匹配第二条目
+  // 单条删除：跨条目匹配 req-2 → 两条副本全删，其它记录不动。
+  const next = removeSessionRecord(reg, "req-2");
   assert(next !== reg, "must return a new registry object");
-  assert(next.projects[1].sessions[0].resolved === true, "req-2 not resolved");
   assert(
-    next.projects[0].sessions[0].resolved === false,
-    "other record must not be touched",
+    next.projects[0].sessions.length === 1 &&
+      next.projects[0].sessions[0].request_id === "req-1",
+    "req-1 must stay, req-2 must be removed from first entry",
   );
   assert(
-    next.projects[1].sessions[0].send === false,
-    "send must stay untouched by markSessionResolved",
+    next.projects[1].sessions.length === 0,
+    "second entry must end with empty sessions array (key retained)",
   );
-  const again = markSessionResolved(next, "req-2");
-  assert(again === next, "idempotent mark must return same reference");
-  // 无 sessions 的条目不参与匹配
+  assert(
+    Array.isArray(next.projects[1].sessions),
+    "empty sessions must keep the sessions: [] key",
+  );
+  // 同条目内多副本（跨进程竞态）全删
+  const dup = regWith([
+    {
+      path: join(baseDir, "p"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [
+        makeRecord({ request_id: "req-dup", send: true }),
+        makeRecord({ request_id: "req-dup" }),
+      ],
+    },
+  ]);
+  const dedup = removeSessionRecord(dup, "req-dup");
+  assert(
+    dedup !== undefined && dedup.projects[0].sessions.length === 0,
+    "all duplicate copies must be removed",
+  );
+  assert(
+    dedup.projects[0].path === join(baseDir, "p"),
+    "entry itself must be kept",
+  );
+  // 无 sessions 的条目不参与匹配，也不被触碰
   const regMixed = regWith([
     { path: join(baseDir, "z"), enabled: true, addedAt: "2026-01-01T00:00:00.000Z" },
-    {
-      path: join(baseDir, "p"),
-      enabled: true,
-      addedAt: "2026-01-01T00:00:00.000Z",
-      sessions: [makeRecord({ request_id: "req-z" })],
-    },
+    { path: join(baseDir, "p"), enabled: true, addedAt: "2026-01-01T00:00:00.000Z" },
   ]);
   assert(
-    markSessionResolved(regMixed, "req-z") !== undefined,
-    "entries without sessions key must be skipped, not break matching",
+    removeSessionRecord(regMixed, "req-z") === undefined,
+    "entries without sessions key are skipped, not broken",
   );
-  // send=true 的记录仍可 resolved（两字段互不联动）
-  const sent = regWith([
-    {
-      path: join(baseDir, "p"),
-      enabled: true,
-      addedAt: "2026-01-01T00:00:00.000Z",
-      sessions: [makeRecord({ session_id: "sess-s", request_id: "req-s", send: true })],
-    },
-  ]);
-  const resolvedAfterSent = markSessionResolved(sent, "req-s");
   assert(
-    resolvedAfterSent.projects[0].sessions[0].resolved === true &&
-      resolvedAfterSent.projects[0].sessions[0].send === true,
-    "markSessionResolved must not clear send",
+    regMixed.projects[0].sessions === undefined,
+    "entries without sessions key must keep reference untouched",
   );
 });
 
@@ -432,9 +449,10 @@ await runCase("REG-101 existing parse semantics preserved", async (baseDir) => {
   );
 });
 
-// REG-101 (集成): mutate(appendSessionRecord/markSessionResolved) 写盘持久化、
-// 无匹配 mark 经 mutate 返回 undefined 且文件内容不变、幂等不写盘。
-await runCase("REG-101 mutate integration: append/mark persist, no-match no-op", async (baseDir) => {
+// REG-401 (集成): mutate(appendSessionRecord/removeSessionRecord) 写盘持久化、
+// 无匹配 remove 经 mutate 返回 undefined 且文件内容不变、删除后再删返回
+// undefined（原「幂等 mark 原引用」语义在删除下不存在——删除后无匹配）。
+await runCase("REG-401 mutate integration: append/remove persist, no-match no-op", async (baseDir) => {
   const filePath = join(baseDir, "projects.json");
   const store = new ProjectRegistryStore(filePath);
   await store.ensureDir();
@@ -457,18 +475,18 @@ await runCase("REG-101 mutate integration: append/mark persist, no-match no-op",
     assert(got[key] === record[key], `persisted field ${key} mismatch`);
   }
 
-  const marked = await store.mutate((reg) =>
-    markSessionResolved(reg, "req-int"),
+  const removed = await store.mutate((reg) =>
+    removeSessionRecord(reg, "req-int"),
   );
   assert(
-    marked.projects[0].sessions[0].resolved === true,
-    "resolved not persisted",
+    removed !== undefined && removed.projects[0].sessions.length === 0,
+    "remove not persisted",
   );
-  const afterResolved = await reader.read();
+  const afterRemoved = await reader.read();
   assert(
-    afterResolved.projects[0].sessions[0].resolved === true &&
-      afterResolved.projects[0].sessions[0].send === false,
-    "resolved/send state wrong after persist",
+    Array.isArray(afterRemoved.projects[0].sessions) &&
+      afterRemoved.projects[0].sessions.length === 0,
+    "sessions must be empty array (key retained) after remove persist",
   );
 
   // 无匹配 → mutate 返回 undefined 且文件内容不变
@@ -478,17 +496,14 @@ await runCase("REG-101 mutate integration: append/mark persist, no-match no-op",
   const afterNoop = JSON.stringify(await reader.read());
   assert(afterNoop === before, "file must not change for no-match mark");
 
-  // 幂等已置位 → mutate 返回非 undefined（原缓存刷新路径）且内容不变
-  const idem = await store.mutate((reg) =>
-    markSessionResolved(reg, "req-int"),
+  // 删除后再删除（原「幂等已置位」语义已不存在）→ mutate 返回 undefined 且内容不变
+  const again = await store.mutate((reg) =>
+    removeSessionRecord(reg, "req-int"),
   );
-  assert(
-    idem !== undefined && idem.projects[0].sessions[0].resolved === true,
-    "idempotent mark must succeed",
-  );
+  assert(again === undefined, "re-remove after deletion must yield undefined");
   assert(
     JSON.stringify(await reader.read()) === before,
-    "file must not change for idempotent mark",
+    "file must not change for re-remove",
   );
 });
 
@@ -1098,6 +1113,163 @@ await runCase("REG-301 mutate integration: q_* writes persist, no-match no-op", 
   assert(
     JSON.stringify(await store.read()) === before,
     "file must not change for idempotent rejectQuestion",
+  );
+});
+
+// ---- Round 6 (REG-402/403, sessions-resolved-cleanup §16) ----
+
+// REG-402: removeSessionRecordsForSession 按 session_id 全局删除——跨全部
+// 条目删除该会话的全部记录（无论 resolved/reply/q_* 状态）；无匹配 undefined；
+// 其它会话记录不动；空 sessions 保留键；无 sessions 条目不参与。
+await runCase("REG-402 removeSessionRecordsForSession deletes all records of a session across entries", async (baseDir) => {
+  const reg = regWith([
+    {
+      path: join(baseDir, "p"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [
+        makeRecord({ session_id: "sess-dead", request_id: "req-a1", type: "permission" }),
+        makeRecord({ session_id: "sess-dead", request_id: "req-a2", type: "question", q_answers: [["x"]] }),
+        makeRecord({ session_id: "sess-live", request_id: "req-b1" }),
+      ],
+    },
+    {
+      path: join(baseDir, "q"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [
+        makeRecord({ session_id: "sess-dead", request_id: "req-a3", resolved: true }),
+      ],
+    },
+    {
+      path: join(baseDir, "z"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ]);
+  assert(
+    removeSessionRecordsForSession(reg, "sess-none") === undefined,
+    "no match must return undefined",
+  );
+  assert(
+    removeSessionRecordsForSession(reg, "sess-liv") === undefined,
+    "prefix must not match (exact match only)",
+  );
+  const next = removeSessionRecordsForSession(reg, "sess-dead");
+  assert(next !== reg, "must return a new registry object");
+  assert(
+    next.projects[0].sessions.length === 1 &&
+      next.projects[0].sessions[0].request_id === "req-b1",
+    "live session record must stay, dead session records removed",
+  );
+  assert(
+    next.projects[1].sessions.length === 0 &&
+      Array.isArray(next.projects[1].sessions),
+    "entry with only dead-session records must keep empty sessions array",
+  );
+  assert(
+    next.projects[2] === reg.projects[2],
+    "entry without sessions key must keep reference",
+  );
+});
+
+// REG-403: removeExpiredSessionRecords TTL 扫除——跨全部条目删除
+// Date.parse(created_at) 有限且 < now-7d 的记录；恰好等于截止线（=cutoff）
+// 不删（严格 <）；不可解析/非法 created_at 保留；无任何过期 → 返回原引用；
+// 有删除 → 新 registry 且其它记录不动。
+await runCase("REG-403 removeExpiredSessionRecords removes only expired, keeps unparseable and boundary", async (baseDir) => {
+  const now = Date.parse("2026-09-03T12:00:00.000Z");
+  const TTL = 7 * 24 * 60 * 60 * 1000;
+  const cutoff = now - TTL;
+  const oldIso = new Date(now - TTL - 60_000).toISOString(); // 恰超 1 分钟
+  const boundaryIso = new Date(cutoff).toISOString(); // 恰好 = cutoff（不删）
+  const freshIso = new Date(now - 60_000).toISOString(); // 1 分钟前（不删）
+  const reg = regWith([
+    {
+      path: join(baseDir, "p"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [
+        makeRecord({ request_id: "req-old-1", created_at: oldIso }),
+        makeRecord({ request_id: "req-fresh", created_at: freshIso }),
+      ],
+    },
+    {
+      path: join(baseDir, "q"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [
+        makeRecord({ request_id: "req-old-2", created_at: oldIso }),
+        makeRecord({ request_id: "req-boundary", created_at: boundaryIso }),
+        makeRecord({ request_id: "req-bad-1", created_at: "not-a-date" }),
+        makeRecord({ request_id: "req-bad-2", created_at: "" }),
+      ],
+    },
+    {
+      path: join(baseDir, "z"),
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ]);
+  const next = removeExpiredSessionRecords(reg, now);
+  assert(next !== reg, "must return a new registry when something expired");
+  const pRecs = next.projects[0].sessions;
+  assert(
+    pRecs.length === 1 && pRecs[0].request_id === "req-fresh",
+    "expired record must be removed, fresh kept",
+  );
+  const qRecs = next.projects[1].sessions;
+  const qIds = qRecs.map((r) => r.request_id).sort();
+  assert(
+    JSON.stringify(qIds) === JSON.stringify(["req-bad-1", "req-bad-2", "req-boundary"]),
+    `boundary + unparseable must be kept, expired removed: ${JSON.stringify(qRecs)}`,
+  );
+  assert(
+    next.projects[2] === reg.projects[2],
+    "entry without sessions key must keep reference",
+  );
+  // 无任何过期 → 返回原 registry 引用（mutate 短路零写盘）
+  const nothingExpired = removeExpiredSessionRecords(next, now);
+  assert(nothingExpired === next, "nothing expired must return same reference");
+});
+
+// REG-403 (集成): mutate(removeExpiredSessionRecords) 写盘持久化、无过期
+// 经 mutate 返回原引用且文件内容不变（零写盘）。
+await runCase("REG-403 mutate integration: TTL sweep persists, nothing-expired no-op", async (baseDir) => {
+  const filePath = join(baseDir, "projects.json");
+  const store = new ProjectRegistryStore(filePath);
+  await store.ensureDir();
+  const p = join(baseDir, "project", "demo");
+  await store.mutate((reg) => registerProject(reg, p));
+  const now = Date.now();
+  const TTL = 7 * 24 * 60 * 60 * 1000;
+  await store.mutate((reg) =>
+    appendSessionRecord(
+      reg,
+      p,
+      makeRecord({ request_id: "req-ttl-old", created_at: new Date(now - TTL - 60_000).toISOString() }),
+    ),
+  );
+  await store.mutate((reg) =>
+    appendSessionRecord(
+      reg,
+      p,
+      makeRecord({ request_id: "req-ttl-fresh", created_at: new Date(now - 60_000).toISOString() }),
+    ),
+  );
+  const swept = await store.mutate((reg) => removeExpiredSessionRecords(reg, Date.now()));
+  assert(swept !== undefined, "sweep mutate failed");
+  const sessions = (await store.read()).projects[0].sessions;
+  assert(
+    sessions.length === 1 && sessions[0].request_id === "req-ttl-fresh",
+    "expired record must be gone after sweep persist",
+  );
+  const before = JSON.stringify(await store.read());
+  const idem = await store.mutate((reg) => removeExpiredSessionRecords(reg, Date.now()));
+  assert(idem !== undefined, "nothing-expired sweep must succeed");
+  assert(
+    JSON.stringify(await store.read()) === before,
+    "file must not change for nothing-expired sweep",
   );
 });
 
