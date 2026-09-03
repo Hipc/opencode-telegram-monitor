@@ -92,7 +92,6 @@ import {
 import { PollerLock } from "./infra/poller-lock";
 import {
   appendSessionRecord,
-  clearQuestionInputs,
   deleteProjectByPath,
   findEntryByToken,
   findRegistryEntry,
@@ -2292,10 +2291,7 @@ export class TelegramSessionMonitor {
         this.enqueueMessage(helpText());
         return;
       case "cancel":
-        // 取消自定义输入模式（契约 §14.3.2）：clearQuestionInputs 批量清除
-        // 全部记录的 q_input；无输入态时为幂等空操作。
-        await this.registry.mutate((reg) => clearQuestionInputs(reg));
-        this.enqueueMessage(paragraph("已取消输入模式"));
+        await this.cancelPendingQuestionInputs();
         return;
       default:
         this.enqueueMessage(
@@ -2362,10 +2358,7 @@ export class TelegramSessionMonitor {
       });
       return;
     }
-    const rawDraft = record.q_draft ?? [];
-    const draft: Array<Array<string>> = questions.map((_, i) =>
-      Array.isArray(rawDraft[i]) ? [...rawDraft[i]!] : [],
-    );
+    const { draft } = this.rebuildQuestionState(record, questions);
     draft[index] = [text.trim()]; // 覆盖式：每次回复覆盖该题草稿（TUI 同款）。
     const answerNumber = index + 1;
     // 落盘顺序冻结（契约 §14.3.2）：先清输入态 → 再推进/提交。
@@ -2953,14 +2946,7 @@ export class TelegramSessionMonitor {
     }
     // 状态重建：draft 归一化到 questions 长度（防长度不符的脏数据）；stage
     // 钳制 0..questions.length（=length 为总结阶段）。
-    const rawDraft = record.q_draft ?? [];
-    const draft: Array<Array<string>> = questions.map((_, index) =>
-      Array.isArray(rawDraft[index]) ? [...rawDraft[index]!] : [],
-    );
-    const stage =
-      typeof record.q_stage === "number"
-        ? Math.min(Math.max(record.q_stage, 0), questions.length)
-        : 0;
+    const { draft, stage } = this.rebuildQuestionState(record, questions);
     const chatID = message.chat.id;
     const messageID = record.q_msg_id ?? message.message_id;
 
@@ -3096,6 +3082,7 @@ export class TelegramSessionMonitor {
         await this.answerCallback(callbackID, "记录不存在或已失效", true);
         return;
       }
+      await this.cancelPendingQuestionInputs(requestID);
       const next = await this.registry.mutate((rec) =>
         setQuestionInput(rec, requestID, stage),
       );
@@ -3191,6 +3178,118 @@ export class TelegramSessionMonitor {
 
     // 正则已收窄到 o\d+|prev|next|cancel|custom|submit，理论不可达。
     await this.answerCallback(callbackID, "Unknown action", false);
+  }
+
+  /**
+   * 单活取消（契约 §14.9.2）：扫描全部待输入 question 记录，失效记录静默清，
+   * 活记录清 q_input + 发取消消息 + 重渲染回正常阶段视图。
+   */
+  private async cancelPendingQuestionInputs(
+    excludeRequestID?: string,
+  ): Promise<number> {
+    const reg = await this.registry.read();
+    const matches: Array<{ record: SessionRecord; projectLabel: string }> = [];
+    for (const entry of reg.projects) {
+      const entrySessions = entry.sessions ?? [];
+      for (const record of entrySessions) {
+        if (
+          record.type === "question" &&
+          record.q_input != null &&
+          record.request_id !== excludeRequestID
+        ) {
+          matches.push({
+            record,
+            projectLabel: basename(entry.path) || this.projectLabel,
+          });
+        }
+      }
+    }
+
+    let count = 0;
+    for (const { record, projectLabel } of matches) {
+      const isInvalid =
+        record.resolved === true ||
+        record.q_answers != null ||
+        record.q_reject === true;
+
+      if (isInvalid) {
+        await this.registry.mutate((rec) =>
+          setQuestionInput(rec, record.request_id, null),
+        );
+        continue;
+      }
+
+      const ctx: FormatContext = {
+        root: this.root,
+        botToken: this.config.botToken,
+        projectLabel,
+        sessions: this.sessions,
+        sessionInfo: this.sessionInfo,
+      };
+
+      const cleared = await this.registry.mutate((rec) =>
+        setQuestionInput(rec, record.request_id, null),
+      );
+      if (cleared === undefined) {
+        await this.log(
+          "warn",
+          "Cancel question input: clear input skipped (no match)",
+          {
+            requestId: safeText(record.request_id, 100, ctx),
+          },
+        );
+        continue;
+      }
+
+      const questions = this.parseQuestionPayload(record.message);
+      const targetQuestion =
+        questions && typeof record.q_input === "number"
+          ? questions[record.q_input]
+          : undefined;
+
+      this.enqueueMessage(
+        paragraph(
+          questionInputCancelledText(projectLabel, targetQuestion, ctx),
+        ),
+      );
+
+      if (questions && typeof record.q_msg_id === "number") {
+        const { draft, stage } = this.rebuildQuestionState(record, questions);
+        await this.renderQuestionStage(
+          record,
+          projectLabel,
+          record.request_id,
+          questions,
+          stage,
+          draft,
+          false,
+          this.config.chatId,
+          record.q_msg_id,
+        );
+      }
+
+      count += 1;
+    }
+
+    return count;
+  }
+
+  /**
+   * 状态重建 helper（契约 §14.9.4）：草稿归一化 + stage 钳制 0..questions.length。
+   */
+  private rebuildQuestionState(
+    record: SessionRecord,
+    questions: Array<QuestionV2Info>,
+  ): { draft: Array<Array<string>>; stage: number } {
+    const rawDraft = record.q_draft ?? [];
+    const draft = questions.map((_, index) =>
+      Array.isArray(rawDraft[index]) ? [...rawDraft[index]!] : [],
+    );
+    const stage =
+      typeof record.q_stage === "number"
+        ? Math.min(Math.max(record.q_stage, 0), questions.length)
+        : 0;
+    return { draft, stage };
   }
 
   /**
