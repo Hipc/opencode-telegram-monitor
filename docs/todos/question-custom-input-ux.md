@@ -255,6 +255,78 @@ registry/API-203-1/4 区块（1.1 地盘）。
   ② 极端长项目名+长 header 弹窗 200 截断兜底已有实现（safeTextKeepPaths）但未单测覆盖；
   ③ 4 个 real-* 实机测试有意未执行（历轮惯例，不在自动化门槛内）。
 
+## Round 2（实机反馈修复轮，2026-09-03 用户真实测试后）
+
+### 根因诊断
+
+用户实机反馈：点 ✏️ Custom 后「没有新的模板消息发送，只有短暂的弹窗提示」。Round 1 将
+Custom 提示落在两个载体：弹窗 toast（answerCallbackQuery，一闪即逝）+ 编辑原向导消息加
+「输入」提示行（在长表格内不显眼）——**缺少一条独立的持久 TG 消息**。用户真实期望：点
+Custom 后收到一条独立消息承载模板文案（作为后续纯文本输入的持久锚点）；多记录取消场景
+「A 取消消息 → B 提示消息」均为持久消息序列。
+
+### 已确认决策（用户实机反馈澄清，2026-09-03）
+
+1. custom 分支**新增独立提示消息**：`enqueueMessage(paragraph(questionInputPromptText(
+   projectLabel, current, ctx)))`（与取消消息同通道同形态，HTML 转义/脱敏链路一致）。
+2. 弹窗与向导消息编辑提示行**均保留**（信息一致，冗余无害）；`/cancel` 与纯文本捕获路径
+   不加消息（静默语义不变）。
+3. doc-prep **跳过**（单 phase 窄修复，无跨 phase 契约接口；修复后 dev-lead 直接回写契约
+   §14.9.1 提示通道定义）。
+
+### Phase 2.1: custom 独立提示消息 ✅
+
+**目标**: 点 Custom 后发送一条独立 TG 消息承载新模板文案（弹窗与编辑行保留）。
+**契约**: docs/modules/sessions-relay.md §14.9.1（提示通道，合并后 dev-lead 回写修订）
+**并行组**: 单 phase（实机反馈窄修复）
+**触碰范围**: `src/monitor.ts`（custom 分支 renderQuestionStage 调用之后追加
+enqueueMessage，约 3093-3113 区）；`tests/sessions-poller.test.mjs`（API-203-1/4 新增 sent
+断言 + API-208-1/2/3 sent 精确断言改判；现场核对其它 custom 相关用例）。**不碰** format.ts/
+registry/取消逻辑//cancel/handleQuestionTextInput。
+**分支**: `phase-r2-p2.1`　**worktree**: `.worktrees/phase-r2-p2.1`
+**任务**:
+
+- [ ] custom 分支：`renderQuestionStage(...)` 之后追加
+      `this.enqueueMessage(paragraph(questionInputPromptText(projectLabel, current, ctx)))`
+      （current/ctx/projectLabel 均在作用域；enqueueMessage 入队 sendTail 串行，取消消息
+      先入队 → 提示消息后入队，顺序天然正确）
+- [ ] API-203-1/4：新增断言 sent 包含新模板提示消息（含 project 与 header 标识）
+- [ ] API-208-1 改判：点 B Custom 后 sent = 2 条（sent[0] = A 取消消息、sent[1] = B 提示
+      模板消息）；API-208-2 改判：sent = 1 条 B 提示消息（无「输入被取消」）；API-208-3
+      改判：两次 Custom → sent = 2 条提示消息（无取消消息）；现场核对 API-207 等其它
+      custom 相关用例的 sent 断言兼容性（includes 语义不破坏，精确条数断言逐一改判）
+- [ ] 改判于任务报告注明
+
+**验收标准**:
+
+- [ ] `HOME=$(mktemp -d) bun tests/sessions-poller.test.mjs` 全绿（新增/改判 + 既有回归）
+- [ ] `node scripts/build.mjs` exit 0
+
+**实现记录**（2026-09-03，分支 `phase-r2-p2.1`，SHA `3a09291`，merge `cd362f7`）：
+- 全部验收达成：sessions-poller 57/57（API-203-1/4 新增 sent 断言 + API-208-1/2/3 改判 +
+  既有回归）+ 构建 exit 0（143.28 KB）。与契约零偏差。
+- 实现：custom 分支 `renderQuestionStage(...)` 之后追加
+  `this.enqueueMessage(paragraph(questionInputPromptText(projectLabel, current, ctx)))`
+  （含注释说明 Round 2 动机与串行顺序）；弹窗与编辑行保留；取消逻辑与 /cancel 零改动。
+- 断言：API-203-1/4 新增 sent 含提示消息断言；API-208-1 改判 2 条有序（sent[0] 取消、
+  sent[1] 提示）；API-208-2 改判 1 条提示无取消；API-208-3 改判 2 条提示无取消；
+  API-203-2/207-3/207-4 现场核对为 includes/some 语义无需改判；API-203-3/208-4 静默路径
+  天然不受影响。
+- 契约 §14.9.1 已回写「独立提示消息通道（Round 2 实机反馈修订）」三载体定义。
+
+### Round 2 整体测试记录
+
+- 测试结论：【通过】（2026-09-03，main @ `cd362f7`）
+- 102 用例 + BUILD-001 全绿（9 任务 / 3 批次）：behavior 8/8 + sessions-poller **57/57**
+  （修复行为 4 点核对全 ✓：提示消息在位与模板断言 / API-208-1 双消息顺序 / 208-2/3 条数
+  语义 / 203-3/208-4 静默路径未破坏）+ registry-sessions 20/20 + registry-concurrency 5/5 +
+  redact-keep-paths 3/3 + bundle-smoke 3/3 + version-injection 3/3 + version-scripts 3/3。
+- 失败摘要与根因归属：F-001 唯一失败为 **ENV 类**（本机只有 Windows npm shim `bun.exe`，
+  Linux node 子进程内 spawnSync("bun") ENOENT）——以 node 跑同一测试文件（断言零改动）
+  3/3 通过，BUILD-001 单独运行亦 exit 0；非产品缺陷，CI/真 Linux 环境无此问题。
+- 残余风险：① 真实 TG 端到端仍需用户人工冒烟（重点：点 Custom 收到独立提示消息）；
+  ② 本机 bun 环境 quirk（Windows shim）影响「node 内嵌 spawn bun」链路的测试 harness 选择。
+
 ## 断点记录（运输层错误续传用）
 
 - 流程坑（历轮记录，继续有效）：phase 分支可能存在历史残留空壳——签出前
@@ -288,3 +360,19 @@ registry/API-203-1/4 区块（1.1 地盘）。
   答案 → TUI 侧 question 真实收到；`/cancel` 逐条取消与无输入时静默。
 - **遗留事项**：① 真实 TG 端到端人工冒烟（上述清单第 ⑤ 步）；② 向导无超时回收（历轮遗留，
   维持）；③ real-*.test.mjs 诊断测试未入库（历轮决策，维持）。
+
+## 交付总结（Round 2 追加，2026-09-03）
+
+- **Round 2**（实机反馈修复）：1 轮通过。根因——Round 1 将 Custom 提示落在弹窗 toast（一闪
+  即逝）+ 向导消息编辑提示行（不显眼），用户实机体验后明确需要**一条独立的持久消息**。
+- **修复内容**（Phase 2.1，`3a09291`/merge `cd362f7`）：custom 分支在弹窗与编辑行之外新增
+  `enqueueMessage(paragraph(questionInputPromptText(...)))` 独立提示消息（三载体并存）；
+  多记录取消场景消息顺序天然正确（A 取消 → B 提示，串行入队）。
+- **测试**：API-203-1/4 新增 sent 断言、API-208-1/2/3 改判；整体 102 用例 + 构建链全绿
+  （F-001 为本机 bun Windows shim 环境问题，非产品缺陷）。
+- **待用户执行**：部署清单同 Round 1（重新构建 → **重启所有 opencode 窗口** → 复制产物 →
+  实机冒烟）；冒烟重点：点 ✏️ Custom 后**收到一条独立消息**「请输入 <project> 的
+  <question> 答案，如果放弃输入请输入 /cancel」；多点切换场景看到「... 输入被取消」+
+  新提示消息的连续两条消息。
+- **遗留事项（Round 2 后）**：① 真实 TG 端到端人工冒烟；② 本机 bun 环境 quirk（测试
+  harness 记录在案）；③ 历轮遗留（向导无超时回收、real-* 未入库）维持。

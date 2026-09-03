@@ -1465,6 +1465,13 @@ export function questionInputCancelledText(
     字段不参与脱敏；`projectLabel` 标识本身以**参数**传入 questionInputPromptText（与 ctx.projectLabel
     无关）——**直接复用函数顶部 ctx 即可**；如需 per-record ctx，按 questionStageText 现场同法
     （monitor.ts 3228-3234：`{ root, botToken, projectLabel, sessions, sessionInfo }`）构造，两者等价。
+- **独立提示消息通道（Round 2 实机反馈修订，2026-09-03，supersede「提示载体仅弹窗+编辑行」
+  的 Round 1 形态）**：custom 分支在 `renderQuestionStage(...)` 之后追加
+  `this.enqueueMessage(paragraph(questionInputPromptText(projectLabel, current, ctx)))`
+  ——点 Custom 后用户收到**一条独立的持久 TG 消息**承载模板文案（作为后续纯文本输入的
+  持久锚点；Round 1 仅弹窗 toast 一闪即逝 + 编辑行不显眼，实机反馈不满足）。弹窗与编辑
+  提示行**均保留**（三载体信息一致，冗余无害）；`/cancel` 与纯文本捕获路径不加消息。多
+  记录取消场景 enqueueMessage 串行天然有序：A 取消消息先入队 → B 提示消息后入队。
 - **取消消息通道（§14.9.2 消费）**：`enqueueMessage(paragraph(text))`——paragraph 内部
   escapeHtml 自动转义（HTML 安全，无需手工转义）；enqueueMessage → `sendMessage`（tests 以
   `monitor.sendMessage` stub 捕获 `sent` 数组断言）。
