@@ -1448,13 +1448,16 @@ export function questionInputCancelledText(
   ```ts
   await this.answerCallback(
     callbackID,
-    safeText(questionInputPromptText(projectLabel, current, ctx), 200, ctx), // 外层 safeText 防御截断
+    safeTextKeepPaths(questionInputPromptText(projectLabel, current, ctx), 200, ctx), // 200 截断 + botToken 脱敏，跳过路径脱敏
     false,
   );
   ```
-  ——Telegram answerCallbackQuery `text` 上限 **200 字符**，外层 `safeText(..., 200, ctx)` 兜底
-  （弹窗是纯文本不走 HTML，无需转义；safeText 的路径脱敏副作用可接受——提示行保留路径、弹窗
-  重脱敏，两者形态以本节为准）。
+  ——Telegram answerCallbackQuery `text` 上限 **200 字符**，外层截断兜底。**实现修订
+  （Phase 1.1 实证，2026-09-03）**：不可用 `safeText`——其 `redactPaths` 规则
+  `/(^|[\s=:"'(])\/(?:[^\s/]+\/)*[^\s,;)]*/g` 会把前置空格的命令 ` /cancel` 误判为外部
+  路径并脱敏为 ` <external-path>`，弹窗文案变成「…请输入 <external-path>」与文案模板/
+  §14.9.5 断言冲突；改用 `safeTextKeepPaths`（保留 200 截断与 botToken 脱敏、跳过路径
+  脱敏规则），`/cancel` 命令完整展示（弹窗是纯文本不走 HTML，无需转义）。
   - **ctx 构造（核验事实）**：custom 分支位于 `handleQuestionCallback` 内，函数顶部已构造
     `ctx`（monitor.ts 2903-2909：`{ root: this.root, botToken: this.config.botToken,
     projectLabel: this.projectLabel, sessions: this.sessions, sessionInfo: this.sessionInfo }`）。

@@ -1,8 +1,8 @@
 # question Custom 输入提示增强：单活输入模式 + 提示带项目/问题标识
 
-> 状态: in-progress
+> 状态: completed
 > 创建: 2026-09-03
-> 当前轮次: Round 1
+> 当前轮次: Round 1（已完成）
 > 关联文档: docs/modules/sessions-relay.md §14（本轮新增 §14.9 修订，doc-prep 冻结）
 
 ## 背景
@@ -135,7 +135,7 @@ question 向导的 ✏️ Custom 自定义输入交互两点增强（用户 gril
 
 ## Round 1
 
-### Phase 1.1: 文案模板层——format 纯函数 + 弹窗/提示行接入 ⬜
+### Phase 1.1: 文案模板层——format 纯函数 + 弹窗/提示行接入 ✅
 
 **目标**: 新文案模板落地：format.ts 3 个新纯函数（单一文案来源）+ 提示行与弹窗接入新模板。
 **契约**: docs/modules/sessions-relay.md §14.9.1（doc-prep 冻结函数签名与文案模板）+ §14.9.6（编辑区间）
@@ -174,9 +174,17 @@ questionInputPromptText 并 safeText 200 截断）；`tests/sessions-poller.test
 - [ ] `HOME=$(mktemp -d) bun tests/sessions-poller.test.mjs` 全绿（API-203-1/4 改判 + 既有回归）
 - [ ] `node scripts/build.mjs` exit 0
 
-**实现记录**: （合并后由 dev-lead 回写）
+**实现记录**（2026-09-03，分支 `phase-r1-p1.1`，SHA `edf9b514`，merge `7d1ff51`）：
+- 全部验收达成：sessions-poller 53/53（API-203-1/4 改判 + 既有回归）+ 构建 exit 0（18 模块）。
+- 改判细节：两用例向导题入参加 `header: "补充说明头"`，弹窗与提示行断言改判为插值模板
+  `请输入 project 的 补充说明头 答案，如果放弃输入请输入 /cancel`（projectLabel 硬编码
+  "project"）；键盘保留与状态落盘断言不变。
+- **契约偏差（已接受并回写契约 §14.9.1）**：弹窗 200 截断防御未用契约示例的 `safeText`——
+  实证其 `redactPaths` 规则会把前置空格的 ` /cancel` 误判为外部路径脱敏为
+  ` <external-path>`，弹窗文案变成「…请输入 <external-path>」与模板/断言冲突；改用
+  `safeTextKeepPaths`（200 截断 + botToken 脱敏保留、跳过路径脱敏），`/cancel` 完整展示。
 
-### Phase 1.2: 单活取消 + /cancel 统一——monitor 交互层 ⬜
+### Phase 1.2: 单活取消 + /cancel 统一——monitor 交互层 ✅
 
 **目标**: custom 前置取消旧输入（发取消消息 + 清 q_input + 重渲染）+ /cancel 重写为逐条取消
 新格式（无 pending 静默）+ rebuildQuestionState 去重重构。
@@ -220,12 +228,32 @@ registry/API-203-1/4 区块（1.1 地盘）。
 - [ ] `node scripts/build.mjs` exit 0
 - [ ] 取消路径每步 registry 变化落盘（断言盘上状态，非内存）
 
-**实现记录**: （合并后由 dev-lead 回写）
+**实现记录**（2026-09-03，分支 `phase-r1-p1.2`，SHA `1a35b0a`，merge `c4c4266`）：
+- 全部验收达成：sessions-poller 57/57（API-203-3 改写 + API-208-1~4 新增 + 既有回归含 1.1
+  改判）+ 构建 exit 0（143.19 KB）。与契约零偏差。
+- 实现：`rebuildQuestionState` 私有方法抽取三处重复的 rawDraft 复制 + stage 钳制（等价重构）；
+  `cancelPendingQuestionInputs(excludeRequestID?)` 按契约 §14.9.2（失效静默清不计入、活记录
+  mutate 清 + enqueueMessage(paragraph(questionInputCancelledText)) + q_msg_id 存在且 payload
+  可解析时 renderQuestionStage(inputPending=false) 重渲染、返回发消息条数）；custom 分支在
+  setQuestionInput 前置调用并传当前 requestID；executeCommand 的 cancel 分支重写为逐条取消、
+  无活取消静默，移除 clearQuestionInputs 调用与 import。
+- API-203-3 改写：保留纯文本静默断言，主链路改为双待输入记录逐条取消断言（新格式取消消息 +
+  q_input 清除 + 两向导消息重渲染去提示行留键盘）+ 再次 /cancel 静默断言。
+- API-208-1~4：多记录取消主链路（A 无 header 走正文截断兜底）/ 失效静默 / 同记录幂等 /
+  /cancel 无 pending 静默 + 失效残留静默清（独立小用例）。
 
 ### Round 1 整体测试记录
 
-- 测试结论：（待填）
-- 失败摘要与根因归属：（待填）
+- 测试结论：【通过】（2026-09-03，main @ `c4c4266`）
+- 102 用例 + 构建链全绿（8 任务 / 3 并发批次 / 峰值并发 5 / 重派 0）：behavior 8/8 +
+  sessions-poller **57/57**（API-203-1/3/4 改判改写 + API-208-1~4 新增 + 50 条既有回归）+
+  registry-sessions 20/20（含 clearQuestionInputs 保留用例）+ registry-concurrency 5/5 +
+  redact-keep-paths 3/3 + bundle-smoke 3/3 + version-injection 3/3 + version-scripts 3/3；
+  BUILD-001 exit 0（18 模块 143.19 KB）。
+- 失败摘要与根因归属：无失败。
+- 残余风险：① 真实 TG 端到端（弹窗视觉呈现、消息重渲染）由用户按部署清单人工冒烟；
+  ② 极端长项目名+长 header 弹窗 200 截断兜底已有实现（safeTextKeepPaths）但未单测覆盖；
+  ③ 4 个 real-* 实机测试有意未执行（历轮惯例，不在自动化门槛内）。
 
 ## 断点记录（运输层错误续传用）
 
@@ -235,4 +263,28 @@ registry/API-203-1/4 区块（1.1 地盘）。
 
 ## 交付总结
 
-（交付时填写）
+- **轮次**：1 轮完成（文档先行 → A[1.1] → 合并 → B[1.2] → 合并 → 整体测试【通过】）。
+- **提交链**：`411093e`（docs 冻结 §14.9）→ `edf9b514`/`7d1ff51`（1.1 实现/merge）→
+  `1a35b0a`/`c4c4266`（1.2 实现/merge，最终 HEAD）。
+- **改动文件**：
+  - `src/format/format.ts`：3 个导出纯函数（questionLabel——header 优先 + 正文 60 截断兜底、
+    questionInputPromptText、questionInputCancelledText）+ buildQuestionStageText 提示行接入
+    新模板（`✏️ 请输入 ... /cancel`）
+  - `src/monitor.ts`：custom 弹窗新文案（safeTextKeepPaths 200 截断，/cancel 不被误脱敏）、
+    custom 分支前置 cancelPendingQuestionInputs（单活输入模式：失效静默清 / 活记录发取消
+    消息 + 清 q_input + 重渲染回正常视图）、/cancel 重写为逐条取消新格式（无 pending 静默）、
+    rebuildQuestionState 三处去重重构、移除 clearQuestionInputs import（函数本体保留）
+  - `tests/sessions-poller.test.mjs`：API-203-1/4 断言改判、API-203-3 改写、API-208-1~4 新增
+    （共 4 新用例 + 3 用例改判改写）
+  - `docs/modules/sessions-relay.md`：§14.9 契约（§14.9.1~§14.9.7）+ §14.9.1 实现修订
+    （safeText → safeTextKeepPaths）
+- **最终整体测试**：102 用例 + 构建链全绿（详见 Round 1 整体测试记录）。
+- **待用户执行（部署清单）**：① `node scripts/build.mjs` 重新构建；② **关闭并重启所有
+  opencode 窗口**（poller 与消费端都要加载新产物，历轮教训）；③ 产物 `monitor.ts` 复制到
+  `~/.config/opencode/plugins/telegram-session-monitor.ts`；④ 确认 tgdiag.log 无 409（单
+  poller）；⑤ 实机冒烟：触发 question → 点 ✏️ Custom（弹窗与消息提示行显示「请输入
+  <项目> 的 <问题> 答案，如果放弃输入请输入 /cancel」）→ 不输入直接点另一 session 的
+  Custom（收到旧输入「... 输入被取消」消息 + 旧消息恢复正常视图 + 新提示出现）→ 输入文本
+  答案 → TUI 侧 question 真实收到；`/cancel` 逐条取消与无输入时静默。
+- **遗留事项**：① 真实 TG 端到端人工冒烟（上述清单第 ⑤ 步）；② 向导无超时回收（历轮遗留，
+  维持）；③ real-*.test.mjs 诊断测试未入库（历轮决策，维持）。
