@@ -314,6 +314,46 @@ export function buildSessionPermissionKeyboard(
 }
 
 /**
+ * 问题标识（契约 §14.9.1）：header trim 后非空 → 返回 trim 后的 header；
+ * 否则问题正文 safeTextKeepPaths 截断 60 字符兜底。question 可 undefined
+ * （防御：取消路径解析失败/越界时仍要发取消消息，label 兜底为空串）。
+ */
+export function questionLabel(
+  question: QuestionV2Info | undefined,
+  ctx: FormatContext,
+): string {
+  const header = question?.header;
+  if (typeof header === "string" && header.trim() !== "") {
+    return header.trim();
+  }
+  return safeTextKeepPaths(question?.question ?? "", 60, ctx);
+}
+
+/**
+ * 进入输入模式提示文案（契约 §14.9.1，弹窗 toast 与向导消息提示行共用）：
+ * `请输入 ${projectLabel} 的 ${questionLabel(question, ctx)} 答案，如果放弃输入请输入 /cancel`
+ */
+export function questionInputPromptText(
+  projectLabel: string,
+  question: QuestionV2Info | undefined,
+  ctx: FormatContext,
+): string {
+  return `请输入 ${projectLabel} 的 ${questionLabel(question, ctx)} 答案，如果放弃输入请输入 /cancel`;
+}
+
+/**
+ * 输入被取消文案（契约 §14.9.1，取消旧待输入时经 enqueueMessage + paragraph 发送）：
+ * `${projectLabel} 的 ${questionLabel(question, ctx)} 输入被取消`
+ */
+export function questionInputCancelledText(
+  projectLabel: string,
+  question: QuestionV2Info | undefined,
+  ctx: FormatContext,
+): string {
+  return `${projectLabel} 的 ${questionLabel(question, ctx)} 输入被取消`;
+}
+
+/**
  * question 向导单阶段文本渲染（契约 sessions-relay.md §14.2.1，Round 4）：
  * titleLine(❓, projectLabel) + **单张** fieldTable（Type/Session/Question m/n/
  * Header/选项行同表），整体经 limitMessage 截断。问题/选项/Header 文本值经
@@ -371,7 +411,12 @@ export function buildQuestionStageText(
         );
       });
       if (inputPending) {
-        rows.push(fieldRow("输入", "✏️ 回复文本作为答案，/cancel 取消"));
+        rows.push(
+          fieldRow(
+            "输入",
+            `✏️ ${questionInputPromptText(projectLabel, current, ctx)}`,
+          ),
+        );
       }
     }
   } else {

@@ -71,6 +71,9 @@ import {
   menuText,
   number,
   paragraph,
+  questionInputCancelledText,
+  questionInputPromptText,
+  questionLabel,
   record,
   rememberBounded,
   safeProgress,
@@ -3102,7 +3105,11 @@ export class TelegramSessionMonitor {
       }
       await this.answerCallback(
         callbackID,
-        "直接回复文本作为答案，/cancel 取消",
+        safeTextKeepPaths(
+          questionInputPromptText(projectLabel, current, ctx),
+          200,
+          ctx,
+        ),
         false,
       );
       await this.renderQuestionStage(
