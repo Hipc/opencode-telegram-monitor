@@ -1530,6 +1530,9 @@ ${expectedResultLine}`) ||
   function questionMessage(questions) {
     return JSON.stringify({ questions });
   }
+  // 选项卡分隔线（fix/question-card-option-layout）：Unicode thin solid
+  // divider，Telegram 无法可靠渲染灰色文本，用该线近似分段。
+  const QUESTION_DIVIDER = "────────";
 
   // API-201-1：多问题请求（Q1 为 multiple + custom）→ 键盘发送恰 1 次；文本
   // 含 Type/Session/Question 1/2/Header/问题文本/Option 1 label+description；
@@ -1619,6 +1622,39 @@ ${expectedResultLine}`) ||
       ) {
         throw new Error(`missing second option row: ${text}`);
       }
+      // 活动阶段 Type 值必须带当前题号：question (n / m)，n=当前 1-based
+      // 题号、m=总题数，`/` 两侧有空格（fix/question-card-option-layout）。
+      if (!text.includes("question (1 / 2)")) {
+        throw new Error(`Type value must be "question (1 / 2)", got: ${text}`);
+      }
+      // 分隔线冻结：Header → ──────── → Option 1 → ──────── → Option 2，
+      // 共 2 条（Header 后 + 选项间各 1），末选项后无尾随分隔线。
+      if (text.split(QUESTION_DIVIDER).length - 1 !== 2) {
+        throw new Error(
+          `expected 2 dividers (after Header + between options), got ${
+            text.split(QUESTION_DIVIDER).length - 1
+          }: ${text}`,
+        );
+      }
+      const iHeader = text.indexOf("操作选择");
+      const iDiv1 = text.indexOf(QUESTION_DIVIDER);
+      const iOpt1 = text.indexOf("Option 1");
+      const iDiv2 = text.lastIndexOf(QUESTION_DIVIDER);
+      const iOpt2 = text.indexOf("Option 2");
+      if (
+        !(
+          iHeader >= 0 &&
+          iHeader < iDiv1 &&
+          iDiv1 < iOpt1 &&
+          iOpt1 < iDiv2 &&
+          iDiv2 < iOpt2
+        )
+      ) {
+        throw new Error(
+          `divider ordering must be Header < ─ > Option1 < ─ > Option2, got ` +
+            `header=${iHeader} div1=${iDiv1} opt1=${iOpt1} div2=${iDiv2} opt2=${iOpt2}`,
+        );
+      }
       const rows = calls[0].keyboard.inline_keyboard;
       if (rows.length !== 3) {
         throw new Error(`expected 3 keyboard rows, got ${rows.length}`);
@@ -1626,6 +1662,13 @@ ${expectedResultLine}`) ||
       const optionRow = rows[0];
       if (optionRow.length !== 2) {
         throw new Error(`expected 2 option buttons, got ${optionRow.length}`);
+      }
+      // 行内选项按钮文本必须是通用序号（Option 1/Option 2），不得显示原始
+      // 选项 label/name；callback_data 保持不变（fix/question-card-option-layout）。
+      if (optionRow[0].text !== "Option 1" || optionRow[1].text !== "Option 2") {
+        throw new Error(
+          `option buttons must be generic labels, got: ${JSON.stringify(optionRow)}`,
+        );
       }
       if (optionRow[0].callback_data !== "otg:q:req-201a:o0") {
         throw new Error(`unexpected option data: ${optionRow[0].callback_data}`);
@@ -1738,6 +1781,37 @@ ${expectedResultLine}`) ||
       if (!text.includes("是否允许读取该目录")) {
         throw new Error(`missing question text: ${text}`);
       }
+      // 单问题活动卡片 Type 值 = question (1 / 1)；分隔线 2 条（Header 后 +
+      // 选项间），末选项后无尾随分隔线（fix/question-card-option-layout）。
+      if (!text.includes("question (1 / 1)")) {
+        throw new Error(`Type value must be "question (1 / 1)", got: ${text}`);
+      }
+      if (text.split(QUESTION_DIVIDER).length - 1 !== 2) {
+        throw new Error(
+          `expected 2 dividers (after Header + between options), got ${
+            text.split(QUESTION_DIVIDER).length - 1
+          }: ${text}`,
+        );
+      }
+      const iHeader = text.indexOf("确认");
+      const iDiv1 = text.indexOf(QUESTION_DIVIDER);
+      const iOpt1 = text.indexOf("Option 1");
+      const iDiv2 = text.lastIndexOf(QUESTION_DIVIDER);
+      const iOpt2 = text.indexOf("Option 2");
+      if (
+        !(
+          iHeader >= 0 &&
+          iHeader < iDiv1 &&
+          iDiv1 < iOpt1 &&
+          iOpt1 < iDiv2 &&
+          iDiv2 < iOpt2
+        )
+      ) {
+        throw new Error(
+          `divider ordering must be Header < ─ > Option1 < ─ > Option2, got ` +
+            `header=${iHeader} div1=${iDiv1} opt1=${iOpt1} div2=${iDiv2} opt2=${iOpt2}`,
+        );
+      }
       const rows = calls[0].keyboard.inline_keyboard;
       if (rows.length !== 3) {
         throw new Error(
@@ -1747,6 +1821,12 @@ ${expectedResultLine}`) ||
       const optionRow = rows[0];
       if (optionRow.length !== 2) {
         throw new Error(`expected 2 option buttons, got ${optionRow.length}`);
+      }
+      // 行内选项按钮文本必须是通用序号，不得显示原始 label（fix/question-card-option-layout）。
+      if (optionRow[0].text !== "Option 1" || optionRow[1].text !== "Option 2") {
+        throw new Error(
+          `option buttons must be generic labels, got: ${JSON.stringify(optionRow)}`,
+        );
       }
       const customRow = rows[1];
       if (
@@ -2156,6 +2236,10 @@ ${expectedResultLine}`) ||
         if (!edit2 || !text2.includes("Question 1/2") || !text2.includes("Question 2/2")) {
           throw new Error(`summary edit must render all questions: ${JSON.stringify(fetches2)}`);
         }
+        // 总结阶段 Type 保留纯 "question"，不得渲染越界题号（question (3 / 2)）。
+        if (!text2.includes("question</td>") || text2.includes("question (")) {
+          throw new Error(`summary Type must stay plain "question": ${text2}`);
+        }
         const buttons2 = edit2.body.reply_markup?.inline_keyboard?.flatMap((row) => row) ?? [];
         if (!buttons2.some((button) => button.text === "✅ Submit")) {
           throw new Error(`summary keyboard must contain Submit: ${JSON.stringify(edit2.body)}`);
@@ -2202,6 +2286,14 @@ ${expectedResultLine}`) ||
         if (!edit || !edit.body.text.includes("✅ A")) {
           throw new Error(`refresh edit must show ✅ prefix: ${JSON.stringify(fetches)}`);
         }
+        // 选中态行内按钮必须显示通用序号 + ✅ 前缀（✅ Option 1），不得显示
+        // 原始 label（fix/question-card-option-layout）。
+        const kb1 = edit.body.reply_markup?.inline_keyboard ?? [];
+        if (kb1[0]?.[0]?.text !== "✅ Option 1") {
+          throw new Error(
+            `selected generic option button must be "✅ Option 1", got: ${JSON.stringify(kb1[0])}`,
+          );
+        }
         // 再点 A → toggle 掉：已选 0 项，✅ 前缀消失。
         const fetches2 = await runQCallback(monitor, "otg:q:req-202b:o0");
         persisted = await findRecord("req-202b");
@@ -2216,6 +2308,12 @@ ${expectedResultLine}`) ||
         if (!edit || edit.body.text.includes("✅ A")) {
           throw new Error(`refresh edit must drop ✅ prefix: ${JSON.stringify(fetches2)}`);
         }
+        const kb2 = edit.body.reply_markup?.inline_keyboard ?? [];
+        if (kb2[0]?.[0]?.text !== "Option 1") {
+          throw new Error(
+            `unselected generic option button must be "Option 1", got: ${JSON.stringify(kb2[0])}`,
+          );
+        }
         // 点 B → 已选 1 项。
         const fetches3 = await runQCallback(monitor, "otg:q:req-202b:o1");
         persisted = await findRecord("req-202b");
@@ -2224,6 +2322,14 @@ ${expectedResultLine}`) ||
         }
         if (persisted.q_answers != null) {
           throw new Error(`single-question multi-select must not auto-submit: ${JSON.stringify(persisted)}`);
+        }
+        // 点 B 后：Option 1 复原、Option 2 带 ✅ 前缀（通用序号 + 前缀）。
+        const edit3 = lastEdit(fetches3);
+        const kb3 = edit3?.body?.reply_markup?.inline_keyboard ?? [];
+        if (kb3[0]?.[0]?.text !== "Option 1" || kb3[0]?.[1]?.text !== "✅ Option 2") {
+          throw new Error(
+            `toggle B must show "Option 1" and "✅ Option 2", got: ${JSON.stringify(kb3[0])}`,
+          );
         }
       } finally {
         await registry.mutate((reg) => markSessionResolved(reg, "req-202b"));
