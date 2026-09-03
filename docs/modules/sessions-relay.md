@@ -2,7 +2,8 @@
 
 > 冻结: 2026-09-02（Round 1 / sessions-tg-relay；**Round 2 / tg-permission-buttons 扩展见 §13**；
 > Round 2.1 / 结构化渲染修订见 §13.11；**Round 3 / 单表渲染修订见 §13.12**；
-> Round 4 / question 向导见 §14；**Round 5 / 富文本编辑统一见 §15**）
+> Round 4 / question 向导见 §14；**Round 5 / 富文本编辑统一见 §15**；
+> **Round 6 / sessions-resolved-cleanup 见 §16**）
 > 文件: `src/registry/index.ts`（记录类型与纯函数）、
 > `src/monitor.ts`（写入端 Phase 1.2 / 扫描端 Phase 1.3）、`src/constants.ts`（扫描间隔常量，仅 Phase 1.3）
 > 计划: docs/todos/sessions-tg-relay.md（Round 1）、docs/todos/tg-permission-buttons.md（Round 2）、
@@ -303,6 +304,8 @@ export function markSessionSent(
 ## 10. 明确不做的事（防过度实现）
 
 - 不做 sessions 清理/去重/过期回收（`created_at` 仅预留，决策 #13）。
+  **（Round 6 supersede：sessions 清理已实现——resolved 删除 + 会话终结清理 + TTL 兜底
+  三条删除路径见 §16；`created_at` 由 TTL 兜底正式消费，「仅预留」不再成立。）**
 - 不改 `mutate`/锁/缓存/serialized/`writeAtomic`（projects-registry.md §3/§4 冻结）。
 - 不改 `PollerLock`、`SharedFileStore`。
 - 不把 `message` 展开为结构化字段（保持 JSON 字符串，决策 #2）。
@@ -349,6 +352,11 @@ export function markSessionSent(
 | 本文件 §14.3.3 文案表 custom 行 / §14.8.4 中文案行 | 均为 `直接回复文本作为答案，/cancel 取消` | **Round 1 supersede**：升级为 questionInputPromptText 新文案（§14.9.1）；custom 恒显示语义不变（§14.8.4 其余保持） |
 | 本文件 §8/§13.9/§14.5/§14.8.7 测试编号 | API-001~207 / API-301~304 / REG / REDACT / LOCK / BUILD | **Round 1 新增** API-208-1~4（§14.9.5）与 API-203-1/3/4 改判（§14.9.5）；维护归属见 §14.9.5 |
 | 本文件 §14.6/§14.8 编辑区间 | Round 4 / Round 2 区间划分 | Round 1 区间以 §14.9.6 为准（1.1/1.2 严格顺序：批次 A → 批次 B） |
+| 本文件 §4.2 `markSessionResolved` 契约 | 按 request_id 匹配 → 置 `resolved = true`（三态：无匹配 undefined / 已置位原引用 / 变更新引用） | **Round 6（sessions-resolved-cleanup）supersede**：`markSessionResolved` **导出删除**，由 `removeSessionRecord(registry, requestID)` 的三态删除语义取代（无匹配 undefined / 匹配新 registry **删除全部同 request_id 记录** / 空数组保留 `sessions: []` 键）；`markSessionSent` 与 send 置位语义零变化（§16.3） |
+| 本文件 §5.3 resolved 回写 | replied/rejected（含 v2/permissionID 变体）窗口外 → `mutate(markSessionResolved)` 置 resolved=true | **Round 6 supersede**：事件侧终态动作改为**删除记录**——汇聚点 `resolveWaitingRecord(requestID)`（方法名保留）内部改调 `removeSessionRecord`；mutate undefined → logWarn 静默容忍（§16.4） |
+| 本文件 §13.6 消费端 apply 成功置位 / §14.8.2 404 终态 | permission apply 成功、question apply 成功与 404 终态 → `markSessionResolved` 置 resolved=true | **Round 6 supersede**：成功路径与 404 终态改为**删除记录**——`applySessionReply` 成功 → `removeSessionRecord`；`markQuestionResolved`（方法名保留）内部改调 `removeSessionRecord`（§16.4） |
+| 本文件 §10「不做 sessions 清理」 | 不做 sessions 清理/去重/过期回收（`created_at` 仅预留，决策 #13） | **Round 6 supersede**：三条删除路径落地（① resolved/终态删除 ② 会话终结清理 ③ TTL 兜底），`created_at` 由 `SESSIONS_RECORD_TTL_MS` 兜底正式消费（§16；§10 原文已行内标注） |
+| 本文件 §8/§13.9/§14.5/§14.8.7/§14.9.5/§15.5 测试编号 | API-001~208 / API-301~304 / REG-101~301 / REDACT / REAL-RICH-EDIT / LOCK / BUILD | **Round 6 改判 + 新增**：API-004（a/b/c/d，终态 = 删除）、API-103/104、API-205-1~3、API-206-1~4 改判（终态断言 resolved=true → 记录删除）；新增 API-501~503 / API-504/504b / REG-401~403（§16.7） |
 
 ## 12. 变更记录
 
@@ -420,6 +428,20 @@ export function markSessionSent(
   无活取消静默（§14.9.3，supersede §14.3.2 第 5 步；clearQuestionInputs 保留不删但 monitor 不再
   调用）+ rebuildQuestionState 三处状态重建去重（§14.9.4）；测试 API-203-1/3/4 改判 + API-208-1~4
   新增（§14.9.5）；编辑区间 1.1/1.2 严格顺序批次 A → 批次 B（§14.9.6）。supersede 记录见 §11。
+- 2026-09-03 冻结（Round 6 / sessions-resolved-cleanup，见 §16）：**删除 `markSessionResolved`
+  导出** → `removeSessionRecord`（三态删除契约：无匹配 undefined / 匹配新 registry 删除全部同
+  request_id 记录 / 空数组保留 `sessions: []` 键；`markSessionSent` 与 send 置位零变化）；
+  新增纯函数 `removeSessionRecordsForSession`（按 session_id 跨全部条目删除会话全部记录）与
+  `removeExpiredSessionRecords`（`Date.parse(created_at)` 有限且 `< now - SESSIONS_RECORD_TTL_MS`
+  删除；不可定龄保留；无删除返回原 registry 引用短路零写盘）；事件侧 replied/rejected 回写、
+  permission 按钮 apply 成功、question apply 成功与 404 终态——动作从「置 resolved=true」改为
+  「删除记录」（resolveWaitingRecord / applySessionReply / markQuestionResolved 方法名保留，内部
+  换用 removeSessionRecord）；会话终结清理（session.error cancelled / session.deleted → 取消去抖
+  定时器 + 清 waitingByRequestID + cleanupSessionRecords 删除该会话全部落盘记录）；
+  scanSessionQueue TTL 兜底（SESSIONS_RECORD_TTL_MS = 7d，disposed 守卫后 read 前每轮 mutate
+  removeExpiredSessionRecords，仅 poller.lock 持有者执行，无过期零写盘）——同时清理历史遗留
+  resolved=true 记录（不做迁移）；测试编号 API-004/103/104/205/206 改判（终态 = 删除）、
+  API-501~503 / API-504/504b / REG-401~403 新增（§16.7）。supersede 记录见 §11。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
 
@@ -1805,3 +1827,189 @@ private async richEditMessage(
 - 不做权限/向导之外的富文本改造（/help 等 terminal 通知首次发送已达标，本轮不碰）。
 - 不把探针结论提前写死为契约正文（§15.2 判定规则是契约；赢家形态是探针结果，由任务报告与
   dev-lead 回写）。
+
+## 16. Round 6 扩展：sessions-resolved-cleanup（resolved 删除 + 会话终结清理 + TTL 兜底）（冻结 2026-09-03）
+
+> 本契约在当前源码已合并后冻结（main 47446f7「feat(monitor): delete resolved session records
+> with session cleanup and 7d ttl」），文档先行补记本轮契约；无独立 todo 文件。
+> 本章在 §2/§4/§5/§6/§10/§13/§14 之上追加扩展，supersede 记录见 §11。
+> **supersede §4.2 `markSessionResolved` 契约 与 §10「不做 sessions 清理」**：终态语义从
+> 「置 resolved=true」改为「删除记录」；清理路径共三条（① 终态删除 ② 会话终结清理 ③ TTL 兜底）。
+
+### 16.1 动机与上游事实（背景依据，冻结）
+
+- **动机**：此前记录终态只置 `resolved=true` 永不删除（决策 #5/#6），真实项目经长期运行后
+  `projects.json` 各条目 `sessions` 数组无限增长——resolved 记录既不再发送也不被消费，纯占盘。
+  本轮启用三条删除路径，`§10`「不做 sessions 清理/去重/过期回收（`created_at` 仅预留，决策
+  #13）」supersede：`created_at` 预留字段由 TTL 兜底（path ③）正式消费。
+- **上游事实（doc-prep 已核验，opencode v1.18.23 服务端源码实证）**：ESC 中止运行（abort /
+  Ctrl-C 中断当前轮）时**不发布任何 permission/question 终结事件**——Permission/Question 模块
+  的 interruption finalizer 只清内存 pending map，不发 `permission.replied` /
+  `question.replied/rejected`；插件可观测信号只有 `session.error`，其 error name
+  `MessageAbortedError` → `summarizeError()`（`src/format/coerce.ts:68-75`）输出
+  `cancelled: true`（`name === "MessageAbortedError" || name.toLowerCase().includes("abort")`）。
+  因此 ESC abort 的落盘记录必须由会话终结清理（path ②）删除，不能依赖事件侧回写（path ①）。
+
+### 16.2 三条删除路径总览（冻结）
+
+| 路径 | 触发 | 执行者 | 纯函数 | 时机 |
+|---|---|---|---|---|
+| ① 终态删除 | replied/rejected 事件、permission 按钮 apply 成功、question apply 成功与 404 终态 | 各汇聚点（§16.4） | `removeSessionRecord` | 终态达成即删 |
+| ② 会话终结清理 | `session.error` cancelled / `session.deleted` | `cleanupSessionRecords`（§16.5） | `removeSessionRecordsForSession` | 会话终结即删 |
+| ③ TTL 兜底 | 每轮 scanSessionQueue | poller.lock 持有者（1s 一轮） | `removeExpiredSessionRecords` | `created_at` 超 7 天 |
+
+### 16.3 registry 纯函数契约（Phase 1.1 已实现，冻结；supersede §4.2）
+
+#### 16.3.1 `removeSessionRecord`（supersede `markSessionResolved`，导出删除）
+
+`markSessionResolved` **导出删除**（源码已移除，仅注释/历史文档提及），由
+`removeSessionRecord(registry, requestID)` 替代（`src/registry/index.ts:326-342`）：
+
+```ts
+export function removeSessionRecord(
+  registry: ProjectRegistry,
+  requestID: string,
+): ProjectRegistry | undefined
+```
+
+三态语义（与 §4.2 同构，保持「mutate 短路不写盘」约定）：
+
+- **无匹配**（全条目无该 request_id）→ 返回 `undefined`（mutate 不写盘不抛错，与旧
+  `markSessionResolved` 的「无可标记记录」路径一致）。
+- **匹配** → 返回**新 registry 引用**：**删除全部同 request_id 记录**（跨全部条目、同条目多副本
+  全删——request_id 全局唯一，多副本仅来自跨进程竞态，一并删除防副本残留再次发送；顺序 =
+  projects 数组序 + sessions 数组序，精确相等匹配，无前缀匹配）。
+- 删除后**空数组保留 `sessions: []` 键**（条目不删，与 §3.2「全数组过滤后为空则保留空数组」
+  parse 容错一致；无 sessions 键的条目不参与匹配也不被触碰）。
+- **不区分 resolved/send/reply/q_\* 状态**：删除的就是整条记录，无字段保留（resolved=true 的
+  历史终态记录同样可删）。
+- `markSessionSent` 与 send 置位语义**零变化**（私有 `markSessionFlag` 只服务 send 置位，
+  resolved 分支删除）。
+
+#### 16.3.2 `removeSessionRecordsForSession`（新增，冻结）
+
+```ts
+export function removeSessionRecordsForSession(
+  registry: ProjectRegistry,
+  sessionID: string,
+): ProjectRegistry | undefined
+```
+
+- 跨**全部条目**按 `record.session_id === sessionID` 删除该会话**全部**记录，无视
+  resolved/reply/q_\* 状态（死会话的记录全是死记录）；精确相等匹配，无前缀匹配。
+- **无匹配 → `undefined`**（mutate 不写盘）；有匹配 → 新 registry，空 sessions 保留键
+  （同 §16.3.1）；无 sessions 键条目不参与也不被触碰。
+
+#### 16.3.3 `removeExpiredSessionRecords`（新增，冻结）
+
+```ts
+export function removeExpiredSessionRecords(
+  registry: ProjectRegistry,
+  now: number,
+): ProjectRegistry
+```
+
+- 跨全部条目删除 `Date.parse(record.created_at)` 为**有限数**且 `< now - SESSIONS_RECORD_TTL_MS`
+  （7 天）的记录；**不可定龄的记录保留**（created_at 不可解析/非法 → 永不删除——无法判断年龄
+  的记录不做猜测性删除）。
+- **边界（冻结）**：`created_at` 与截止线恰好相等（`=== cutoff`）**不删**（严格 `<`）。
+- **无删除 → 返回原 registry 引用**（mutate 的 `next === registry` 短路**零写盘**——每秒扫除一次，
+  无过期时不得产生磁盘写入）；有删除 → 新 registry，空 sessions 保留键。
+- 常量：`src/constants.ts` 新增 `export const SESSIONS_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1000;`
+  （仅本轮消费，见 §16.6）。
+
+### 16.4 终态删除：事件侧回写与消费端 apply（supersede §5.3/§13.6/§14.8.2，冻结）
+
+以下四类终态的动作从「置 resolved=true」**统一改为「删除记录」**（§16.3.1）；monitor 汇聚点
+**方法名全部保留**，内部换用 `removeSessionRecord`：
+
+| 汇聚点（`src/monitor.ts`） | 触发 | 变更 |
+|---|---|---|
+| `resolveWaitingRecord(requestID)`（1049-1060） | `permission.replied` / `permission.v2.replied`（含 permissionID 变体）、`question.replied/rejected` / `question.v2.replied/rejected`（§5.3 全变体） | `mutate(removeSessionRecord(reg, requestID))`（原 `markSessionResolved`） |
+| `applySessionReply(record)`（1725-1761） | permission 按钮 apply 成功（§13.6，API resolve） | 成功路径 `mutate(removeSessionRecord(reg, record.request_id))` |
+| `markQuestionResolved(record)`（1942-1953） | question apply 成功与 404 终态共用（§14.4.2/§14.8.2） | 成功路径与 404 终态均 `mutate(removeSessionRecord(reg, record.request_id))` |
+
+- **mutate 返回 `undefined`（抢锁超时或无匹配）一律 logWarn 静默容忍**：既有容忍路径不变
+  （§5.3 同款），不重试、不抛错。双路径竞态（事件路径与消费端同时删除同一记录）多一条
+  no-match warn 属**已知容忍**——记录已被另一方删除即无事可做。
+- 已 resolved 历史记录由筛选侧兼容跳过（`scanSessionQueue` 筛选与 `scanReplyQueue` 筛选保留
+  `resolved` 判断，兼容旧数据；新写记录不再产生 resolved=true 终态）。
+- 删除后，`resolved` 字段仅**历史数据/解析兼容**用途（parse 校验保留该字段，§2/§3.2 不变）。
+
+### 16.5 会话终结清理（新增，冻结；path ②）
+
+**两个事件分支**（`src/monitor.ts`）：
+
+- `session.error`（643-672）：`projection.pendingError?.cancelled === true`（ESC abort /
+  `MessageAbortedError` / abort 类错误，§16.1）→ 对 `projection.waitingByRequestID` 逐个
+  `cancelWaitingNotify(requestID)` 并 `clear()` 该表（**防去抖定时器晚到写入死记录**），再
+  `track(cleanupSessionRecords(sessionID))`。
+- `session.deleted`（597-627）：先清 idleTimer、对 waitingByRequestID 逐个
+  `cancelWaitingNotify`、删投影，再 `track(cleanupSessionRecords(id))`（id = sessionID 或
+  info.id 兜底）。
+
+**新私有方法（冻结）**：
+
+```ts
+private async cleanupSessionRecords(sessionID: string)
+```
+
+- 内部：`registry.mutate((reg) => removeSessionRecordsForSession(reg, sessionID))`；
+  mutate 返回 `undefined`（抢锁超时或无匹配记录）→ logWarn 一次，静默容忍，不抛错
+  （镜像 `resolveWaitingRecord` 风格）。
+- 语义：删除该会话全部落盘记录（无论终态/未发送/已发送）；不触碰其它会话记录。
+
+### 16.6 TTL 兜底（新增，冻结；path ③）
+
+- `src/constants.ts` 新增 `SESSIONS_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1000`（契约 §16.3.3）。
+- `scanSessionQueue`（1963-2049）在 **disposed 守卫之后、`registry.read()` 之前**每轮先执行
+  `await this.registry.mutate((reg) => removeExpiredSessionRecords(reg, Date.now()))`：
+  - **仅 poller.lock 持有者执行**（scanSessionQueue 只由持锁 ticker 驱动，§6.2 生命周期不变）；
+    1s 一轮。
+  - 无过期 → 纯函数返回原 registry 引用 → mutate 短路**零写盘**；
+  - mutate 返回 `undefined`（抢锁超时）→ logWarn 一次，容忍不抛错，本轮仍继续 read/发送。
+- **不做迁移**：历史遗留 `resolved=true` 记录不单独迁移，由 TTL 7 天自然回收（`created_at`
+  在旧记录上一直有写，§2 决策 #1；超 7 天即被扫除，未超期则继续被筛选跳过、无害残留）。
+
+### 16.7 测试编号契约（supersede §8/§13.9/§14.5/§14.8.7/§14.9.5 维护归属）
+
+**改判登记（终态断言 resolved=true → 记录删除）**：
+
+| 编号 | 定义（改判后） | 文件 |
+|---|---|---|
+| API-004（a/b/c/d） | replied/rejected 含 v2 与 permissionID 变体 → 按 request_id **删除**记录（原「置 resolved=true」） | `tests/behavior.test.mjs` |
+| API-103 | 消费端 apply：stub reply API 断言透传 → 记录**删除**（原 resolved=true）；reply=null / 已 resolved 不触发 | `tests/sessions-poller.test.mjs` |
+| API-104 | ①apply 失败保留记录、下轮重试成功 → 删除；②事件路径先删除 → 跳过不调 API | 同上 |
+| API-205-1~3 | q_answers/q_reject apply 成功 → 记录删除；失败重试成功后删除；事件路径先删除跳过 | 同上 |
+| API-206-1~4 | 分层通道② 命中/① 扁平直用/404 终态/非 404 降级重试成功 → 记录删除（404 终态 = 删除不再重试） | 同上 |
+
+**新增编号（Round 6）**：
+
+| 编号 | 定义 | 文件 |
+|---|---|---|
+| API-501 | ESC abort（session.error + error.name=MessageAbortedError）→ 该 session 已落盘记录删除 | `tests/behavior.test.mjs` |
+| API-502 | 去抖窗口内 ESC abort → permission 记录从未写入（timer 取消，零落盘） | 同上 |
+| API-503 | session.deleted → 该 session 记录删除、其它 session 记录保留 | 同上 |
+| API-504 | scanSessionQueue TTL 扫除：8 天旧记录先扫后删**且从未发送**；新鲜记录正常发送置 send=true | `tests/sessions-poller.test.mjs` |
+| API-504b | 无过期 sweep no-op：记录不丢、send=true 不重复发送、剩余 pending 正常发送 | 同上 |
+| REG-401 | `removeSessionRecord` 三态（无匹配 undefined / 新引用全删同 request_id 多副本 / 前缀不匹配）+ 空数组保留 `sessions: []` 键 + 无 sessions 条目不参与 | `tests/registry-sessions.test.mjs` |
+| REG-402 | `removeSessionRecordsForSession` 跨条目按 session_id 全删（无视状态）；无匹配 undefined；其它会话不动；空键保留 | 同上 |
+| REG-403 | `removeExpiredSessionRecords` 三态 + TTL 边界（=cutoff 不删）+ 不可定龄保留 + 原引用 + mutate 集成（扫除持久化 / 无过期零写盘） | 同上（含 integrate 用例） |
+
+### 16.8 删除后的降级路径（已知容忍，冻结）
+
+- 已删除记录上的 **stale TG 按钮点击**：回调侧 `registry.read()` 找到记录前先查无（§13.5/§14.3.1
+  无匹配分支）→ 走既有「记录不存在或已失效」answer 路径，无需新代码。
+- **双删除竞态**（事件路径与消费端 apply 同时命中）：一方删除成功、另一方 mutate 返回 undefined
+  （无匹配）→ logWarn 一条 no-match warn，属已知容忍（§16.4）。
+- **ESC 极端时序**（abort 后未收到 `session.error` / cancelled 判定失败）：记录不触发 path ②，
+  由 path ③ TTL 7 天兜底回收；未超期期间被发送条件（resolved/reply/q_*）筛选跳过属安全残留。
+
+### 16.9 明确不做（防过度实现）
+
+- **不做 legacy `resolved=true` 记录迁移**（TTL 自然回收，§16.6；parse 保留 resolved 字段仅兼容）。
+- **不做 `/sessions` 命令**（仍为 PLANNED_COMMANDS；本文件 §10/§13.10/§14.7 同款）。
+- 不改 `mutate`/锁/缓存/serialized/PollerLock/SharedFileStore（projects-registry.md §3/§4 保持
+  零改动）；不改 `markSessionSent` 语义；不改发送条件与发送链（§13.3/§14.2.2 筛选条件零变化）。
+- 不引入回收站/备份；删除即物理删除，无任何恢复路径（本插件只读中继，记录可随事件重建）。
+- 不做跨进程删除协调（mutate 幂等 + undefined 容忍已覆盖，不引入认领/锁外协调）。
