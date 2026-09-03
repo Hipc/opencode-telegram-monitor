@@ -3110,6 +3110,12 @@ export class TelegramSessionMonitor {
         chatID,
         messageID,
       );
+      // Round 2（实机反馈）：弹窗 toast 一闪即逝，追加一条独立持久提示消息作为
+      // 纯文本输入的锚点；与取消消息同通道（enqueueMessage 入队 sendTail 串行，
+      // 多记录取消场景「A 取消消息 → 本提示消息」顺序天然正确）。
+      this.enqueueMessage(
+        paragraph(questionInputPromptText(projectLabel, current, ctx)),
+      );
       return;
     }
 

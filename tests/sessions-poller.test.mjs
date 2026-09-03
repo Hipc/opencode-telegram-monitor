@@ -2636,6 +2636,10 @@ ${expectedResultLine}`) ||
         if (!sent.join(" ").includes("已记录第 1 题答案")) {
           throw new Error(`confirmation message missing: ${JSON.stringify(sent)}`);
         }
+        // Round 2：custom 独立提示消息（与取消消息同通道的持久锚点消息）
+        if (!sent.join(" ").includes("请输入 project 的 补充说明头 答案，如果放弃输入请输入 /cancel")) {
+          throw new Error(`custom entry prompt message missing: ${JSON.stringify(sent)}`);
+        }
       } finally {
         await registry.mutate((reg) => markSessionResolved(reg, "req-203a"));
         await monitor.dispose();
@@ -2846,8 +2850,17 @@ ${expectedResultLine}`) ||
         ),
       );
       const monitor = new TelegramSessionMonitor(fakeClient, fakeConfig, root, registry);
+      const sent = [];
+      monitor.sendMessage = async (text) => {
+        sent.push(text);
+      };
       try {
         const fetches = await runQCallback(monitor, "otg:q:req-203e:custom");
+        await monitor.sendTail;
+        // Round 2：custom 独立提示消息（无 custom 字段题恒可用语义下同样发送）
+        if (!sent.join(" ").includes("请输入 project 的 补充说明头 答案，如果放弃输入请输入 /cancel")) {
+          throw new Error(`custom entry prompt message missing: ${JSON.stringify(sent)}`);
+        }
         const ans = answersOf(fetches);
         if (
           ans.length !== 1 ||
@@ -3632,9 +3645,14 @@ ${expectedResultLine}`) ||
         const fetches = await runQCallback(monitor, "otg:q:req-208b:custom");
         await monitor.sendTail;
 
-        // ① sent 收到 A 的取消消息 `${projectLabel} 的 {A 问题正文} 输入被取消`
-        if (sent.length !== 1 || !sent[0].includes("project 的 问题正文A 输入被取消")) {
-          throw new Error(`expected cancel message for A: ${JSON.stringify(sent)}`);
+        // ① sent = 2 条：A 的取消消息 `${projectLabel} 的 {A 问题正文} 输入被取消` 先入队，
+        //    B 的独立提示模板消息后入队（enqueueMessage 串行，顺序天然正确）
+        if (
+          sent.length !== 2 ||
+          !sent[0].includes("project 的 问题正文A 输入被取消") ||
+          !sent[1].includes("请输入 project 的 头部B 答案")
+        ) {
+          throw new Error(`expected A cancel message then B prompt message: ${JSON.stringify(sent)}`);
         }
         // ② A.q_input 清除（盘上）
         const a = await findRecord("req-208a");
@@ -3706,9 +3724,13 @@ ${expectedResultLine}`) ||
         const fetches = await runQCallback(monitor, "otg:q:req-208d:custom");
         await monitor.sendTail;
 
-        // ① sent 为空（无取消消息，A 失效静默）
-        if (sent.length !== 0) {
-          throw new Error(`expected no cancel message for resolved record: ${JSON.stringify(sent)}`);
+        // ① sent = 1 条：B 的独立提示模板消息（A 失效静默清，无取消消息）
+        if (
+          sent.length !== 1 ||
+          !sent[0].includes("请输入 project 的 头部D 答案") ||
+          sent[0].includes("输入被取消")
+        ) {
+          throw new Error(`expected only B prompt message, no cancel: ${JSON.stringify(sent)}`);
         }
         // ② A.q_input 清除（盘上）
         const a = await findRecord("req-208c");
@@ -3759,9 +3781,13 @@ ${expectedResultLine}`) ||
         const fetches2 = await runQCallback(monitor, "otg:q:req-208e:custom");
         await monitor.sendTail;
 
-        // ① sent 为空（exclude 自己不取消）
-        if (sent.length !== 0) {
-          throw new Error(`expected no cancel message on idempotent custom click: ${JSON.stringify(sent)}`);
+        // ① sent = 2 条提示消息（exclude 自己不取消；每次 Custom 各发一条独立提示）
+        if (
+          sent.length !== 2 ||
+          sent.some((text) => text.includes("输入被取消")) ||
+          !sent.every((text) => text.includes("请输入 project 的 头部E 答案"))
+        ) {
+          throw new Error(`expected two prompt messages, no cancel on idempotent click: ${JSON.stringify(sent)}`);
         }
         // ② q_input 不被清（两次后仍为原值 0）
         const rec = await findRecord("req-208e");
