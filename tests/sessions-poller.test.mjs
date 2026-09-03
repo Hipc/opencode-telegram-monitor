@@ -156,6 +156,29 @@ async function main() {
     return undefined;
   }
 
+  // API-000-1：共享 fieldTable 助手全局输出原生 Telegram 富文本表格
+  // `<table bordered compact>`（feat/bordered-rich-tables）——question、permission、
+  // session 状态、usage、todos、startup 全部消费方共用该出口，改一处即
+  // 全局生效；同时禁止退回裸 `<table compact>`。
+  await runCase(
+    "API-000-1 fieldTable helper emits native bordered compact table",
+    async () => {
+      const { fieldTable, fieldRow } = await import(
+        "../src/format/html.ts"
+      );
+      const html = fieldTable([
+        fieldRow("Type", "question"),
+        fieldRow("Session", "ses-format"),
+      ]);
+      if (!html.includes("<table bordered compact>")) {
+        throw new Error(`fieldTable must emit bordered compact table: ${html}`);
+      }
+      if (html.includes("<table compact>")) {
+        throw new Error(`fieldTable must not emit bare compact table: ${html}`);
+      }
+    },
+  );
+
   // API-006-1：send=false && resolved=false → 发送恰 1 次（格式含 ⚠️/
   // Type/Session/message 节选）→ 置位 send=true。
   await runCase(
@@ -1400,7 +1423,7 @@ async function main() {
         !editText ||
         !editText.endsWith(`
 ${expectedResultLine}`) ||
-        !editText.includes("<table compact>") ||
+        !editText.includes("<table bordered compact>") ||
         editText.includes("ORIGINAL")
       ) {
         throw new Error(
@@ -1530,8 +1553,9 @@ ${expectedResultLine}`) ||
   function questionMessage(questions) {
     return JSON.stringify({ questions });
   }
-  // 选项卡分隔线（fix/question-card-option-layout）：Unicode thin solid
-  // divider，Telegram 无法可靠渲染灰色文本，用该线近似分段。
+  // 旧选项卡分隔线（fix/question-card-option-layout 曾引入）：feat/
+  // bordered-rich-tables 起原生表边框取代，Unicode thin solid divider
+  // 必须从 question 卡片中完全消失。
   const QUESTION_DIVIDER = "────────";
 
   // API-201-1：多问题请求（Q1 为 multiple + custom）→ 键盘发送恰 1 次；文本
@@ -1627,32 +1651,35 @@ ${expectedResultLine}`) ||
       if (!text.includes("question (1 / 2)")) {
         throw new Error(`Type value must be "question (1 / 2)", got: ${text}`);
       }
-      // 分隔线冻结：Header → ──────── → Option 1 → ──────── → Option 2，
-      // 共 2 条（Header 后 + 选项间各 1），末选项后无尾随分隔线。
-      if (text.split(QUESTION_DIVIDER).length - 1 !== 2) {
+      // 原生表边框取代分隔线（feat/bordered-rich-tables）：零 Unicode
+      // divider、零 colspan 分隔行；Header/Question 与选项行保持普通行序
+      // （Question 文本 → Header → Option 1 → Option 2）。
+      if (text.includes(QUESTION_DIVIDER)) {
         throw new Error(
-          `expected 2 dividers (after Header + between options), got ${
-            text.split(QUESTION_DIVIDER).length - 1
-          }: ${text}`,
+          `question card must have zero Unicode dividers, got: ${text}`,
+        );
+      }
+      if (text.includes("colspan")) {
+        throw new Error(
+          `question card must have zero colspan divider rows: ${text}`,
+        );
+      }
+      if (!text.includes("<table bordered compact>")) {
+        throw new Error(
+          `question card table must be bordered compact: ${text}`,
         );
       }
       const iHeader = text.indexOf("操作选择");
-      const iDiv1 = text.indexOf(QUESTION_DIVIDER);
+      const iQtext = text.indexOf("请选择操作方式");
       const iOpt1 = text.indexOf("Option 1");
-      const iDiv2 = text.lastIndexOf(QUESTION_DIVIDER);
       const iOpt2 = text.indexOf("Option 2");
       if (
-        !(
-          iHeader >= 0 &&
-          iHeader < iDiv1 &&
-          iDiv1 < iOpt1 &&
-          iOpt1 < iDiv2 &&
-          iDiv2 < iOpt2
-        )
+        iQtext < 0 ||
+        !(iQtext < iHeader && iHeader < iOpt1 && iOpt1 < iOpt2)
       ) {
         throw new Error(
-          `divider ordering must be Header < ─ > Option1 < ─ > Option2, got ` +
-            `header=${iHeader} div1=${iDiv1} opt1=${iOpt1} div2=${iDiv2} opt2=${iOpt2}`,
+          `row order must be Question text < Header < Option 1 < Option 2, got ` +
+            `qtext=${iQtext} header=${iHeader} opt1=${iOpt1} opt2=${iOpt2}`,
         );
       }
       const rows = calls[0].keyboard.inline_keyboard;
@@ -1781,35 +1808,38 @@ ${expectedResultLine}`) ||
       if (!text.includes("是否允许读取该目录")) {
         throw new Error(`missing question text: ${text}`);
       }
-      // 单问题活动卡片 Type 值 = question (1 / 1)；分隔线 2 条（Header 后 +
-      // 选项间），末选项后无尾随分隔线（fix/question-card-option-layout）。
+      // 单问题活动卡片同样零 Unicode divider / 零 colspan 分隔行；其值为
+      // question (1 / 1)；Question/Header/选项保持普通行序（feat/
+      // bordered-rich-tables 后原生表边框取代分隔线）。
       if (!text.includes("question (1 / 1)")) {
         throw new Error(`Type value must be "question (1 / 1)", got: ${text}`);
       }
-      if (text.split(QUESTION_DIVIDER).length - 1 !== 2) {
+      if (text.includes(QUESTION_DIVIDER)) {
         throw new Error(
-          `expected 2 dividers (after Header + between options), got ${
-            text.split(QUESTION_DIVIDER).length - 1
-          }: ${text}`,
+          `question card must have zero Unicode dividers, got: ${text}`,
+        );
+      }
+      if (text.includes("colspan")) {
+        throw new Error(
+          `question card must have zero colspan divider rows: ${text}`,
+        );
+      }
+      if (!text.includes("<table bordered compact>")) {
+        throw new Error(
+          `question card table must be bordered compact: ${text}`,
         );
       }
       const iHeader = text.indexOf("确认");
-      const iDiv1 = text.indexOf(QUESTION_DIVIDER);
+      const iQtext = text.indexOf("是否允许读取该目录");
       const iOpt1 = text.indexOf("Option 1");
-      const iDiv2 = text.lastIndexOf(QUESTION_DIVIDER);
       const iOpt2 = text.indexOf("Option 2");
       if (
-        !(
-          iHeader >= 0 &&
-          iHeader < iDiv1 &&
-          iDiv1 < iOpt1 &&
-          iOpt1 < iDiv2 &&
-          iDiv2 < iOpt2
-        )
+        iQtext < 0 ||
+        !(iQtext < iHeader && iHeader < iOpt1 && iOpt1 < iOpt2)
       ) {
         throw new Error(
-          `divider ordering must be Header < ─ > Option1 < ─ > Option2, got ` +
-            `header=${iHeader} div1=${iDiv1} opt1=${iOpt1} div2=${iDiv2} opt2=${iOpt2}`,
+          `row order must be Question text < Header < Option 1 < Option 2, got ` +
+            `qtext=${iQtext} header=${iHeader} opt1=${iOpt1} opt2=${iOpt2}`,
         );
       }
       const rows = calls[0].keyboard.inline_keyboard;
@@ -3533,8 +3563,8 @@ ${expectedResultLine}`) ||
           throw new Error(`option edit must not have bare text: ${JSON.stringify(rawEdit1.body)}`);
         }
         const edit1 = lastEdit(fetches1);
-        if (!edit1.body.rich_message.html.includes("<table compact>")) {
-          throw new Error(`option edit rich_message must contain table: ${edit1.body.rich_message.html}`);
+        if (!edit1.body.rich_message.html.includes("<table bordered compact>")) {
+          throw new Error(`option edit rich_message must contain bordered table: ${edit1.body.rich_message.html}`);
         }
         if (!edit1.body.reply_markup || !edit1.body.reply_markup.inline_keyboard) {
           throw new Error(`option edit must retain keyboard: ${JSON.stringify(edit1.body)}`);
@@ -3551,8 +3581,8 @@ ${expectedResultLine}`) ||
         if (editSubmit.body.rich_message.html.includes("PLAIN-LEAK")) {
           throw new Error(`submit edit must not leak callback plain text: ${editSubmit.body.rich_message.html}`);
         }
-        if (!editSubmit.body.rich_message.html.includes("<table compact>")) {
-          throw new Error(`submit edit must contain table: ${editSubmit.body.rich_message.html}`);
+        if (!editSubmit.body.rich_message.html.includes("<table bordered compact>")) {
+          throw new Error(`submit edit must contain bordered table: ${editSubmit.body.rich_message.html}`);
         }
         if (!editSubmit.body.rich_message.html.endsWith(String.fromCharCode(10) + "✅ Submitted")) {
           throw new Error(`submit edit must end with Submitted: ${editSubmit.body.rich_message.html}`);
@@ -3613,8 +3643,8 @@ ${expectedResultLine}`) ||
         if (edit.body.rich_message.html.includes("PLAIN-LEAK")) {
           throw new Error(`permission edit must not contain callback text: ${edit.body.rich_message.html}`);
         }
-        if (!edit.body.rich_message.html.includes("<table compact>")) {
-          throw new Error(`permission edit must contain rich table: ${edit.body.rich_message.html}`);
+        if (!edit.body.rich_message.html.includes("<table bordered compact>")) {
+          throw new Error(`permission edit must contain bordered rich table: ${edit.body.rich_message.html}`);
         }
         if (!edit.body.rich_message.html.endsWith(String.fromCharCode(10) + "✅ Allowed once")) {
           throw new Error(`permission edit must end with result line: ${edit.body.rich_message.html}`);

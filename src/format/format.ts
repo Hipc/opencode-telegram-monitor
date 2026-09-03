@@ -365,9 +365,9 @@ export function questionInputCancelledText(
  * 活动阶段（stage < questions.length）：
  * - Type 值 = `question (n / m)`，n=当前 1-based 题号、m=总题数，`/` 两侧带
  *   空格；总结阶段保留纯 `question`（不渲染越界 m+1 题号）。
- * - 选项行前各插一条分隔线 `────────`（Header 后或 Question 行后一条 + 每对
- *   选项之间一条），末选项后无尾随分隔线。Telegram 无法可靠渲染灰色文本，
- *   Unicode thin solid divider 是批准的近似。
+ * - 无 Unicode 分隔线行：原生表格边框（`<table bordered compact>`，
+ *   feat/bordered-rich-tables）取代 `────────` 分段，Header/Question 与
+ *   选项行保持普通行序。
  */
 export function buildQuestionStageText(
   projectLabel: string,
@@ -405,15 +405,10 @@ export function buildQuestionStageText(
         );
       }
       const options = Array.isArray(current.options) ? current.options : [];
-      // 分隔线行（fix/question-card-option-layout）：Telegram 无法可靠渲染
-      // 灰色文本，用 Unicode thin solid divider `────────` 近似分段；colspan
-      // 跨两列渲染为整行细线（Rich Message 表格单元格支持 colspan）。
-      const OPTION_DIVIDER_ROW = '<tr><td colspan="2">────────</td></tr>';
+      // 无分隔线行（feat/bordered-rich-tables）：原生表边框取代 Unicode
+      // `────────` 分段，Header/Question 与选项行保持普通行序。
       options.forEach((option, index) => {
         if (typeof option?.label !== "string") return;
-        // 每个选项行前插一条分隔线：Header 块（或 Question 行）与 Option 1
-        // 之间、以及每对选项之间各一条；末选项后无尾随分隔线。
-        rows.push(OPTION_DIVIDER_ROW);
         const multiple = current.multiple === true;
         const selected = (draft[stage] ?? []).includes(option.label);
         const label = safeTextKeepPaths(option.label, 200, ctx);
