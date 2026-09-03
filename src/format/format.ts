@@ -354,12 +354,20 @@ export function questionInputCancelledText(
 }
 
 /**
- * question 向导单阶段文本渲染（契约 sessions-relay.md §14.2.1，Round 4）：
+ * question 向导单阶段文本渲染（契约 sessions-relay.md §14.2.1，Round 4；
+ * fix/question-card-option-layout 修订）：
  * titleLine(❓, projectLabel) + **单张** fieldTable（Type/Session/Question m/n/
  * Header/选项行同表），整体经 limitMessage 截断。问题/选项/Header 文本值经
  * safeTextKeepPaths（密钥/token 脱敏链同 safeText，跳过路径类规则——问题文本
  * 含真实路径时原样展示）。纯函数，供 scanSessionQueue（初始消息）与回调状态机
  * （阶段编辑，Phase 1.3）复用。
+ *
+ * 活动阶段（stage < questions.length）：
+ * - Type 值 = `question (n / m)`，n=当前 1-based 题号、m=总题数，`/` 两侧带
+ *   空格；总结阶段保留纯 `question`（不渲染越界 m+1 题号）。
+ * - 选项行前各插一条分隔线 `────────`（Header 后或 Question 行后一条 + 每对
+ *   选项之间一条），末选项后无尾随分隔线。Telegram 无法可靠渲染灰色文本，
+ *   Unicode thin solid divider 是批准的近似。
  */
 export function buildQuestionStageText(
   projectLabel: string,
@@ -371,8 +379,13 @@ export function buildQuestionStageText(
   inputPending: boolean,
   ctx: FormatContext,
 ): string {
+  // 活动阶段 Type 带当前题号（fix/question-card-option-layout）。
+  const typeValue =
+    stage < questions.length
+      ? `${type} (${stage + 1} / ${questions.length})`
+      : type;
   const rows = [
-    fieldRow("Type", type),
+    fieldRow("Type", typeValue),
     fieldRow("Session", sessionLabel),
   ];
   if (stage < questions.length) {
@@ -392,8 +405,15 @@ export function buildQuestionStageText(
         );
       }
       const options = Array.isArray(current.options) ? current.options : [];
+      // 分隔线行（fix/question-card-option-layout）：Telegram 无法可靠渲染
+      // 灰色文本，用 Unicode thin solid divider `────────` 近似分段；colspan
+      // 跨两列渲染为整行细线（Rich Message 表格单元格支持 colspan）。
+      const OPTION_DIVIDER_ROW = '<tr><td colspan="2">────────</td></tr>';
       options.forEach((option, index) => {
         if (typeof option?.label !== "string") return;
+        // 每个选项行前插一条分隔线：Header 块（或 Question 行）与 Option 1
+        // 之间、以及每对选项之间各一条；末选项后无尾随分隔线。
+        rows.push(OPTION_DIVIDER_ROW);
         const multiple = current.multiple === true;
         const selected = (draft[stage] ?? []).includes(option.label);
         const label = safeTextKeepPaths(option.label, 200, ctx);
@@ -444,7 +464,8 @@ export function buildQuestionStageText(
  * question 向导键盘（契约 sessions-relay.md §14.2.1，Round 4；Round 2 修订）：
  * 行序冻结——
  * 1) 选项行（`questions[stage].options` 逐项平铺，data `otg:q:<entryID>:o<idx>`；
- * 多选且已选 → `✅ label`）；2) custom 行（**恒显示**——契约 §14.8.4，Round 2
+ * 文本恒为通用序号 `Option <idx+1>`，多选且已选 → `✅ Option <idx+1>`——
+ * 绝不显示原始 label，fix/question-card-option-layout）；2) custom 行（**恒显示**——契约 §14.8.4，Round 2
  * 修订：真实 question payload 从不带 `custom: true`，移除 `custom === true` 条件，
  * 有 current 即渲染）；3) 导航/提交行（多问题：非总结
  * `⬅️ Prev/➡️ Next/❌ Cancel`，总结 `⬅️ Prev/✅ Submit/❌ Cancel`——契约 §14.8.5，
@@ -471,10 +492,13 @@ export function buildQuestionKeyboard(
       const multiple = current.multiple === true;
       rows.push(
         options.map((option, idx) => ({
+          // fix/question-card-option-layout：行内按钮恒为通用序号文本
+          // `Option <idx+1>`（多选已选加 ✅ 前缀），绝不显示原始 label/name；
+          // callback_data `o<idx>` 保持不变。
           text:
             multiple && selected.includes(option.label)
-              ? `✅ ${option.label}`
-              : option.label,
+              ? `✅ Option ${idx + 1}`
+              : `Option ${idx + 1}`,
           callback_data: `${OTG_Q_CB_PREFIX}${entryID}:o${idx}`,
         })),
       );
