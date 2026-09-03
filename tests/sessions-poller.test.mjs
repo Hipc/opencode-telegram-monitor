@@ -2565,6 +2565,7 @@ ${expectedResultLine}`) ||
           questionWizardRecord("req-203a", [
             {
               question: "补充说明",
+              header: "补充说明头",
               options: [{ label: "默认" }],
               custom: true,
             },
@@ -2585,11 +2586,11 @@ ${expectedResultLine}`) ||
           throw new Error(`q_input not persisted: ${JSON.stringify(persisted)}`);
         }
         let ans = answersOf(fetches);
-        if (ans.length !== 1 || ans[0].body.text !== "直接回复文本作为答案，/cancel 取消") {
+        if (ans.length !== 1 || ans[0].body.text !== "请输入 project 的 补充说明头 答案，如果放弃输入请输入 /cancel") {
           throw new Error(`custom entry answer expected: ${JSON.stringify(fetches)}`);
         }
         let edit = lastEdit(fetches);
-        if (!edit || !edit.body.text.includes("✏️ 回复文本作为答案，/cancel 取消")) {
+        if (!edit || !edit.body.text.includes("✏️ 请输入 project 的 补充说明头 答案，如果放弃输入请输入 /cancel")) {
           throw new Error(`custom edit must show input hint: ${JSON.stringify(fetches)}`);
         }
         if (!edit.body.reply_markup?.inline_keyboard) {
@@ -2789,7 +2790,7 @@ ${expectedResultLine}`) ||
           reg,
           root,
           questionWizardRecord("req-203e", [
-            { question: "普通题", options: [{ label: "A" }] },
+            { question: "普通题", header: "补充说明头", options: [{ label: "A" }] },
           ]),
         ),
       );
@@ -2799,12 +2800,12 @@ ${expectedResultLine}`) ||
         const ans = answersOf(fetches);
         if (
           ans.length !== 1 ||
-          ans[0].body.text !== "直接回复文本作为答案，/cancel 取消"
+          ans[0].body.text !== "请输入 project 的 补充说明头 答案，如果放弃输入请输入 /cancel"
         ) {
           throw new Error(`custom entry answer expected: ${JSON.stringify(fetches)}`);
         }
         const edit = lastEdit(fetches);
-        if (!edit || !edit.body.text.includes("✏️ 回复文本作为答案，/cancel 取消")) {
+        if (!edit || !edit.body.text.includes("✏️ 请输入 project 的 补充说明头 答案，如果放弃输入请输入 /cancel")) {
           throw new Error(`custom edit must show input hint: ${JSON.stringify(fetches)}`);
         }
         if (!edit.body.reply_markup?.inline_keyboard) {
