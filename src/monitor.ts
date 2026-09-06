@@ -1472,6 +1472,9 @@ export class TelegramSessionMonitor {
     // 多实例共享一个 bot token：只有持有轮询锁的实例执行 getUpdates，
     // 否则多个长轮询会随机分发 update 且 offset 各自推进，导致重复投递
     //（一个点击被处理两次）与菜单闪烁。非轮询实例定期重试抢占。
+    // release() 兜底：上次轮询意外终止（锁被偷/进程残留 owner 标志）时，
+    // 先丢弃本地 owner 标志，避免幽灵 owner 让后续 touch() 误判为仍持有锁。
+    await this.pollerLock.release();
     const acquired = await this.pollerLock.tryAcquire();
     if (!acquired) {
       dline("poller lock held elsewhere; scheduling retry");
@@ -1537,6 +1540,13 @@ export class TelegramSessionMonitor {
           );
           backoff = 1_000;
           await this.pollerLock.touch();
+          // 锁被其它实例抢占（本实例 getUpdates 长时间无返回/持续失败超过 TTL
+          // 期间未 touch）后，touch() 已把本地 owner 置 false。必须在此退出轮询
+          // 并释放，否则本实例继续 getUpdates 会与新的锁持有者双轮询 → Telegram 409。
+          if (!this.pollerLock.isOwner()) {
+            dline("poller lock lost; stopping poll loop");
+            return;
+          }
 
           dline(`getUpdates: returned ${updates.length} update(s)`);
           for (const update of updates) {
@@ -1559,7 +1569,29 @@ export class TelegramSessionMonitor {
             error: errorCategory(error, { root: this.root, botToken: this.config.botToken }),
             retryMs: backoff,
           });
-          await this.sleep(backoff);
+          // 失败期间持续 touch 保活：只要锁仍归本实例，就刷新 TTL，
+          // 避免短暂故障窗口超过 60s 导致锁被其它实例抢占后双轮询（409）。
+          // touch() 若发现锁已被抢占会置 owner=false，这里立即检查并退出，
+          // 不能等下一轮（否则还会再发一次 getUpdates 造成 409）。
+          await this.pollerLock.touch();
+          if (!this.pollerLock.isOwner()) {
+            dline("poller lock lost during error backoff; stopping poll loop");
+            return;
+          }
+          // 分段 sleep + 周期 touch：指数退避最长 30s，若整段 sleep 不 touch，
+          // 多轮失败累积后锁文件仍可能超过 TTL（60s）被抢占。每 10s 唤醒一次
+          // 刷新 mtime，确保长故障窗口内锁始终归本实例（409 预防的核心）。
+          const touchEveryMs = 10_000;
+          while (backoff > 0) {
+            const chunk = Math.min(backoff, touchEveryMs);
+            await this.sleep(chunk);
+            backoff -= chunk;
+            await this.pollerLock.touch();
+            if (!this.pollerLock.isOwner()) {
+              dline("poller lock lost during error backoff; stopping poll loop");
+              return;
+            }
+          }
           backoff = Math.min(backoff * 2, 30_000);
         }
       }

@@ -104,6 +104,10 @@ export class PollerLock {
     }
   }
 
+  isOwner(): boolean {
+    return this.owner;
+  }
+
   async touch() {
     if (!this.owner) return;
     try {
