@@ -1,7 +1,7 @@
 # 00 — 项目总览（opencode-telegram-monitor）
 
 > 更新: 2026-09-25（opencode v2 适配轮：目标 v2.0.15，集成契约 docs/modules/opencode-v2-contract.md；
-> 移除 todo 投影——v2 不可观测，用户决策 2026-09-25；此前更新见 git 历史）
+> 移除 todo 投影——v2 不可观测，用户决策 2026-09-25；发布版本 1.0.0 落定（06）；此前更新见 git 历史）
 
 ## 技术栈
 
@@ -19,15 +19,17 @@
 
 ## 是什么
 
-只读 opencode 插件：监听 opencode 会话，把生命周期、token 用量、等待中的权限/提问等状态推送到 Telegram 机器人。**只读是刻意设计**——审批与回答永远留在 opencode 本体，插件绝不代答（回写仅由用户显式点击 TG 按钮触发）。
+只读 opencode 插件：监听 opencode 会话，把生命周期、token 用量、等待中的权限/提问等状态推送到 Telegram 机器人。**只读是刻意设计**——审批与回答永远留在 opencode 本体，插件绝不代答（回写仅由用户显式点击/提交 TG 按钮触发：permission 三按钮、question 向导）。
 
-> **2026-09-25（v2 适配轮）**：目标 opencode **v2.0.15**；**todo 投影已移除**（用户决策：v2.0.15
-> 四路验证不可观测，见 opencode-v2-contract.md §6）；v1 用户继续使用已发布 0.6.x。
+> **2026-09-25（v2 适配轮）**：目标 opencode **v2.0.15**；发布版本 **1.0.0**（破坏性：v2-only）；
+> **todo 投影已移除**（用户决策：v2.0.15 四路验证不可观测，见 opencode-v2-contract.md §6）；
+> v1 用户继续使用已发布 0.6.x。
 
 > **2026-09-02 起修订（Round 2 / tg-permission-buttons）**：permission 记录支持 TG 三按钮回写
 > （Allow once / Allow always / Deny）——点击后经 opencode 官方 permission reply API 应用到
-> 真实 session。**仅在用户显式点击按钮时触发**；question 与其它一切审批/回答流程仍留在 opencode，
-> 插件绝不擅自代答。契约见 docs/modules/sessions-relay.md §13（supersede 记录见其 §11）。
+> 真实 session。**仅在用户显式点击按钮时触发**；question 向导同样仅在用户显式提交/取消时经
+> form 回写通道应用（契约见 opencode-v2-contract.md §A.1），插件绝不擅自代答。
+> 契约见 docs/modules/sessions-relay.md §13（supersede 记录见其 §11）。
 
 ## 关键机制（改动前必读）
 
@@ -35,14 +37,14 @@
 - **权限通知去抖（勿回退）**：auto-approve 是客户端行为，服务端照样发 `permission.asked`；必须走 1 秒去抖窗口（`WAITING_NOTIFY_DEBOUNCE_MS=1000`）内收到 `permission.replied` 即取消发送；question（v2 = form）不去抖、立即发。
 - **跨进程一致性**：`~/.otg/poller.lock`（`PollerLock`，O_EXCL + pidAlive/TTL + ownerId）只有锁持有者轮询 Telegram；`SharedFileStore<T>` 短临界区读改写（本轮拆分时原样平移，未接线）。
 - **事件去重与内存上限**：`seenEventIDs`/`seenWaitingRequestIDs`/`terminalMessageIDs` 均为有上限集合（`MAX_EVENT_IDS=2000`，`rememberBounded` 维护）。
-- **审批回写（v2）**：permission 记录发送带三按钮（Allow once/Always/Deny）；点击 → 主进程写 `reply` 字段 → 拥有该 session 的实例每秒扫描自己条目，经 v2 `client.permission.reply({sessionID, requestID, decision, message?})` 应用，成功后删除记录（Round 6 终态语义）。**绝不擅自代答**：只有显式点击才触发 reply API（契约 sessions-relay.md §13/§16 + opencode-v2-contract.md §3）。
-- **自更新**：npm 缓存安装（`OPENCODE_CACHE_MARKERS`）才检查；staging + 校验 + 备份 + 原子替换 + 回滚；校验依赖产物中 `const PLUGIN_VERSION = "..."` 字面量（契约见 docs/modules/split-contracts.md §4）。
+- **审批回写（v2）**：permission 记录发送带三按钮（Allow once/Always/Deny）；点击 → 主进程写 `reply` 字段 → 拥有该 session 的实例每秒扫描自己条目，经 v2 `client.permission.reply({sessionID, requestID, decision, message?})` 应用，成功后删除记录（Round 6 终态语义）。question（v2 form）向导提交/取消同样只在显式操作后经 §A.1 loopback HTTP 回写。**绝不擅自代答**：只有显式点击/提交才触发回写（契约 sessions-relay.md §13/§16 + opencode-v2-contract.md §3/§A.1）。
+- **自更新**：npm 缓存安装（`OPENCODE_CACHE_MARKERS`）才检查；staging + 校验（staged 包内 `package.json` 的 `version` 字段）+ 备份 + 原子替换 + 回滚（契约见 docs/modules/split-contracts.md §4 兜底决策）。
 - **脱敏**：botToken 必须打码（`safeText`/dline 路径 `[REDACTED]` 等），任何日志路径不得泄漏 token 或密钥。
 
 ## 版本与发布
 
-- 版本单一事实来源：`package.json` 的 `version` 字段（v2 轮将落定 1.0.0，06 执行；当前主线是否
-  仍为 0.6.0 以此为准）；构建时经 `bun build --define` 注入 bundle 产物 `PLUGIN_VERSION`，
+- 版本单一事实来源：`package.json` 的 `version` 字段（v2 适配轮已落定 **1.0.0**，06 执行）；
+  构建时经 `bun build --define` 注入 bundle 产物 `PLUGIN_VERSION`，
   契约见 docs/modules/version-injection.md（03 只改 `src/version.ts` 的
   `TARGET_OPENCODE_VERSION = "2.0.15"`，注入流程零改动）。
 - 变更流程：`node scripts/set-version.mjs <v>` 写 package.json + README pin →
@@ -50,15 +52,14 @@
   publish.yml 构建（注入）+ 发布。
 - .github pre-push hook 校验 tag 与 version 一致。
 
-## 本轮（Round 1）目标
+## 轮次记录
 
-把 3611 行单文件 `monitor.ts` 拆为 `src/` 多文件 + bun bundle 打包回根 `monitor.ts` 构建产物。
-对外机制（npm 发布、本地单文件复制安装、自更新）完全不变；主类 `TelegramSessionMonitor` 保留，纯函数/独立类全部拆出。
-详细计划见 `docs/todos/split-monitor-into-modules.md`，跨 phase 契约见 `docs/modules/split-contracts.md`。
-
-> 当前进行中：**opencode v2 适配轮**（目标 v2.0.15；探针证据 `tools/v2-probe/FINDINGS.md`；
-> 集成契约 `docs/modules/opencode-v2-contract.md`；tickets `.scratch/opencode-v2-adaptation/issues/`）。
-> v2 下 **todo 投影已移除**（不可观测，用户决策），README/本文件不再宣称 Todo projection。
+- **Round 1（拆分轮）**：把 3611 行单文件 `monitor.ts` 拆为 `src/` 多文件 + bun bundle 打包回根 `monitor.ts` 构建产物。
+  对外机制（npm 发布、本地单文件复制安装、自更新）完全不变；主类 `TelegramSessionMonitor` 保留，纯函数/独立类全部拆出。
+  详细计划见 `docs/todos/split-monitor-into-modules.md`，跨 phase 契约见 `docs/modules/split-contracts.md`。
+- **Round 2（opencode v2 适配轮，2026-09-25）**：目标 v2.0.15；探针证据 `tools/v2-probe/FINDINGS.md`；
+  集成契约 `docs/modules/opencode-v2-contract.md`；tickets `.scratch/opencode-v2-adaptation/issues/`。
+  v2 下 **todo 投影已移除**（不可观测，用户决策），README/本文件不再宣称 Todo projection；发布版本 1.0.0。
 
 ## Git 约定
 

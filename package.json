@@ -1,7 +1,7 @@
 {
   "name": "opencode-telegram-monitor",
-  "version": "0.6.0",
-  "description": "Read-only opencode plugin that reports session lifecycle, token usage, todos and waiting permissions/questions to a Telegram bot.",
+  "version": "1.0.0",
+  "description": "Read-only opencode plugin that reports session lifecycle, token usage and waiting permissions/questions to a Telegram bot.",
   "type": "module",
   "main": "monitor.ts",
   "types": "monitor.ts",
@@ -29,17 +29,5 @@
   },
   "engines": {
     "node": ">=18"
-  },
-  "peerDependencies": {
-    "@opencode-ai/plugin": "*",
-    "@opencode-ai/sdk": "*"
-  },
-  "peerDependenciesMeta": {
-    "@opencode-ai/plugin": {
-      "optional": true
-    },
-    "@opencode-ai/sdk": {
-      "optional": true
-    }
   }
 }
