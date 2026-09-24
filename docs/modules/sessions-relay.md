@@ -12,6 +12,17 @@
 > 本文件是 sessions 落盘 → Telegram 中继的**唯一权威契约**；与 projects-registry.md §2.1
 > 「纯函数区零改动」冲突处，以本文件 §3/§4 为准（projects-registry.md §10 记录差异）。
 
+> **v2 集成 supersede（2026-09-25，冻结于 docs/modules/opencode-v2-contract.md）**：
+> 本文件描述的**事件名与 reply 调用面**被 v2 取代——`permission.asked/replied` 的 payload
+> 形状与 reply API `permission.reply({sessionID, requestID, decision, message?})`
+> （`decision ∈ "once"|"always"|"reject"`）以 opencode-v2-contract.md §2/§3 为准；
+> question 事件族由 `form.created/replied/cancelled` 取代（v2 契约 §2.6）；
+> `question.*.replied/rejected` 终结语义对应 `form.replied/form.cancelled`；
+> 消费端 reply 通道**不得**走 v1 私货 `_client.post`/扁平 question 方法（v2 契约 §3.2 禁止）。
+> **relay 的记录/锁/按钮/向导语义（§2–§16）其余保持不变**；消耗 v1 事件名的段落
+> （§5.1 事件→记录映射、§6.2 渲染触发、§13/§14 触发事件）在 v2 下按
+> opencode-v2-contract.md §2 各表对应的事件/字段执行。
+
 ## 1. 模块职责与动机
 
 现状：permission/question 等待通知由 monitor 在事件回调里直接经
