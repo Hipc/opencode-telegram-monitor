@@ -84,9 +84,10 @@ Result summary (all 7 structural checks green):
   (= source), but the forked session itself has `parentID=null` and
   `fork:{sessionID,boundary}` — it is not a `parentID` child.
 - No parent key appears in execution/step/tool event data or `session.context`.
-- Contract input: §9 item closes as observable; §2.1's `session.created` field
-  list should add `parentID?` / `agent?` / `model?`. The adapted `src/**`
-  (03) does not consume `parentID` yet — follow-up work item for dev-lead.
+- Contract input: §9 item closed as observable in contract revision r2; §2.1/
+  §3.1 record the child-session shape (`parentID?` / `agent?` / `model?`). The
+  adapted `src/**` consumes `parentID` since `401e7c1` (F1), restoring the v1
+  parent/root projection and root token aggregation.
 
 ---
 
@@ -105,7 +106,8 @@ T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh harness \
 T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh assert-harness
 
 # green-run against the adapted plugin (tickets 03+04 merged; builds the
-# bundle from this worktree, all 21 checks green — see evidence/harness):
+# bundle from this worktree, 20 checks green — catalog 22, H3.6/H3.7 run only
+# with the resolved-reply flags — see evidence/harness):
 T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh harness
 T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh assert-harness
 
@@ -139,12 +141,15 @@ request and writes the full client-side error shape to `reply-error-shape.json`.
 | P2 | external `reply:"once"` injection (same write the TG button does) | record deleted + `permission.replied` on `GET /api/event` |
 | P2b | external `q_answers:[["A"]]` injection (same write the TG wizard does) | record deleted + `form.replied` on the wire |
 | P3 | bogus model + `session.prompt` → `session.execution.failed` | terminal notification attempt in `tgdiag.log` (`Telegram message send failed`) |
-| P2c | optional settled-request re-reply (stale button) | `tgdiag-resolved-reply.txt` 404 classification / raw error shape; `reply-error-shape.json` client-side shape |
+| P2c | optional settled-request re-reply (stale button) | H3.6 terminal-required: settled reply classified 404 (record deleted, no retry loop) in `tgdiag-resolved-reply.txt`; `reply-error-shape.json` client-side shape |
 
-Assertion catalog (`assert/harness.mjs`): H1.1–H1.3 loading/init,
+Assertion catalog (`assert/harness.mjs`): 22 check IDs — H1.1–H1.3 loading/init,
 H2.1x permission record, H2.2x question record, H3.1/H3.2/H3.2a/H3.3 permission
-closure, H3.4–H3.5 form closure (gated), H3.6/H3.7 settled-reply capture
-(gated), H4.1–H4.2 lifecycle.
+closure, H3.4–H3.5 form closure (gated), H3.6 settled-reply classification
+(gated; terminal-required — 404 must delete the record with no retry loop),
+H3.7 client-side error-shape capture (gated), H4.1–H4.2 lifecycle. The canonical
+green-run executes 20 of the 22 IDs; with the `RESOLVED_REPLY` +
+`REPLY_ERROR_PROBE` flags all 22 run.
 Green output is recorded in `evidence/harness/commands.txt` and the assertion
 transcript is embedded in the ticket return.
 
@@ -224,20 +229,21 @@ host `~/.otg` unchanged (the runner also records before/after fingerprints in
 
 ## 4. Status (explicitly not faked)
 
-- **Green-run against the adapted plugin (tickets 03/04)** — **done**: all 21
-  checks green, form write-back closure included (`evidence/harness/`, run
-  2026-09-25 on task HEAD `8f3572f`).
-- **Settled-request reply capture (ticket 04 `isNotFoundError` open item)** —
-  **done**: the real v2 `client.permission.reply` error on an already-settled
+- **Green-run against the adapted plugin (tickets 03/04)** — **done**: 20
+  checks green (catalog 22; H3.6/H3.7 run only with the resolved-reply flags),
+  form write-back closure included (`evidence/harness/`, run 2026-09-25 on task
+  HEAD `8f3572f`).
+- **Settled-request reply capture (ticket 04 `isNotFoundError`)** — **done and
+  fixed**: the real v2 `client.permission.reply` error on an already-settled
   request is a plain `Error` (`name="Error"`,
   `message="Permission request not found: <perID>"`, no `status`/`_tag`/
-  enumerable props), so the current `isNotFoundError` does not classify it as
-  404 and the record is retried forever; raw HTTP 404 body
-  `{"_tag":"PermissionNotFoundError",...}` and the full client-side shape are in
-  `evidence/harness-resolved-reply/`. Contract §3.3 terminal semantics need a
-  04 follow-up (dev-lead).
-- **Subagent lineage / parentID** — **done** (see §1b): observable; feeds a
-  contract revision and a `src/**` follow-up.
+  enumerable props); since `401e7c1` (F2) `isNotFoundError` classifies that
+  exact text as terminal — record deleted, no retry loop (contract §3.3 r2).
+  Raw HTTP 404 body `{"_tag":"PermissionNotFoundError",...}` and the full
+  client-side shape are in `evidence/harness-resolved-reply/`.
+- **Subagent lineage / parentID** — **done** (see §1b): observable and
+  consumed by `src/**` since `401e7c1` (F1); contract revision r2 closes the
+  §9 item.
 - **Real-TG smoke execution** — **pending** (final verification phase): the
   mechanism is validated read-only now (§3a); the full `--run` recipe executes
   in the orchestrator's final phase.
@@ -248,7 +254,8 @@ host `~/.otg` unchanged (the runner also records before/after fingerprints in
 
 `evidence/probe-a1/` form-channel probe run · `evidence/probe-lineage/`
 subagent-lineage probe run · `evidence/harness/` green-run against the adapted
-plugin (all 21 checks green, form phase included) ·
+plugin (20 checks green — catalog 22, form phase included; H3.6/H3.7 run only
+with the settled-reply flags) ·
 `evidence/harness-resolved-reply/` settled-request capture (H3.6/H3.7) ·
 `evidence/real-tg-recipe/` read-only mount check · `evidence/build/` toolchain
 build transcript. Regenerating any scenario replaces its evidence directory

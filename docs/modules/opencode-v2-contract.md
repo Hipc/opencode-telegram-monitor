@@ -14,6 +14,12 @@
 > `tests/e2e/container/probe-a1/VERDICT.md` + `tests/e2e/container/evidence/probe-a1/**`
 > （05 commit `2f29103`）；03 实现修订同步（bootstrap/reconcile/status 移除、无新超时包装，
 > commit `0da0f3c`）；新增 subagent lineage（parentID）开放项（§9）。契约以本修订 commit 定版。
+>
+> **修订 2（2026-09-25，r2）**：§9 关闭 **subagent lineage / parentID** 开放项 — 父链
+> **可观测**（`tests/e2e/container/probe-lineage/VERDICT.md` + `evidence/probe-lineage/**`，
+> probe `4dddc8e`）；src 已消费（F1，`401e7c1`）；§2.1/§3.1 记录子会话
+> `parentID?/agent?/model?` 实测形状，§3.3 冻结 resolved-reply 分类规则（F2，`401e7c1`）。
+> 契约以本修订 commit 定版。
 
 ---
 
@@ -156,7 +162,7 @@ v2 client 无 `session.list/status`，原 v1 的 bootstrap/reconcile 对账已�
 
 | v2 事件 | 消费的 `data.*`（精确字段，observed） | 映射到 v1 内部语义 |
 |---|---|---|
-| `session.created` | `{sessionID, projectID?, location?, subpath?, slug?, title, version?, permissions?}`（`durable.seq:0`） | v1 读 `properties.info`(Session)；v2 无 info → **本地合成最小 SessionInfo**：`{id: data.sessionID, title: data.title ?? data.slug, projectID, location:{directory: data.location?.directory ?? root}}`；写 `sessionInfo` 并挂到 `projection.info`。**不**在 v1 的 `session.updated`（v2 不存在）上做。 |
+| `session.created` | `{sessionID, projectID?, location?, subpath?, parentID?, slug?, title, agent?, model?, version?, permissions?}`（`durable.seq:0`；`parentID?` **r2**：子会话数据携带、根会话无此键；`agent?`/`model?` 仅子会话 spawn 指定时出现，可选 — probe-lineage 实测） | v1 读 `properties.info`(Session)；v2 无 info → **本地合成最小 SessionInfo**：`{id: data.sessionID, title: data.title ?? data.slug, projectID, parentID, location:{directory: data.location?.directory ?? root}}`；写 `sessionInfo` 并挂到 `projection.info`；`ensureSessionInfo` 缓存 `session.get` 结果含 `parentID` 键（F1/`401e7c1`）。**不**在 v1 的 `session.updated`（v2 不存在）上做。 |
 | `session.deleted` | `{sessionID}`（`durable` 有值） | 同 v1（~597-627）：按 `data.sessionID` 取消 waiting 通知、清 projection/`sessionInfo`、`cleanupSessionRecords(id)`（Round 6 §16 path ②）、父/根会话 idle 补齐。 |
 | `session.execution.started` | `{sessionID}` | 替代 v1 `session.status` 非 idle 分支：`applyStatus(session, {type:"busy"}, true)`——**本轮 turn +1 的唯一入口**（`!observedRunning -> turn+=1`，重置换 key 字段）。 |
 | `session.execution.succeeded` | `{sessionID}` | 替代 v1 `session.idle`：`applyStatus(session, {type:"idle"}, true)` → `scheduleIdleFinalization`（去抖/终态流程保持）。outcome 判定：`commitIdleOutcome` 无 error → `completed`。 |
@@ -168,6 +174,15 @@ step.failed 的 error 落 `pendingError`）；`cancelled` ← execution.interrup
 **execution 终态**，取代 v1 的 `message.updated` error 判定路径（v1 `commitIdleOutcome`
 读 `currentMessage?.error`；v2 改为读 `pendingError`——step.failed/interrupted/failed
 自动写入）。
+
+**子会话形状（r2，probe-lineage 实测）**：模型 `subagent` 工具产出的子会话
+`session.created` 数据实测为 `{sessionID, projectID, location, subpath,
+parentID:"ses_<父>", slug, title, agent?, model?, version}`（`agent`/`model` 仅在
+spawn 指定时出现，可选 — `tests/e2e/container/probe-lineage/VERDICT.md` 原样引用）；
+`client.session.get` 对子会话多返回 `parentID`（键集 `['id','parentID','projectID',
+'agent','cost','tokens','time','title','location']`），根会话无 `parentID` 键。
+fork 不是 parentID 子链：forked 会话 `parentID=null` 且带 `fork:{sessionID,boundary}`，
+只发 `session.forked`（§9 已关，勿当子会话消费）。
 
 ### 2.2 step / text / reasoning（替代 v1 message.updated / message.part.updated）
 
@@ -290,7 +305,7 @@ reply API（§3、§7）。
 | `client.permission.reply({sessionID, requestID, decision, message?})` | `decision in "once"|"always"|"reject"` | resolve `undefined`；服务端发 `permission.replied {reply}`（C2，`evidence/api` `probe.permission.reply.result`） | **TG 三按钮回写的唯一通道**（relay §13.6 apply 改用它；`message?` 未在探针使用，保留透传不校验）。**替代** v1 `postSessionIdPermissionsPermissionId({path, body:{response}})`。 |
 | `client.permission.list({sessionID})` | — | pending 请求数组 `[{id, sessionID, action, resources, save?, source?}]` | 04 诊断/按钮刷新可选（不强制）；不可用于代替事件。 |
 | `client.permission.get({sessionID, requestID})` | — | 同 list 项；不存在 → error | 同上（诊断可选）。 |
-| `client.session.get({sessionID})` | — | 会话对象（直接返回，非 `{data}` 包装）：`{id, projectID, cost, tokens:{input,output,reasoning,cache:{read,write}}, time:{created,updated}, title, location:{directory}}`（C2，`probe.session.get`） | `ensureSessionInfo`/`primarySession` 的唯一会话查询（03 落地，§3.3）；**替代** v1 `session.get({path})` 包装形态。 |
+| `client.session.get({sessionID})` | — | 会话对象（直接返回，非 `{data}` 包装）：`{id, projectID, cost, tokens:{input,output,reasoning,cache:{read,write}}, time:{created,updated}, title, location:{directory}}`（C2，`probe.session.get`）；**r2**：子会话额外含 `parentID` 可选键（根会话无 — probe-lineage 实测） | `ensureSessionInfo`/`primarySession` 的唯一会话查询（03 落地，§3.3）；结果**原样缓存**（含 `parentID` 键），恢复 v1 父/根投影（F1/`401e7c1`）；**替代** v1 `session.get({path})` 包装形态。 |
 | `client.session.create({title})` | — | 同 get 形状 | 探针验证可用；主插件**不消费**（冻结：不创建会话）。 |
 | `client.session.context({sessionID})` | — | 消息数组（compaction 后）；新会话 `[]`（C2） | 诊断可选；**不消费**到投影（v1 reconcile 的 messages/todo 已移除，§2.1/§2.4）。 |
 
@@ -316,6 +331,16 @@ reply API（§3、§7）。
   保持 relay §14.8.2 的 404 终态语义（删除记录、不重试）。reply 重试由扫描 ticker 驱动
   （每次重试都重新 `permission.reply`，opencode 侧幂等——已决即 404 终态）。
   同理，form 回写遇 `409 FormAlreadySettledError`（VERDICT.md）即已定案 → 删除记录、不重试。
+- **resolved-reply 分类（r2，冻结）**：v2 client 对**已决**请求再 `permission.reply`
+  抛的是**普通 `Error`** —— `name="Error"`、`message="Permission request not found:
+  per_<id>"`、无 `status`/`statusCode`/`_tag`、无自有属性（实测
+  `tests/e2e/container/evidence/harness-resolved-reply/reply-error-shape.json`；
+  HTTP 层原始 404 body `{"_tag":"PermissionNotFoundError",...}` 见同目录
+  `api-resolved-reply-http.json`）。**分类规则（F2/`401e7c1`，冻结）**：仅按该
+  **精确文本** `^Permission request not found: per_` 归类终态 → 删除记录、不重试
+  （relay §14.8.2 语义保持）；其它 Error 一律走可重试路径并记录原因日志——**不得**
+  用宽泛子串放大终态面。status/statusCode===404 与 error name 含 404/NotFound 的
+  既有分支继续有效。
 - **事务**：落盘仍走 `registry.mutate`（SharedFileStore 短临界区读写，既有契约不动；
   projects-registry.md §3/§4 零改动）。
 - **超时/重试**：**不新增** client 超时包装（见上实现修订）；`permission.reply` 与 form
@@ -527,7 +552,17 @@ green-run（含 harness 的 form 回写 P2b 与 A.6 类自然流 re-dispatch pro
 | `permission.updated`（v2） | 未在事件流观测 | 不接线（§2.5）；05 若观测到再决议。 |
 | **form 回复通道**（原 A.1） | **已定案（05 probe-a1）**：进程内 HTTP Basic 回写（`POST /api/session/:id/form/:id/reply`，204），端口 argv 发现、密码双 env；`run --standalone` 端口不可发现 | 04 按 A.1/§3.2 实现；端口不可发现**显式失败、无兜底**。 |
 | 真实模型提问自然流 | **已定案（05 probe-a1，§A.6 关闭）**：question tool → `form.created`（`metadata.kind="question"`），§2.6 成立 | 已并入 §2.6/§2.7。 |
-| **subagent lineage / parentID** | v2.0.15 无 parent 关联——`session.created` 数据与 `session.get` 形状均无 `parentID`，v1 的 `parentID` 投影（`primarySession`/`childSessions`/`synchronizeIdleDescendants`）在 v2 下**永不填充**（03 已按此实现，`src/v2/types.ts`） | **待验证**：05 最终 green-run 的 re-dispatch probe 复核真实模型回合是否携带父链；**04 不得依赖 parentID 填充**。验证前已知降级面：根会话 token 聚合不含子会话；idle-后代同步（`synchronizeIdleDescendants`）退化为 no-op。 |
+**已关闭（r2，subagent lineage / parentID）**：父链接口**可观测** —— 子会话
+`session.created` 数据与 `session.get` 结果均携带 `parentID`（根会话无此键；fork 走
+`session.forked` + `parentID=null`，不属子链）。证据
+`tests/e2e/container/probe-lineage/VERDICT.md` + `evidence/probe-lineage/**`
+（probe `4dddc8e`）。src 已消费（F1，`401e7c1`：`src/monitor.ts` 合成 SessionInfo 写
+`parentID`、`ensureSessionInfo` 缓存 `session.get` 原样结果；`src/v2/types.ts` 增
+`SessionCreatedData.parentID?`），**恢复** v1 投影逻辑：`primarySession` /
+`childSessions` / `synchronizeIdleDescendants` 根过滤与 `aggregateTokens` 子会话
+token 聚合；无「永不填充」降级面。形状入 §2.1/§3.1。仍开放的项：
+`session.usage.recorded` / `session.compaction.*` / `effect` 返回语义 /
+`permission.updated`，处置如上表。
 
 ---
 
@@ -593,6 +628,11 @@ green-run（含 harness 的 form 回写 P2b 与 A.6 类自然流 re-dispatch pro
 
 ## 变更记录
 
+- 2026-09-25 修订 2（contract revision r2，doc-prep follow-up）：§9 关闭 subagent
+  lineage（parentID）开放项（probe-lineage VERDICT + evidence，`4dddc8e`；src 消费
+  `401e7c1` F1）；§2.1/§3.1 记录子会话 `parentID?/agent?/model?` 实测形状；§3.3 冻结
+  resolved-reply 分类规则（F2 精确文本终态，证据 `evidence/harness-resolved-reply/**`）；
+  README 同步已修复 statements 与检查计数。
 - 2026-09-25 修订 1（doc-prep follow-up，Ticket 03/05 落地后）：§9/A.1 + §A.6 定案
   （form 回复通道 = 进程内 HTTP Basic 回写，证据 `tests/e2e/container/probe-a1/VERDICT.md`
   + `evidence/probe-a1/**`，05 `2f29103`）；03 实现修订同步（§1.6/§3.1/§3.3/§7.2/§8：

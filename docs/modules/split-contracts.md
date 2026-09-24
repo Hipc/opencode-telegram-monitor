@@ -453,14 +453,20 @@ export default (async ({ client, directory, worktree }) => { ... }) satisfies Pl
 
 ## 4. self-update 校验契约（Phase 1.8 主类 + 1.9 build.mjs）
 
-1. **首选（字面量断言，保留）**：`applyVersionUpdate`（monitor.ts:611/627）的
+1. **首选（字面量断言，保留 —— 已失效，见 §4(3)）**：`applyVersionUpdate`（monitor.ts:611/627）的
    `staged.includes('const PLUGIN_VERSION = "${latest}"')` 与
    `fresh.includes('const PLUGIN_VERSION = "${latest}"')` **逐字保留**。
    依据：bun build（`--target node`，不 minify）会保留顶层 `export const PLUGIN_VERSION = "0.5.3";`
    为产物中的 `const PLUGIN_VERSION = "0.5.3";` 字面子串（`export` 前缀不破坏子串匹配）。
+   **r2 回写确认（2026-09-25）**：该首选断言**不再成立**——拆分后 `PLUGIN_VERSION` 经
+   `bun build --define` 注入、产物中为 `var PLUGIN_VERSION = "..."` 形态，`const` 字面子串
+   不存在；实际生效的是 §4(3) 的 staged `package.json` 版本校验（与 docs/00-overview.md
+   「staging + 校验（staged 包内 `package.json` 的 `version` 字段）」一致）。
 2. **实机验证点**：Phase 1.8 手工 bundle 验证必须记录结论——产物是否含 `const PLUGIN_VERSION = "0.5.3"` 字面量（API-004）。
-3. **兜底（仅当实机不成立）**：改读 staging 包内 `package/package.json` 的 `version` 字段
-   （`JSON.parse`），与 `latest` 比对；改动只限 `applyVersionUpdate` 校验段，并回写本契约与计划文件（由 doc-prep 下轮确认）。
+3. **生效决策（r2 回写确认：§4(1) 字面量断言实机不成立后启用）**：改读 staging 包内
+   `package/package.json` 的 `version` 字段（`JSON.parse`），与 `latest` 比对，且替换后再校验
+   （`src/monitor.ts` `applyVersionUpdate` 现状：staged 与 fresh 两段都做等值校验）；改动只限
+   `applyVersionUpdate` 校验段。回写确认：本契约与计划文件已由 doc-prep r2 更新。
 4. **build.mjs 同步断言**（1.9，API-004/005 对齐）：构建后读取根 `monitor.ts` 产物，
    断言存在 `const PLUGIN_VERSION = "0.5.3"` 形态（`/const PLUGIN_VERSION = "[^"]+";/` 未锚定即可），失败 `exit 1`。
 5. **scripts 正则不动**：check-version.mjs:41 / set-version.mjs:37,42 的正则 `/const PLUGIN_VERSION = "[^"]+";/`
