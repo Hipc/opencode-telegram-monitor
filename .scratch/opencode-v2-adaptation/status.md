@@ -1,7 +1,7 @@
 # 任务状态 — opencode-v2-adaptation
 
 > 最后更新: 2026-09-25（UTC）· 任务分支 `feat/opencode-v2-adaptation` · 目标 opencode v2.0.15（镜像 `hipc/opencode2:latest`）
-> 阶段: **开发完成（全部批次已合入）**；待最终 full 验证（容器全套 + 真实 TG 冒烟）→ 交付（等待合并指令）
+> 阶段: **开发完成（全部批次已合入）**；最终 full 门禁重跑中（含真实 TG 冒烟；代理替换已获用户批准）→ 交付（等待合并指令）
 
 ## 资源清单
 
@@ -24,6 +24,7 @@
 | 06 发布元数据与文档 | 已合入 | `3ec5ae0d` | 1.0.0 + README/docs 同步 |
 | 修复轮 F1–F3 | 已合入 | `401e7c19` | parentID 恢复；resolved-reply 终态分类；help 文案 |
 | 文档 r2 回写 | 已合入 | `c3136a95` | lineage 关闭 / 错误形状 / harness README 校正 |
+| T08 冒烟配方修复 | 已合入 | `73499e0a` | serve 长驻 + 发送断言（合成 401 机制验证 + 负控）；代理替换经用户批准 |
 
 ## 关键决策
 
@@ -39,10 +40,11 @@
 5. subagent lineage：子会话 `session.created`/`session.get` 携带 `parentID`（已消费；恢复 v1 父/根投影与 token 聚合）。
 6. todo 已移除；无 `app.log`（自有 dlog/console 通道）。
 
-## 最终验证（待执行）
+## 最终验证
 
-- 门禁：容器内 full —— 10 个 host 套件（124 用例）+ build + harness/probe-a1/lineage 容器套件 + **真实 TG 冒烟**（safe 模式）。
-- 复用条件：仅当 tested_sha 与命令配置不变时复用既有证据；最终以本轮 full 结果为准。
+- 首次 full（`4c2da740`）：15/16 PASS（build + 124 用例 + 4 套容器 e2e）；真实 TG 冒烟 ENV_BLOCKED（配置代理 `100.113.198.63:7890` 不可达）→ 用户批准以可用代理 `10.0.10.100:17892` 替换容器侧副本；重试暴露配方覆盖缺口（`run --standalone` 退出过快，5s idle 去抖被 dispose 清除，发送从未发生）→ T08 修复（serve 长驻 + 发送断言）。
+- 当前门禁：在 `73499e0a` 上重跑容器内 full（build + 10 个 host 套件 + harness/probe-a1/harness-resolved/lineage + 真实 TG 冒烟，代理替换副本）；结果见交付报告。
+- 复用条件：仅当 tested_sha 与命令配置不变时复用既有证据。
 
 ## 耗时记录（UTC；来源：各执行者报告 / git 提交时间；未插桩项记 unknown）
 
@@ -55,6 +57,7 @@
 | 05b green-run | 18:12 | 18:35 | ≈95s | harness 20/20 |
 | 06 发布元数据 | unknown | commit | ≈3s | 版本 1.0.0 |
 | 修复轮 F1–F3 | ~18:41 | 18:56 | ≈310s | 124 用例 + harness 22/22 |
+| T08 冒烟配方修复 | 19:26 | 19:40 | ≈60s | serve 长驻 + 发送断言；合成 401 机制验证 + 负控 |
 | 集成包 ×7 | 15:14 | 18:57 | <1s/包 | 全部 ff/rebase，线性历史 |
 
 - 口径：排队时长（ready→dispatch）与调用耗时（dispatch→返回）未插桩，记 unknown；环境耗时 ≈0（镜像已存在、零依赖）；不把 worker 时长之和冒充总耗时。
