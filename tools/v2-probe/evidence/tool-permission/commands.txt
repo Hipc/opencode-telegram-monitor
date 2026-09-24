@@ -1,0 +1,82 @@
+=== scenario: tool-permission ===
+=== exact docker invocation (from worktree root) ===
+docker run --rm \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t01/tools/v2-probe:/probe:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t01/tools/v2-probe/evidence/tool-permission:/evidence \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t01/tools/v2-probe/configs/permission-ask.json:/tmp/home/.config/opencode/opencode.json:ro \
+  -e PROBE_LOG_FILE=/evidence/events.jsonl -e PROBE_SERVE_PORT=18131 -e PROBE_PASSWORD=probe-pass-123 -e PROBE_PERMISSION_REPLY=once \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /probe/scripts/tool-permission.sh'
+=== container output follows ===
++ export HOME=/tmp/home
++ mkdir -p /tmp/home/.config/opencode/plugin
++ cd /tmp
++ cp /probe/probe-plugin.ts /tmp/home/.config/opencode/probe-plugin.ts
++ cp -r /probe/probe-lib /tmp/home/.config/opencode/probe-lib
++ cp /probe/autodiscover/probe-autodiscover.ts /tmp/home/.config/opencode/plugin/probe-autodiscover.ts
++ timeout 180 opencode run --standalone --print-logs --format json Use the shell tool to run exactly this command: echo permission-probe-ok. Then report the output.
+timestamp=2026-09-24T16:25:06.034Z level=INFO run=46585ab7 message="spawning process" command=/root/.opencode/bin/opencode args="[\"serve\",\"--stdio\",\"--port\",\"0\"]" cwd=/tmp role=cli
+timestamp=2026-09-24T16:25:06.084Z level=INFO run=4adc6da4 message="cli starting" version=2.0.15 channel=latest local=false args="[\"serve\",\"--stdio\",\"--port\",\"0\"]" role=cli
+timestamp=2026-09-24T16:25:06.204Z level=INFO run=4adc6da4 message="database schema bootstrap started" migrations=48 role=server
+timestamp=2026-09-24T16:25:06.219Z level=INFO run=4adc6da4 message="database schema bootstrap completed" migrations=48 durationMs=15 role=server
+timestamp=2026-09-24T16:25:06.258Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/home/.config/opencode type=directory ignores=3 http.span=16 role=server
+timestamp=2026-09-24T16:25:06.261Z level=INFO run=4adc6da4 message="watcher subscribe" path=/ type=entries ignores=0 http.span=19 role=server
+timestamp=2026-09-24T16:25:06.262Z level=INFO run=4adc6da4 message="watcher started" path=/ type=entries backend=node ignores=0 http.span=20 role=server
+timestamp=2026-09-24T16:25:06.262Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=20 role=server
+timestamp=2026-09-24T16:25:06.262Z level=INFO run=4adc6da4 message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=20 role=server
+timestamp=2026-09-24T16:25:06.262Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/home type=entries ignores=0 http.span=20 role=server
+timestamp=2026-09-24T16:25:06.263Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/home type=entries backend=node ignores=0 http.span=21 role=server
+timestamp=2026-09-24T16:25:06.277Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/home/.config/opencode type=directory backend=inotify ignores=3 http.span=35 role=server
+timestamp=2026-09-24T16:25:06.280Z level=INFO run=4adc6da4 message="location services booted" directory=/tmp workspaceID=undefined durationMs=38 http.span=38 role=server
+timestamp=2026-09-24T16:25:06.292Z level=INFO run=4adc6da4 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts entrypoint=file:///tmp/home/.config/opencode/plugin/probe-autodiscover.ts http.span=50 role=server
+timestamp=2026-09-24T16:25:06.297Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts type=file ignores=0 http.span=55 role=server
+timestamp=2026-09-24T16:25:06.297Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts type=file backend=node ignores=0 http.span=55 role=server
+timestamp=2026-09-24T16:25:06.297Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/home/.config/opencode/probe-plugin.ts type=file ignores=0 http.span=55 role=server
+timestamp=2026-09-24T16:25:06.297Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/home/.config/opencode/probe-plugin.ts type=file backend=node ignores=0 http.span=55 role=server
+timestamp=2026-09-24T16:25:06.298Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/home/.config/opencode/probe-lib/helper.ts type=file ignores=0 http.span=56 role=server
+timestamp=2026-09-24T16:25:06.298Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/home/.config/opencode/probe-lib/helper.ts type=file backend=node ignores=0 http.span=56 role=server
+timestamp=2026-09-24T16:25:06.298Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/home/.config/opencode/probe-lib/log.ts type=file ignores=0 http.span=56 role=server
+timestamp=2026-09-24T16:25:06.298Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/home/.config/opencode/probe-lib/log.ts type=file backend=node ignores=0 http.span=56 role=server
+timestamp=2026-09-24T16:25:06.434Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/home/.config/opencode/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:25:06.434Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/home/.config/opencode/AGENTS.md type=file backend=node ignores=0 http.span=192 role=server
+timestamp=2026-09-24T16:25:06.434Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:25:06.434Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/AGENTS.md type=file backend=node ignores=0 http.span=192 role=server
+timestamp=2026-09-24T16:25:06.442Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/home/.config/opencode/skill type=file ignores=0
+timestamp=2026-09-24T16:25:06.443Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/home/.config/opencode/skill type=file backend=node ignores=0 http.span=201 role=server
+timestamp=2026-09-24T16:25:06.445Z level=INFO run=4adc6da4 message="watcher subscribe" path=/tmp/home/.config/opencode/skills type=file ignores=0
+timestamp=2026-09-24T16:25:06.445Z level=INFO run=4adc6da4 message="watcher started" path=/tmp/home/.config/opencode/skills type=file backend=node ignores=0 http.span=203 role=server
+timestamp=2026-09-24T16:25:06.467Z level=INFO run=4adc6da4 message=event event.id=evt_0d43c24a3001nt1ylY2cYna5dA event.created=1790267106467 event.type=provider.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=225 role=server
+timestamp=2026-09-24T16:25:06.473Z level=INFO run=4adc6da4 message=event event.id=evt_0d43c24a9001CPXXusXPrB0Ise event.created=1790267106473 event.type=model.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=231 role=server
+timestamp=2026-09-24T16:25:06.475Z level=INFO run=4adc6da4 message=event event.id=evt_0d43c24ab00190N3XULlP3uys4 event.created=1790267106475 event.type=agent.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=233 role=server
+timestamp=2026-09-24T16:25:06.475Z level=INFO run=4adc6da4 message=event event.id=evt_0d43c24ab002h6pKhcZVskiAOG event.created=1790267106475 event.type=command.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=233 role=server
+timestamp=2026-09-24T16:25:08.957Z level=INFO run=4adc6da4 message=event event.id=evt_0d43c2e5d001QtKijwZvogLJSP event.created=1790267108957 event.type=provider.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={}
+timestamp=2026-09-24T16:25:08.963Z level=INFO run=4adc6da4 message=event event.id=evt_0d43c2e620017oOeizHwltXCh6 event.created=1790267108963 event.type=model.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=2721 role=server
+{"type":"step_start","timestamp":1790267115597,"sessionID":"ses_f2bc3dc12ffe8bnJYN4cA5XOq8","part":{"id":"prt_0d43c484d001g2mXrRTcYFeMQv","sessionID":"ses_f2bc3dc12ffe8bnJYN4cA5XOq8","messageID":"msg_0d43c24d2001x1T0ul9G7VubRD","type":"step-start"}}
+[93m[1m! [0mpermission requested: shell (echo permission-probe-ok); auto-rejecting
+timestamp=2026-09-24T16:25:16.883Z level=INFO run=4adc6da4 message="spawning process" command=/usr/bin/bash args="[\"-c\",\"echo permission-probe-ok\"]" cwd=/tmp http.span=10641 role=server
+timestamp=2026-09-24T16:25:16.889Z level=INFO run=4adc6da4 message="Sent HTTP response" http.span=2 role=server http.method=POST http.url=/api/session/ses_f2bc3dc12ffe8bnJYN4cA5XOq8/permission/per_0d43c4d500015I0LyvnAcKR47G/reply http.status=404
+{"type":"tool_use","timestamp":1790267116895,"sessionID":"ses_f2bc3dc12ffe8bnJYN4cA5XOq8","part":{"partID":"prt_0d43c24d2001x1T0ul9G7VubRD_tool-call_81f1abe1ebd1458c95c836e3","sessionID":"ses_f2bc3dc12ffe8bnJYN4cA5XOq8","messageID":"msg_0d43c24d2001x1T0ul9G7VubRD","type":"tool","id":"call_81f1abe1ebd1458c95c836e3","tool":"shell","state":{"status":"error","input":{"command":"echo permission-probe-ok"},"error":"Tool execution interrupted","metadata":{"metadata":{"shellID":"sh_0d43c4d52002s2YTc7uC16lyYM"}},"time":{"start":1790267116846,"end":1790267116893}}}}
+{"type":"error","timestamp":1790267116895,"sessionID":"ses_f2bc3dc12ffe8bnJYN4cA5XOq8","error":{"type":"aborted","message":"Step interrupted"}}
+timestamp=2026-09-24T16:25:16.905Z level=INFO run=4adc6da4 cause="InterruptError: All fibers interrupted without error\n    at ServerProcess.start (/$bunfs/root/chunk-sdzrh31k.js:2:6440)\n    at ServerProcess.start (definition) (/$bunfs/root/chunk-pxq53at5.js:437:22432) {\n  [cause]: InterruptCause: The fiber was interrupted by:\n      at fiber (#1)\n}" http.span=10610 role=server http.method=GET http.url=/api/event http.status=200
+timestamp=2026-09-24T16:25:16.919Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/home/.config/opencode/probe-lib/log.ts type=file http.span=10677 role=server
+timestamp=2026-09-24T16:25:16.919Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/home/.config/opencode/probe-lib/helper.ts type=file http.span=10677 role=server
+timestamp=2026-09-24T16:25:16.920Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/home/.config/opencode/probe-plugin.ts type=file http.span=10678 role=server
+timestamp=2026-09-24T16:25:16.920Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts type=file http.span=10678 role=server
+timestamp=2026-09-24T16:25:16.921Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/home/.config/opencode/skill type=file http.span=10679 role=server
+timestamp=2026-09-24T16:25:16.922Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/home/.config/opencode/skills type=file http.span=10680 role=server
+timestamp=2026-09-24T16:25:16.923Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/AGENTS.md type=file http.span=10681 role=server
+timestamp=2026-09-24T16:25:16.924Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/home/.config/opencode/AGENTS.md type=file http.span=10682 role=server
+timestamp=2026-09-24T16:25:16.930Z level=INFO run=4adc6da4 message="watcher stopped" path=/ type=entries http.span=10688 role=server
+timestamp=2026-09-24T16:25:16.930Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp type=entries http.span=10688 role=server
+timestamp=2026-09-24T16:25:16.930Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/home type=entries http.span=10688 role=server
+timestamp=2026-09-24T16:25:16.930Z level=INFO run=4adc6da4 message="watcher stopped" path=/tmp/home/.config/opencode type=directory http.span=10688 role=server
++ echo run_exit=1
++ echo --- evidence line count ---
++ wc -l /evidence/events.jsonl
+run_exit=1
+--- evidence line count ---
+51 /evidence/events.jsonl
++ echo --- loader lines (server log) ---
++ grep -E loading plugin|failed to load plugin|configured plugin /tmp/home/.local/share/opencode/log/opencode.log
+--- loader lines (server log) ---
+timestamp=2026-09-24T16:25:06.292Z level=INFO run=4adc6da4 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts entrypoint=file:///tmp/home/.config/opencode/plugin/probe-autodiscover.ts http.span=50 role=server
++ cp /tmp/home/.local/share/opencode/log/opencode.log /evidence/server-log.txt

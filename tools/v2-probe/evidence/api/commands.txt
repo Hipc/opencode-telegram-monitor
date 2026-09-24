@@ -1,0 +1,181 @@
+=== scenario: api ===
+=== exact docker invocation (from worktree root) ===
+docker run --rm \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t01/tools/v2-probe:/probe:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t01/tools/v2-probe/evidence/api:/evidence \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t01/tools/v2-probe/configs/api.json:/tmp/home/.config/opencode/opencode.json:ro \
+  -e PROBE_LOG_FILE=/evidence/events.jsonl -e PROBE_SERVE_PORT=18131 -e PROBE_PASSWORD=probe-pass-123 -e PROBE_API_PROBE=1 -e PROBE_PERMISSION_REPLY=once \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /probe/scripts/api.sh'
+=== container output follows ===
++ export HOME=/tmp/home
++ mkdir -p /tmp/home/.config/opencode/plugin
++ cd /tmp
++ cp /probe/probe-plugin.ts /tmp/home/.config/opencode/probe-plugin.ts
++ cp -r /probe/probe-lib /tmp/home/.config/opencode/probe-lib
++ cp /probe/autodiscover/probe-autodiscover.ts /tmp/home/.config/opencode/plugin/probe-autodiscover.ts
++ PORT=18131
++ SPID=12
++ export OPENCODE_PASSWORD=probe-pass-123
++ API=opencode api --server http://127.0.0.1:18131
++ OPENCODE_SERVER_PASSWORD=probe-pass-123 setsid opencode serve --port 18131 --print-logs
++ seq 1 40
++ opencode api --server http://127.0.0.1:18131 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:18131 plugin.list
++ break
++ cat /tmp/serve.log
+timestamp=2026-09-24T16:25:41.580Z level=INFO run=fd6d1535 message="database schema bootstrap started" migrations=48 role=server
+timestamp=2026-09-24T16:25:41.600Z level=INFO run=fd6d1535 message="database schema bootstrap completed" migrations=48 durationMs=20 role=server
+server listening on http://127.0.0.1:18131
+timestamp=2026-09-24T16:25:42.037Z level=INFO run=fd6d1535 message="watcher subscribe" path=/tmp/home/.config/opencode type=directory ignores=3 http.span=16 role=server
+timestamp=2026-09-24T16:25:42.039Z level=INFO run=fd6d1535 message="watcher subscribe" path=/ type=entries ignores=0 http.span=18 role=server
+timestamp=2026-09-24T16:25:42.040Z level=INFO run=fd6d1535 message="watcher started" path=/ type=entries backend=node ignores=0 http.span=19 role=server
+timestamp=2026-09-24T16:25:42.040Z level=INFO run=fd6d1535 message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=19 role=server
+timestamp=2026-09-24T16:25:42.040Z level=INFO run=fd6d1535 message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=19 role=server
+timestamp=2026-09-24T16:25:42.040Z level=INFO run=fd6d1535 message="watcher subscribe" path=/tmp/home type=entries ignores=0 http.span=19 role=server
+timestamp=2026-09-24T16:25:42.041Z level=INFO run=fd6d1535 message="watcher started" path=/tmp/home type=entries backend=node ignores=0 http.span=20 role=server
+timestamp=2026-09-24T16:25:42.060Z level=INFO run=fd6d1535 message="watcher started" path=/tmp/home/.config/opencode type=directory backend=inotify ignores=3 http.span=39 role=server
+timestamp=2026-09-24T16:25:42.091Z level=INFO run=fd6d1535 message="location services booted" directory=/tmp workspaceID=undefined durationMs=70 http.span=70 role=server
+timestamp=2026-09-24T16:25:42.096Z level=INFO run=fd6d1535 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts entrypoint=file:///tmp/home/.config/opencode/plugin/probe-autodiscover.ts http.span=75 role=server
++ SSEPID=63
++ opencode api --server http://127.0.0.1:18131 plugin.list
++ curl -s -N -u opencode:probe-pass-123 http://127.0.0.1:18131/api/event
+{"location":{"directory":"/tmp"},"data":[]}
++ opencode api --server http://127.0.0.1:18131 session.create -d {"title":"probe-api","permissions":[{"action":"shell","resource":"*","effect":"ask"}]}
++ grep -o "id":"ses_[^"]*"
++ head -1
++ cut -d" -f4
+SID=ses_f2bc34f15ffeKSffuBRIuhWCZs
++ SID=ses_f2bc34f15ffeKSffuBRIuhWCZs
++ echo SID=ses_f2bc34f15ffeKSffuBRIuhWCZs
++ opencode api --server http://127.0.0.1:18131 session.get --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs
+{"data":{"id":"ses_f2bc34f15ffeKSffuBRIuhWCZs","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790267142379,"updated":1790267142379},"title":"probe-api","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp"}}}
++ opencode api --server http://127.0.0.1:18131 session.permission.create --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs -d {"action":"shell","resources":["echo probe"]}
++ POUT={"data":{"id":"per_0d43cb1ca0012rMnTKMk6c1jGn","effect":"ask"}}
++ echo permission.create -> {"data":{"id":"per_0d43cb1ca0012rMnTKMk6c1jGn","effect":"ask"}}
++ sleep 3
+permission.create -> {"data":{"id":"per_0d43cb1ca0012rMnTKMk6c1jGn","effect":"ask"}}
++ opencode api --server http://127.0.0.1:18131 session.permission.list --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs
+{"data":[]}
++ opencode api --server http://127.0.0.1:18131 session.form.create --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs -d {"title":"probe form","fields":[{"key":"choice","type":"string","title":"Pick one","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true},{"key":"notes","type":"string","title":"Notes"}]}
+form.create -> {"data":{"id":"frm_0d43cbe0f001A56JgkmLY810k8","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","title":"probe form","fields":[{"key":"choice","title":"Pick one","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true},{"key":"notes","title":"Notes","type":"string"}]}}
++ FOUT={"data":{"id":"frm_0d43cbe0f001A56JgkmLY810k8","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","title":"probe form","fields":[{"key":"choice","title":"Pick one","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true},{"key":"notes","title":"Notes","type":"string"}]}}
++ echo form.create -> {"data":{"id":"frm_0d43cbe0f001A56JgkmLY810k8","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","title":"probe form","fields":[{"key":"choice","title":"Pick one","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true},{"key":"notes","title":"Notes","type":"string"}]}}
++ echo {"data":{"id":"frm_0d43cbe0f001A56JgkmLY810k8","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","title":"probe form","fields":[{"key":"choice","title":"Pick one","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true},{"key":"notes","title":"Notes","type":"string"}]}}
++ grep -o "id":"frm_[^"]*"
++ head -1
++ cut -d" -f4
++ FID=frm_0d43cbe0f001A56JgkmLY810k8
++ sleep 2
++ opencode api --server http://127.0.0.1:18131 session.form.reply --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs --param formID=frm_0d43cbe0f001A56JgkmLY810k8 -d {"answer":{"choice":"a","notes":"hello"}}
++ sleep 2
++ opencode api --server http://127.0.0.1:18131 session.form.create --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs -d {"title":"probe form cancel","fields":[{"key":"why","type":"string","title":"Why"}]}
++ FOUT2={"data":{"id":"frm_0d43cce37001A4fNZc53BxS7RN","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","title":"probe form cancel","fields":[{"key":"why","title":"Why","type":"string"}]}}
++ echo {"data":{"id":"frm_0d43cce37001A4fNZc53BxS7RN","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","title":"probe form cancel","fields":[{"key":"why","title":"Why","type":"string"}]}}
++ grep -o "id":"frm_[^"]*"
++ head -1
++ cut -d" -f4
++ FID2=frm_0d43cce37001A4fNZc53BxS7RN
++ opencode api --server http://127.0.0.1:18131 session.form.cancel --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs --param formID=frm_0d43cce37001A4fNZc53BxS7RN
++ timeout 60 opencode api --server http://127.0.0.1:18131 session.prompt --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs -d {"text":"Count slowly from 1 to 60, one number per line.","delivery":"steer"}
+{"data":{"id":"msg_0d43ccec1001GpUIQr7xuM4U4e","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","time":{"created":1790267150018},"type":"user","payload":{"text":"Count slowly from 1 to 60, one number per line."},"delivery":"steer"}}
++ opencode api --server http://127.0.0.1:18131 session.prompt --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs -d {"text":"queued item one","delivery":"queue"}
++ grep -o "id":"msg_[^"]*"
++ head -1
++ cut -d" -f4
++ Q1=msg_0d43ccf1a001aScq6CLTzrlhTV
++ opencode api --server http://127.0.0.1:18131 session.prompt --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs -d {"text":"queued item two","delivery":"queue"}
++ + head -1
+grep -o "id":"msg_[^"]*"
++ cut -d" -f4
++ Q2=msg_0d43ccf5c001qEFhGPOa9ZqtNL
++ echo Q1=msg_0d43ccf1a001aScq6CLTzrlhTV Q2=msg_0d43ccf5c001qEFhGPOa9ZqtNL
++ opencode api --server http://127.0.0.1:18131 session.inbox.list --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs
+Q1=msg_0d43ccf1a001aScq6CLTzrlhTV Q2=msg_0d43ccf5c001qEFhGPOa9ZqtNL
+{"data":[{"id":"msg_0d43ccf1a001aScq6CLTzrlhTV","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","time":{"created":1790267150107},"type":"user","payload":{"text":"queued item one"},"delivery":"queue"},{"id":"msg_0d43ccf5c001qEFhGPOa9ZqtNL","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","time":{"created":1790267150172},"type":"user","payload":{"text":"queued item two"},"delivery":"queue"}]}
++ opencode api --server http://127.0.0.1:18131 session.inbox.cancel --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs --param inboxID=msg_0d43ccf1a001aScq6CLTzrlhTV
++ opencode api --server http://127.0.0.1:18131 session.inbox.update --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs --param inboxID=msg_0d43ccf5c001qEFhGPOa9ZqtNL -d {"delivery":"steer"}
++ sleep 20
++ opencode api --server http://127.0.0.1:18131 session.create -d {"title":"probe-bad-model","model":{"providerID":"opencode","modelID":"definitely-not-a-model"}}
++ grep -o "id":"ses_[^"]*"
++ head -1
++ cut -d" -f4
+HTTP 400 Bad Request
++ BID=
++ echo BID=
++ opencode api --server http://127.0.0.1:18131 session.prompt --param sessionID= -d {"text":"hello"}
+BID=
+
+ERROR
+  Invalid value for flag --param: "sessionID=". Expected: Invalid key=value format. Both key and value must be non-empty. Got: sessionID=
+DESCRIPTION
+  Make a request to the running server
+
+USAGE
+  opencode api [flags] <operation | method path...>
+
+ARGUMENTS
+  operation | method path... string OpenAPI operation ID, or an HTTP method followed by a path
+
+FLAGS
+  --standalone           Run with a private server instead of the background service
+  --server string        Connect to a server URL instead of the background service
+  --data, -d string      Request body
+  --header, -H string    Request header in name:value form
+  --param key=value      OpenAPI path or query parameter
+
+GLOBAL FLAGS
+  --help, -h                                                          Show help information
+  --version, -v                                                       Show version information
+  --wizard                                                            Start wizard mode for a command
+  --completions <bash|zsh|fish|sh>                                    Print shell completion script (choices: bash, zsh, fish, sh)
+  --log-level <all|trace|debug|info|warn|warning|error|fatal|none>    Sets the minimum log level (choices: all, trace, debug, info, warn, warning, error, fatal, none)
+  --print-logs                                                        Print logs to stderr (server logs require --standalone)
++ sleep 10
+--- reload: observe plugin dispose/re-setup ---
++ echo --- reload: observe plugin dispose/re-setup ---
++ timeout 30 opencode reload --server http://127.0.0.1:18131
+Configuration reloaded
++ sleep 5
++ opencode api --server http://127.0.0.1:18131 session.remove --param sessionID=ses_f2bc34f15ffeKSffuBRIuhWCZs
++ opencode api --server http://127.0.0.1:18131 session.remove --param sessionID=
+DESCRIPTION
+  Make a request to the running server
+
+USAGE
+  opencode api [flags] <operation | method path...>
+
+ARGUMENTS
+  operation | method path... string OpenAPI operation ID, or an HTTP method followed by a path
+
+FLAGS
+  --standalone           Run with a private server instead of the background service
+  --server string        Connect to a server URL instead of the background service
+  --data, -d string      Request body
+  --header, -H string    Request header in name:value form
+  --param key=value      OpenAPI path or query parameter
+
+GLOBAL FLAGS
+  --help, -h                                                          Show help information
+  --version, -v                                                       Show version information
+  --wizard                                                            Start wizard mode for a command
+  --completions <bash|zsh|fish|sh>                                    Print shell completion script (choices: bash, zsh, fish, sh)
+  --log-level <all|trace|debug|info|warn|warning|error|fatal|none>    Sets the minimum log level (choices: all, trace, debug, info, warn, warning, error, fatal, none)
+  --print-logs                                                        Print logs to stderr (server logs require --standalone)
+
+ERROR
+  Invalid value for flag --param: "sessionID=". Expected: Invalid key=value format. Both key and value must be non-empty. Got: sessionID=
++ sleep 2
++ echo --- loader lines (server log) ---
++ grep -E loading plugin|failed to load plugin|configured plugin /tmp/home/.local/share/opencode/log/opencode.log
+--- loader lines (server log) ---
+timestamp=2026-09-24T16:25:42.096Z level=INFO run=fd6d1535 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts entrypoint=file:///tmp/home/.config/opencode/plugin/probe-autodiscover.ts http.span=75 role=server
+timestamp=2026-09-24T16:26:20.649Z level=INFO run=fd6d1535 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts entrypoint=file:///tmp/home/.config/opencode/plugin/probe-autodiscover.ts http.span=109 role=server
++ cp /tmp/home/.local/share/opencode/log/opencode.log /evidence/server-log.txt
++ kill -TERM -12
++ kill -TERM 63
++ sleep 1
++ echo --- evidence line count ---
++ wc -l /evidence/events.jsonl
+--- evidence line count ---
+113 /evidence/events.jsonl

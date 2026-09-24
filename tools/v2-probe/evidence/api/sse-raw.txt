@@ -1,0 +1,146 @@
+data: {"id":"evt_0d43cb073001khpkhAVUCYRTau","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d43cb095001F4bqgBku3aEgtz","created":1790267142293,"type":"session.created","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f6cffeHzSonZ8NdAP7Qa","slug":"tidy-engine","version":"2.0.15","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","location":{"directory":"/tmp"},"subpath":"","title":"probe-api-session"},"durable":{"aggregateID":"ses_f2bc34f6cffeHzSonZ8NdAP7Qa","seq":0,"version":1}}
+
+data: {"id":"evt_0d43cb0ba001MA4PoW9RAAB8nx","created":1790267142330,"type":"integration.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cb0bd001FgbG2L3SVevIGc","created":1790267142334,"type":"provider.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cb0c4001AxB35V1aARrmkg","created":1790267142340,"type":"model.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cb0c5001349Zm1CsgI2Ga3","created":1790267142341,"type":"agent.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cb0c5002mTXUXqZ6kbVCx1","created":1790267142341,"type":"command.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cb0c6001gW2WN2SGp08nTC","created":1790267142342,"type":"skill.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cb0c8001lKpOtZ8qcfVhev","created":1790267142344,"type":"websearch.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cb0c9002rmeJqirQhIltP7","created":1790267142345,"type":"reference.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cb0ca001DUQWPEakw51r6C","created":1790267142346,"type":"plugin.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cb0eb001UyHSJRXzx2ltga","created":1790267142379,"type":"session.created","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","slug":"curious-meadow","version":"2.0.15","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","location":{"directory":"/tmp"},"subpath":"","title":"probe-api","permissions":[{"action":"shell","resource":"*","effect":"ask"}]},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":0,"version":1}}
+
+data: {"id":"evt_0d43cb1cb001Foa3hN7LkBH157","created":1790267142603,"type":"permission.asked","location":{"directory":"/tmp"},"data":{"id":"per_0d43cb1ca0012rMnTKMk6c1jGn","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","action":"shell","resources":["echo probe"]}}
+
+data: {"id":"evt_0d43cb1cc001N6EFmTsGi7Y34G","created":1790267142604,"type":"permission.replied","data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","requestID":"per_0d43cb1ca0012rMnTKMk6c1jGn","reply":"once"}}
+
+data: {"id":"evt_0d43cbe0f002JHCtOlJA00ocfC","created":1790267145743,"type":"form.created","location":{"directory":"/tmp"},"data":{"form":{"id":"frm_0d43cbe0f001A56JgkmLY810k8","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","title":"probe form","fields":[{"key":"choice","title":"Pick one","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true},{"key":"notes","title":"Notes","type":"string"}]}}}
+
+data: {"id":"evt_0d43cbfe7001KmbhTbYFvR9W6s","created":1790267146215,"type":"models-dev.refreshed","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cc04c001nlbmNDMU4dBESO","created":1790267146316,"type":"integration.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cc07a0011uTkEDbl2QeJY2","created":1790267146362,"type":"provider.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cc084001aMHYqam6k08uin","created":1790267146372,"type":"model.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43cc624001LzVy4SHxThhGBD","created":1790267147812,"type":"form.replied","location":{"directory":"/tmp"},"data":{"id":"frm_0d43cbe0f001A56JgkmLY810k8","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","answer":{"choice":"a","notes":"hello"}}}
+
+data: {"id":"evt_0d43cce37002yFAe4Y4KQ0tmGV","created":1790267149879,"type":"form.created","location":{"directory":"/tmp"},"data":{"form":{"id":"frm_0d43cce37001A4fNZc53BxS7RN","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","title":"probe form cancel","fields":[{"key":"why","title":"Why","type":"string"}]}}}
+
+data: {"id":"evt_0d43cce7f001HeTXDb9q7w2dZG","created":1790267149951,"type":"form.cancelled","location":{"directory":"/tmp"},"data":{"id":"frm_0d43cce37001A4fNZc53BxS7RN","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs"}}
+
+data: {"id":"evt_0d43ccec2001l8c9OBzzppNf1h","created":1790267150018,"type":"session.inbox.enqueued","location":{"directory":"/tmp"},"data":{"inboxID":"msg_0d43ccec1001GpUIQr7xuM4U4e","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","item":{"type":"user","payload":{"text":"Count slowly from 1 to 60, one number per line."},"delivery":"steer"}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":1,"version":1}}
+
+data: {"id":"evt_0d43cced5001Pxx48CKBOMWdaA","created":1790267150037,"type":"session.execution.started","data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":2,"version":1}}
+
+data: {"id":"evt_0d43cceea001u4WXIPexUSSA1N","created":1790267150058,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","delta":{"core/environment":"84e74207c1331ccba2722cc0217cddcdce70601408ac0247770a38907d4c3ae9","core/date":"ade00e1aa759b4d8ec62b951b7f4a0980802006f34bb8b5db1fab6b639c8d61c","core/codemode":"9bbeb19ab2fa0ee4cafd3d2e36b9cfb6c72f8148481e8c67444eb0c9d38b5a22","core/skill-guidance":"8394362d28c82fa4d13c7a9f5568c05680f6687e07db8f426a0e3c92f3027dc9"}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":3,"version":2}}
+
+data: {"id":"evt_0d43cceec00119vE1uKVe9V1a4","created":1790267150060,"type":"session.inbox.delivered","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","inboxID":"msg_0d43ccec1001GpUIQr7xuM4U4e"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":4,"version":1}}
+
+data: {"id":"evt_0d43ccf1b00100zGiSYJYB1UG7","created":1790267150107,"type":"session.inbox.enqueued","location":{"directory":"/tmp"},"data":{"inboxID":"msg_0d43ccf1a001aScq6CLTzrlhTV","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","item":{"type":"user","payload":{"text":"queued item one"},"delivery":"queue"}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":5,"version":1}}
+
+data: {"id":"evt_0d43ccf5c002CfE5JJUPO0ei0Q","created":1790267150172,"type":"session.inbox.enqueued","location":{"directory":"/tmp"},"data":{"inboxID":"msg_0d43ccf5c001qEFhGPOa9ZqtNL","sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","item":{"type":"user","payload":{"text":"queued item two"},"delivery":"queue"}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":6,"version":1}}
+
+data: {"id":"evt_0d43ccfd9001ASGeH55tZcyQ0U","created":1790267150297,"type":"session.inbox.cancelled","data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","inboxID":"msg_0d43ccf1a001aScq6CLTzrlhTV"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":7,"version":1}}
+
+data: {"id":"evt_0d43cd015001ZDtFJrG1UF2b7V","created":1790267150357,"type":"session.inbox.delivery.changed","data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","inboxID":"msg_0d43ccf5c001qEFhGPOa9ZqtNL","delivery":"steer"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":8,"version":1}}
+
+: heartbeat
+
+data: {"id":"evt_0d43cf648001XHI1hHRieh8Dcu","created":1790267160136,"type":"session.step.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","agent":"build","model":{"id":"space-bunny-free","providerID":"opencode"},"assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","started":1790267150076},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":9,"version":1}}
+
+data: {"id":"evt_0d43cf64a001vvjhrRX4NXUbD9","created":1790267160138,"type":"session.reasoning.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","ordinal":0,"state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":10,"version":1}}
+
+data: {"id":"evt_0d43cf6b1001d3dbDKfO1Tismy","created":1790267160241,"type":"session.reasoning.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","ordinal":0,"delta":"We need answer count 1 to"}}
+
+data: {"id":"evt_0d43cf79c001uZAfTn24MEZRmD","created":1790267160476,"type":"session.text.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","ordinal":0},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":11,"version":1}}
+
+data: {"id":"evt_0d43cf804001tR7NB8bZF45F5f","created":1790267160580,"type":"session.reasoning.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","ordinal":0,"delta":" 60 one per line. Need comply exact no framing likely. Need ensure all lines. Straightforward."}}
+
+data: {"id":"evt_0d43cf805001B2a7UrzXyrz611","created":1790267160581,"type":"session.text.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","ordinal":0,"delta":"1\n2\n3\n"}}
+
+data: {"id":"evt_0d43cf949001as2t2NHyuK7NlZ","created":1790267160905,"type":"session.text.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","ordinal":0,"delta":"4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n"}}
+
+data: {"id":"evt_0d43cf99d00129GWQIkLtW7BCI","created":1790267160989,"type":"session.reasoning.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","ordinal":0,"text":"We need answer count 1 to 60 one per line. Need comply exact no framing likely. Need ensure all lines. Straightforward.","state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":12,"version":1}}
+
+data: {"id":"evt_0d43cf99f001z6frL4jzOU9ODd","created":1790267160991,"type":"session.text.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","ordinal":0,"delta":"44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60"}}
+
+data: {"id":"evt_0d43cf9a0001VHXQ5cGv8TsjxD","created":1790267160992,"type":"session.text.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","ordinal":0,"text":"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":13,"version":1}}
+
+data: {"id":"evt_0d43cf9a1001W4FlvqO4FBMCkI","created":1790267160993,"type":"session.step.streamed","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":14,"version":1}}
+
+data: {"id":"evt_0d43cf9a3001v63zrW7Zv4QQgC","created":1790267160995,"type":"session.step.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43ccef4001Y5Yqhpwn96QQaz","finish":"stop","rawFinish":"stop","cost":0,"tokens":{"input":5995,"output":119,"reasoning":30,"cache":{"read":476,"write":0}}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":15,"version":1}}
+
+data: {"id":"evt_0d43cf9a5001luBbBuDUA9lx0O","created":1790267160997,"type":"session.usage.updated","data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","cost":0,"tokens":{"input":5995,"output":119,"reasoning":30,"cache":{"read":476,"write":0}}}}
+
+data: {"id":"evt_0d43cf9a90015Dj8Af1MS6vlFJ","created":1790267161001,"type":"session.inbox.delivered","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","inboxID":"msg_0d43ccf5c001qEFhGPOa9ZqtNL"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":16,"version":1}}
+
+data: {"id":"evt_0d43d0387001Hu36X9B27lNLPm","created":1790267163527,"type":"session.step.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","agent":"build","model":{"id":"space-bunny-free","providerID":"opencode"},"assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","started":1790267161016},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":17,"version":1}}
+
+data: {"id":"evt_0d43d0389001o3ZdYAdRPfUb06","created":1790267163529,"type":"session.reasoning.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","ordinal":0,"state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":18,"version":1}}
+
+data: {"id":"evt_0d43d03ef001Bs6iezaodxQGXC","created":1790267163631,"type":"session.reasoning.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","ordinal":0,"delta":"We need interpret user says \"queued item two\". Context asked count 1-60; now perhaps queued item two means they want second queued item? Need infer. Could be a task queue where first item was counting, second item maybe vague. We should ask clarification because no specified task"}}
+
+data: {"id":"evt_0d43d054a001yLaEf2pO7imTz2","created":1790267163978,"type":"session.reasoning.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","ordinal":0,"delta":". Maybe they expect \"queued item two\" acknowledgment? We need respond appropriately. Could say \"What would you like me to do with queued item two?\" Since only prior request was count. Maybe phrase means \"queued item two\" and expects count? Let's inspect possibilities.\n\nUser says \"queued item two\". Could be a benchmark interaction"}}
+
+data: {"id":"evt_0d43d0794001km0FpqbShiMjLk","created":1790267164565,"type":"session.text.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","ordinal":0},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":19,"version":1}}
+
+data: {"id":"evt_0d43d0797001E7sB6CxGX4ncsB","created":1790267164567,"type":"session.reasoning.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","ordinal":0,"delta":": assistant has completed first queued item; now user identifies second item, perhaps wants us to queue? No defined queue. We should not assume. Ask them to provide task. Concise."}}
+
+data: {"id":"evt_0d43d0797002OtZiuq701m0owo","created":1790267164567,"type":"session.reasoning.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","ordinal":0,"text":"We need interpret user says \"queued item two\". Context asked count 1-60; now perhaps queued item two means they want second queued item? Need infer. Could be a task queue where first item was counting, second item maybe vague. We should ask clarification because no specified task. Maybe they expect \"queued item two\" acknowledgment? We need respond appropriately. Could say \"What would you like me to do with queued item two?\" Since only prior request was count. Maybe phrase means \"queued item two\" and expects count? Let's inspect possibilities.\n\nUser says \"queued item two\". Could be a benchmark interaction: assistant has completed first queued item; now user identifies second item, perhaps wants us to queue? No defined queue. We should not assume. Ask them to provide task. Concise.","state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":20,"version":1}}
+
+data: {"id":"evt_0d43d0798001T3pQo9IPfsDwwF","created":1790267164568,"type":"session.text.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","ordinal":0,"delta":"What is the task for queued item two?"}}
+
+data: {"id":"evt_0d43d07990012Mrp1xJm40AWog","created":1790267164569,"type":"session.text.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","ordinal":0,"text":"What is the task for queued item two?"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":21,"version":1}}
+
+data: {"id":"evt_0d43d079a001w9Xay45kZjdR3O","created":1790267164570,"type":"session.step.streamed","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":22,"version":1}}
+
+data: {"id":"evt_0d43d079b001FYxxt6EHQ5aOba","created":1790267164571,"type":"session.step.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","assistantMessageID":"msg_0d43cf9b0001Fuh4NaoUfFEDAX","finish":"stop","rawFinish":"stop","cost":0,"tokens":{"input":15,"output":9,"reasoning":163,"cache":{"read":6618,"write":0}}},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":23,"version":1}}
+
+data: {"id":"evt_0d43d079c001BGi6TUlA0tcHWq","created":1790267164572,"type":"session.usage.updated","data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","cost":0,"tokens":{"input":6010,"output":128,"reasoning":193,"cache":{"read":7094,"write":0}}}}
+
+data: {"id":"evt_0d43d079f001Ijh6mI0KTagAYd","created":1790267164575,"type":"session.execution.succeeded","data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":24,"version":1}}
+
+: heartbeat
+
+data: {"id":"evt_0d43d45fd001Hisird31lxgacs","created":1790267180541,"type":"location.shutdown","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d46e0001WxcdD5HLrUc7Xw","created":1790267180768,"type":"session.created","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2bc2b920ffeYFavjrj4cN0plm","slug":"quick-cactus","version":"2.0.15","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","location":{"directory":"/tmp"},"subpath":"","title":"probe-api-session"},"durable":{"aggregateID":"ses_f2bc2b920ffeYFavjrj4cN0plm","seq":0,"version":1}}
+
+data: {"id":"evt_0d43d46f5001TRsbQJMch0OCdc","created":1790267180789,"type":"integration.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d46f8001M2TCKQJKuvulqj","created":1790267180792,"type":"provider.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d46fc001UFx0zZYVuHmUk9","created":1790267180796,"type":"model.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d46fd0016bmI8syb4Fxfsi","created":1790267180797,"type":"agent.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d46fe001qgX1B04Rfv4ZnQ","created":1790267180798,"type":"command.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d46fe002bMhTH571dvU2cZ","created":1790267180798,"type":"skill.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d4701001EnEPGJe3KfpOh8","created":1790267180801,"type":"websearch.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d4701003U8UyXkyyvV2BFG","created":1790267180801,"type":"reference.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d4701004GG8v3oHWamip42","created":1790267180801,"type":"plugin.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d43d5a0d001Yg0bc2aUXwvvTN","created":1790267185677,"type":"session.deleted","data":{"sessionID":"ses_f2bc34f15ffeKSffuBRIuhWCZs"},"durable":{"aggregateID":"ses_f2bc34f15ffeKSffuBRIuhWCZs","seq":25,"version":2}}
+
+: heartbeat
+

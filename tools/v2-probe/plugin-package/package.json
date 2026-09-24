@@ -1,0 +1,7 @@
+{
+  "name": "opencode-v2-probe-plugin",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "module": "index.ts",
+  "exports": "./index.ts"
+}

@@ -1,0 +1,49 @@
+timestamp=2026-09-24T16:25:31.074Z level=INFO run=3e0f3e8c message="cli starting" version=2.0.15 channel=latest local=false args="[\"run\",\"--standalone\",\"--print-logs\",\"--format\",\"json\",\"--model\",\"opencode/definitely-not-a-model\",\"hello\"]" role=cli
+timestamp=2026-09-24T16:25:31.086Z level=INFO run=3e0f3e8c message="spawning process" command=/root/.opencode/bin/opencode args="[\"serve\",\"--stdio\",\"--port\",\"0\"]" cwd=/tmp role=cli
+timestamp=2026-09-24T16:25:31.149Z level=INFO run=43e81c21 message="cli starting" version=2.0.15 channel=latest local=false args="[\"serve\",\"--stdio\",\"--port\",\"0\"]" role=cli
+timestamp=2026-09-24T16:25:31.265Z level=INFO run=43e81c21 message="database schema bootstrap started" migrations=48 role=server
+timestamp=2026-09-24T16:25:31.273Z level=INFO run=43e81c21 message="database schema bootstrap completed" migrations=48 durationMs=8 role=server
+timestamp=2026-09-24T16:25:31.311Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/home/.config/opencode type=directory ignores=3 http.span=15 role=server
+timestamp=2026-09-24T16:25:31.313Z level=INFO run=43e81c21 message="watcher subscribe" path=/ type=entries ignores=0 http.span=17 role=server
+timestamp=2026-09-24T16:25:31.314Z level=INFO run=43e81c21 message="watcher started" path=/ type=entries backend=node ignores=0 http.span=18 role=server
+timestamp=2026-09-24T16:25:31.314Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=18 role=server
+timestamp=2026-09-24T16:25:31.314Z level=INFO run=43e81c21 message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=18 role=server
+timestamp=2026-09-24T16:25:31.314Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/home type=entries ignores=0 http.span=18 role=server
+timestamp=2026-09-24T16:25:31.314Z level=INFO run=43e81c21 message="watcher started" path=/tmp/home type=entries backend=node ignores=0 http.span=18 role=server
+timestamp=2026-09-24T16:25:31.330Z level=INFO run=43e81c21 message="watcher started" path=/tmp/home/.config/opencode type=directory backend=inotify ignores=3 http.span=34 role=server
+timestamp=2026-09-24T16:25:31.334Z level=INFO run=43e81c21 message="location services booted" directory=/tmp workspaceID=undefined durationMs=37 http.span=38 role=server
+timestamp=2026-09-24T16:25:31.345Z level=INFO run=43e81c21 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts entrypoint=file:///tmp/home/.config/opencode/plugin/probe-autodiscover.ts http.span=49 role=server
+timestamp=2026-09-24T16:25:31.349Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts type=file ignores=0 http.span=53 role=server
+timestamp=2026-09-24T16:25:31.349Z level=INFO run=43e81c21 message="watcher started" path=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts type=file backend=node ignores=0 http.span=53 role=server
+timestamp=2026-09-24T16:25:31.349Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/home/.config/opencode/probe-plugin.ts type=file ignores=0 http.span=53 role=server
+timestamp=2026-09-24T16:25:31.350Z level=INFO run=43e81c21 message="watcher started" path=/tmp/home/.config/opencode/probe-plugin.ts type=file backend=node ignores=0 http.span=54 role=server
+timestamp=2026-09-24T16:25:31.350Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/home/.config/opencode/probe-lib/helper.ts type=file ignores=0 http.span=54 role=server
+timestamp=2026-09-24T16:25:31.350Z level=INFO run=43e81c21 message="watcher started" path=/tmp/home/.config/opencode/probe-lib/helper.ts type=file backend=node ignores=0 http.span=54 role=server
+timestamp=2026-09-24T16:25:31.350Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/home/.config/opencode/probe-lib/log.ts type=file ignores=0 http.span=54 role=server
+timestamp=2026-09-24T16:25:31.351Z level=INFO run=43e81c21 message="watcher started" path=/tmp/home/.config/opencode/probe-lib/log.ts type=file backend=node ignores=0 http.span=55 role=server
+timestamp=2026-09-24T16:25:31.503Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/home/.config/opencode/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:25:31.503Z level=INFO run=43e81c21 message="watcher started" path=/tmp/home/.config/opencode/AGENTS.md type=file backend=node ignores=0 http.span=207 role=server
+timestamp=2026-09-24T16:25:31.503Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:25:31.504Z level=INFO run=43e81c21 message="watcher started" path=/tmp/AGENTS.md type=file backend=node ignores=0 http.span=208 role=server
+timestamp=2026-09-24T16:25:31.512Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/home/.config/opencode/skill type=file ignores=0
+timestamp=2026-09-24T16:25:31.512Z level=INFO run=43e81c21 message="watcher started" path=/tmp/home/.config/opencode/skill type=file backend=node ignores=0 http.span=216 role=server
+timestamp=2026-09-24T16:25:31.515Z level=INFO run=43e81c21 message="watcher subscribe" path=/tmp/home/.config/opencode/skills type=file ignores=0
+timestamp=2026-09-24T16:25:31.515Z level=INFO run=43e81c21 message="watcher started" path=/tmp/home/.config/opencode/skills type=file backend=node ignores=0 http.span=219 role=server
+timestamp=2026-09-24T16:25:31.537Z level=INFO run=43e81c21 message=event event.id=evt_0d43c8691001IrvCbJf28IBnTF event.created=1790267131537 event.type=provider.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=241 role=server
+timestamp=2026-09-24T16:25:31.543Z level=INFO run=43e81c21 message=event event.id=evt_0d43c8697001lRigRpWEz139T7 event.created=1790267131543 event.type=model.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=247 role=server
+timestamp=2026-09-24T16:25:31.545Z level=INFO run=43e81c21 message=event event.id=evt_0d43c8699001ZfWFZXl1tGnMvc event.created=1790267131545 event.type=agent.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=249 role=server
+timestamp=2026-09-24T16:25:31.546Z level=INFO run=43e81c21 message=event event.id=evt_0d43c869a001MyYETSzdS0pO2b event.created=1790267131546 event.type=command.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=250 role=server
+timestamp=2026-09-24T16:25:31.584Z level=ERROR run=43e81c21 message="Failed to drain Session" cause="SessionRunnerModel.ModelUnavailableError: Model unavailable: opencode/definitely-not-a-model\n    at <anonymous> (/$bunfs/root/chunk-y812fvyk.js:37:21337)\n    at SessionRunnerModel.resolve (/$bunfs/root/chunk-y812fvyk.js:113:7817)\n    at SessionRunnerModel.resolve (definition) (/$bunfs/root/chunk-y812fvyk.js:37:21094)\n    at SessionContext.load (/$bunfs/root/chunk-pxq53at5.js:366:2529)\n    at SessionContext.load (definition) (/$bunfs/root/chunk-y812fvyk.js:113:7766)\n    at SessionRunner.advanceToStep (/$bunfs/root/chunk-pxq53at5.js:366:2583)\n    at SessionRunner.advanceToStep (definition) (/$bunfs/root/chunk-pxq53at5.js:366:729)\n    at SessionRunner.drain (/$bunfs/root/chunk-6vby8dk6.js:24:2279)\n    at SessionRunner.drain (definition) (/$bunfs/root/chunk-pxq53at5.js:366:352)\n    at ServerProcess.start (/$bunfs/root/chunk-sdzrh31k.js:2:6440)\n    at ServerProcess.start (definition) (/$bunfs/root/chunk-pxq53at5.js:437:22432)" role=server sessionID=ses_f2bc37a35ffeZ2W5cx5fE4rYl1
+timestamp=2026-09-24T16:25:31.607Z level=INFO run=43e81c21 cause="InterruptError: All fibers interrupted without error\n    at ServerProcess.start (/$bunfs/root/chunk-sdzrh31k.js:2:6440)\n    at ServerProcess.start (definition) (/$bunfs/root/chunk-pxq53at5.js:437:22432) {\n  [cause]: InterruptCause: The fiber was interrupted by:\n      at fiber (#1)\n}" http.span=259 role=server http.method=GET http.url=/api/event http.status=200
+timestamp=2026-09-24T16:25:31.622Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/home/.config/opencode/probe-lib/log.ts type=file http.span=326 role=server
+timestamp=2026-09-24T16:25:31.622Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/home/.config/opencode/probe-lib/helper.ts type=file http.span=326 role=server
+timestamp=2026-09-24T16:25:31.622Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/home/.config/opencode/probe-plugin.ts type=file http.span=326 role=server
+timestamp=2026-09-24T16:25:31.623Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/home/.config/opencode/plugin/probe-autodiscover.ts type=file http.span=327 role=server
+timestamp=2026-09-24T16:25:31.625Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/home/.config/opencode/skill type=file http.span=329 role=server
+timestamp=2026-09-24T16:25:31.625Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/home/.config/opencode/skills type=file http.span=329 role=server
+timestamp=2026-09-24T16:25:31.628Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/AGENTS.md type=file http.span=332 role=server
+timestamp=2026-09-24T16:25:31.628Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/home/.config/opencode/AGENTS.md type=file http.span=332 role=server
+timestamp=2026-09-24T16:25:31.635Z level=INFO run=43e81c21 message="watcher stopped" path=/ type=entries http.span=339 role=server
+timestamp=2026-09-24T16:25:31.635Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp type=entries http.span=339 role=server
+timestamp=2026-09-24T16:25:31.635Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/home type=entries http.span=339 role=server
+timestamp=2026-09-24T16:25:31.635Z level=INFO run=43e81c21 message="watcher stopped" path=/tmp/home/.config/opencode type=directory http.span=339 role=server

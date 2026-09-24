@@ -1,0 +1,135 @@
+=== scenario: variants ===
+=== exact docker invocation (from worktree root) ===
+docker run --rm \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t01/tools/v2-probe:/probe:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t01/tools/v2-probe/evidence/variants:/evidence \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t01/tools/v2-probe/configs/variants.json:/tmp/home/.config/opencode/opencode.json:ro \
+  -e PROBE_LOG_FILE=/evidence/events.jsonl -e PROBE_SERVE_PORT=18131 -e PROBE_PASSWORD=probe-pass-123  \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /probe/scripts/variants.sh'
+=== container output follows ===
++ run_arm setup 18131
++ arm=setup
++ port=18131
++ export HOME=/tmp/home-setup
++ rm -rf /tmp/home-setup
++ mkdir -p /tmp/home-setup/.config/opencode/plugin
++ cp -r /probe/probe-lib /tmp/home-setup/.config/opencode/probe-lib
++ cp /probe/probe-plugin.ts /tmp/home-setup/.config/opencode/probe-plugin.ts
++ cp /probe/autodiscover/probe-autodiscover.ts /tmp/home-setup/.config/opencode/plugin/probe-autodiscover.ts
++ export PROBE_LOG_FILE=/evidence/arm-setup.jsonl
++ rm -f /evidence/arm-setup.jsonl
++ cd /tmp
++ SPID=14
++ export OPENCODE_PASSWORD=probe-pass-123
++ OPENCODE_SERVER_PASSWORD=probe-pass-123 setsid opencode serve --port 18131 --print-logs
++ seq 1 40
++ opencode api --server http://127.0.0.1:18131 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:18131 plugin.list
++ break
++ opencode api --server http://127.0.0.1:18131 plugin.list
+{"location":{"directory":"/tmp"},"data":[]}
++ sleep 6
++ kill -TERM -14
++ sleep 1
+=== setup loader lines ===
++ echo === setup loader lines ===
++ grep -E loading plugin|failed to load plugin|configured plugin /tmp/home-setup/.local/share/opencode/log/opencode.log
+timestamp=2026-09-24T16:27:00.892Z level=INFO run=45490d1c msg="loading plugin" id=/tmp/home-setup/.config/opencode/plugin/probe-autodiscover.ts entrypoint=file:///tmp/home-setup/.config/opencode/plugin/probe-autodiscover.ts http.span=46 role=server
++ cp /tmp/home-setup/.local/share/opencode/log/opencode.log /evidence/arm-setup-server.txt
++ run_arm effect 18132
++ arm=effect
++ port=18132
++ export HOME=/tmp/home-effect
++ rm -rf /tmp/home-effect
++ mkdir -p /tmp/home-effect/.config/opencode/plugin
++ cp -r /probe/probe-lib /tmp/home-effect/.config/opencode/probe-lib
++ cp /probe/variants/probe-effect.ts /tmp/home-effect/.config/opencode/plugin/probe-effect.ts
++ export PROBE_LOG_FILE=/evidence/arm-effect.jsonl
++ rm -f /evidence/arm-effect.jsonl
++ cd /tmp
++ SPID=76
++ export OPENCODE_PASSWORD=probe-pass-123
++ OPENCODE_SERVER_PASSWORD=probe-pass-123 setsid opencode serve --port 18132 --print-logs
++ seq 1 40
++ opencode api --server http://127.0.0.1:18132 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:18132 plugin.list
++ break
++ opencode api --server http://127.0.0.1:18132 plugin.list
+{"location":{"directory":"/tmp"},"data":[]}
++ sleep 6
++ kill -TERM -76
++ sleep 1
++ echo === effect loader lines ===
+=== effect loader lines ===
++ grep -E loading plugin|failed to load plugin|configured plugin /tmp/home-effect/.local/share/opencode/log/opencode.log
+timestamp=2026-09-24T16:27:08.741Z level=INFO run=b41aba11 msg="loading plugin" id=/tmp/home-effect/.config/opencode/plugin/probe-effect.ts entrypoint=file:///tmp/home-effect/.config/opencode/plugin/probe-effect.ts http.span=41 role=server
++ cp /tmp/home-effect/.local/share/opencode/log/opencode.log /evidence/arm-effect-server.txt
++ run_arm extless 18133
++ arm=extless
++ port=18133
++ export HOME=/tmp/home-extless
++ rm -rf /tmp/home-extless
++ mkdir -p /tmp/home-extless/.config/opencode/plugin
++ cp -r /probe/probe-lib /tmp/home-extless/.config/opencode/probe-lib
++ cp /probe/variants/extless-helper.ts /tmp/home-extless/.config/opencode/extless-helper.ts
++ cp /probe/variants/probe-extless.ts /tmp/home-extless/.config/opencode/plugin/probe-extless.ts
++ export PROBE_LOG_FILE=/evidence/arm-extless.jsonl
++ rm -f /evidence/arm-extless.jsonl
++ cd /tmp
++ SPID=140
++ export OPENCODE_PASSWORD=probe-pass-123
++ OPENCODE_SERVER_PASSWORD=probe-pass-123+  setsid opencode serve --port 18133 --print-logs
+seq 1 40
++ opencode api --server http://127.0.0.1:18133 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:18133 plugin.list
++ break
++ opencode api --server http://127.0.0.1:18133 plugin.list
+{"location":{"directory":"/tmp"},"data":[]}
++ sleep 6
++ kill -TERM -140
++ sleep 1
+=== extless loader lines ===
++ echo === extless loader lines ===
++ grep -E loading plugin|failed to load plugin|configured plugin /tmp/home-extless/.local/share/opencode/log/opencode.log
+timestamp=2026-09-24T16:27:16.574Z level=INFO run=380cbf35 msg="loading plugin" id=/tmp/home-extless/.config/opencode/plugin/probe-extless.ts entrypoint=file:///tmp/home-extless/.config/opencode/plugin/probe-extless.ts http.span=44 role=server
++ cp /tmp/home-extless/.local/share/opencode/log/opencode.log /evidence/arm-extless-server.txt
++ run_arm helper-in-plugin 18134
++ arm=helper-in-plugin
++ port=18134
++ export HOME=/tmp/home-helper-in-plugin
++ rm -rf /tmp/home-helper-in-plugin
++ mkdir -p /tmp/home-helper-in-plugin/.config/opencode/plugin
++ cp -r /probe/probe-lib /tmp/home-helper-in-plugin/.config/opencode/probe-lib
++ cp /probe/variants/extless-helper.ts /tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts
++ export PROBE_LOG_FILE=/evidence/arm-helper-in-plugin.jsonl
++ rm -f /evidence/arm-helper-in-plugin.jsonl
++ cd /tmp
++ SPID=202
++ export OPENCODE_PASSWORD=probe-pass-123
++ + OPENCODE_SERVER_PASSWORD=probe-pass-123seq setsid 1 opencode 40 serve
+ --port 18134 --print-logs
++ opencode api --server http://127.0.0.1:18134 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:18134 plugin.list
++ break
++ opencode api --server http://127.0.0.1:18134 plugin.list
+{"location":{"directory":"/tmp"},"data":[]}
++ sleep 6
++ kill -TERM -202
++ sleep 1
+=== helper-in-plugin loader lines ===
++ echo === helper-in-plugin loader lines ===
++ grep -E loading plugin|failed to load plugin|configured plugin /tmp/home-helper-in-plugin/.local/share/opencode/log/opencode.log
+timestamp=2026-09-24T16:27:24.410Z level=INFO run=7a8d4245 msg="loading plugin" id=/tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts entrypoint=file:///tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts http.span=39 role=server
+timestamp=2026-09-24T16:27:24.412Z level=WARN run=7a8d4245 message="failed to load plugin" target=/tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts ref=err_bb1de5a1 cause="Cause([Fail(PluginModule.LoadError: Plugin must export a default definition with an id and an effect or setup function. (cause: SchemaError(Missing key\n  at [\"default\"])))])" http.span=41 role=server
++ cp /tmp/home-helper-in-plugin/.local/share/opencode/log/opencode.log /evidence/arm-helper-in-plugin-server.txt
+--- evidence line counts ---
++ echo --- evidence line counts ---
++ wc -l /evidence/arm-effect.jsonl /evidence/arm-extless.jsonl /evidence/arm-setup.jsonl
+    1 /evidence/arm-effect.jsonl
+    2 /evidence/arm-extless.jsonl
+   20 /evidence/arm-setup.jsonl
+   23 total

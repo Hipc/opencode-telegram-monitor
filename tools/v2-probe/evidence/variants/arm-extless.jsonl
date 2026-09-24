@@ -1,0 +1,2 @@
+{"ts":1790267236576,"seq":1,"plugin":"probe-extless","kind":"probe","type":"probe.module-evaluated","payload":{"pid":140,"extlessHelperValue":"extless-helper-loaded"}}
+{"ts":1790267236710,"seq":2,"plugin":"probe-extless","kind":"probe","type":"probe.setup","payload":{"pid":140,"extlessHelperValue":"extless-helper-loaded","clientKeys":["app","location","options","agent","aisdk","command","event","experimental","generate","model","provider","integration","mcp","permission","plugin","reference","rpc","skill","storage","tool","vcs","websearch","worktree","session","shell"]}}
