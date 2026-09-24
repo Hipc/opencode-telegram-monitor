@@ -180,6 +180,9 @@ export default {
         }
         if (event?.type === "permission.asked") {
           const requestID = String(data.id);
+          // Same observable the adapted plugin logs when it starts tracking the
+          // request (assert H3.3 checks for it in tgdiag.log).
+          dline(`scheduleWaitingNotify(${requestID}) type=permission`);
           const timer = setTimeout(() => {
             waitingTimers.delete(requestID);
             if (disposed || findRecord(requestID)) return;

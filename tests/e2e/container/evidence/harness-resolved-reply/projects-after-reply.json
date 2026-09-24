@@ -1,0 +1,21 @@
+{
+  "projects": [
+    {
+      "path": "/tmp/proj",
+      "enabled": true,
+      "addedAt": "2026-01-01T00:00:00.000Z",
+      "sessions": [
+        {
+          "session_id": "ses_f2b564d69ffeJvfxQRlZD0u3E1",
+          "session_name": "e2e-waiting",
+          "type": "question",
+          "message": "{\"form\":{\"id\":\"frm_0d4a9bafe001HUXn5ei9TkQd7r\",\"sessionID\":\"ses_f2b564d69ffeJvfxQRlZD0u3E1\",\"title\":\"e2e question\",\"fields\":[{\"key\":\"choice\",\"title\":\"Pick\",\"type\":\"string\",\"options\":[{\"value\":\"a\",\"label\":\"A\"},{\"value\":\"b\",\"label\":\"B\"}],\"custom\":true}]}}",
+          "send": false,
+          "resolved": false,
+          "request_id": "frm_0d4a9bafe001HUXn5ei9TkQd7r",
+          "created_at": "2026-09-24T18:24:48.384Z"
+        }
+      ]
+    }
+  ]
+}

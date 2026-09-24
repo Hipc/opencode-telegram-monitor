@@ -16,12 +16,19 @@
 #       the §9/A.1 channel (form.replied + record deletion)
 #   P3  lifecycle: deterministic failing execution (bogus model) → terminal
 #       notification attempt recorded in ~/.otg/tgdiag.log
+#   P2c optional already-resolved reply capture (T05_HARNESS_RESOLVED_REPLY=1):
+#       restore the pending permission snapshot, re-inject reply:"once" after the
+#       request was settled, and capture the plugin's client.permission.reply
+#       error shape / 404 classification in tgdiag-resolved-reply.txt (ticket 04
+#       open item: isNotFoundError)
 #
 # Evidence (mounted /evidence): phase-ids.json, projects-after-*.json,
 # tgdiag-after-*.txt, sse-raw.txt, server-log.txt, commands transcript.
 #
 # Environment: T05_PLUGIN, T05_PORT, T05_PASSWORD, T05_ROOT,
-# T05_HARNESS_FORM_REPLY (0/1), T05_HARNESS_MODEL (0/1 optional success path).
+# T05_HARNESS_FORM_REPLY (0/1), T05_HARNESS_MODEL (0/1 optional success path),
+# T05_HARNESS_RESOLVED_REPLY (0/1 optional settled-request capture),
+# T05_HARNESS_REPLY_ERROR_PROBE (0/1 auxiliary client-error-shape double).
 set -x
 
 export HOME=/tmp/home
@@ -31,6 +38,11 @@ cd "$ROOT"
 
 PLUGIN_SRC="${T05_PLUGIN:?T05_PLUGIN required}"
 cp "$PLUGIN_SRC" "$HOME/.config/opencode/plugin/telegram-session-monitor.ts"
+# Auxiliary diagnostic double (off by default): captures the client-side error
+# shape of permission.reply on an already-settled request (ticket 04 open item).
+if [ "${T05_HARNESS_REPLY_ERROR_PROBE:-0}" = "1" ]; then
+  cp /harness/plugins/reply-error-probe.ts "$HOME/.config/opencode/plugin/t05-reply-error-probe.ts"
+fi
 cp /harness/configs/telegram.synthetic.json "$HOME/.otg/telegram.json"
 cp /harness/configs/projects.seed.json "$HOME/.otg/projects.json"
 
@@ -182,6 +194,36 @@ if [ "${T05_HARNESS_MODEL:-0}" = "1" ]; then
     sleep 1
   done
   cp "$DIAG" /evidence/tgdiag-model.txt
+fi
+
+# ---- P2c: optional already-resolved reply capture ---------------------------
+# Runs last so its deliberate retry loop cannot pollute the earlier phases.
+if [ "${T05_HARNESS_RESOLVED_REPLY:-0}" = "1" ]; then
+  # Restore the registry snapshot taken while the permission record was pending
+  # and re-inject the reply, mimicking a stale TG button press on a settled
+  # request. The plugin's 1s reply scan must attempt client.permission.reply;
+  # the outcome (404 terminal classification or raw apply failure) lands in diag.
+  cp /evidence/projects-after-permission.json "$PROJECTS"
+  if inject_json_field "$PERID" reply '"once"'; then
+    echo "P2c: re-injected reply for already-settled $PERID"
+  else
+    echo "P2c: WARN could not re-inject reply for $PERID"
+  fi
+  for i in $(seq 1 15); do
+    grep -qE 'Permission request no longer exists|Permission reply apply failed' "$DIAG" 2>/dev/null && break
+    sleep 1
+  done
+  sleep 2
+  cp "$DIAG" /evidence/tgdiag-resolved-reply.txt
+  cp "$PROJECTS" /evidence/projects-after-resolved-reply.json
+  # Raw HTTP cross-check of the same settled request (server-side shape).
+  set +x
+  curl -s -o /evidence/api-resolved-reply-http.json -w '%{http_code}' \
+    -u "opencode:$PW" -H 'content-type: application/json' \
+    -X POST "http://127.0.0.1:$PORT/api/session/$SID/permission/$PERID/reply" \
+    -d '{"decision":"once"}' > /evidence/api-resolved-reply-http.status 2>&1 || true
+  set -x
+  echo "P2c: raw HTTP status $(cat /evidence/api-resolved-reply-http.status 2>/dev/null)"
 fi
 
 # ---- wrap up ----------------------------------------------------------------

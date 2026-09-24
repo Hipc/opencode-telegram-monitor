@@ -9,6 +9,7 @@ is installed on the host and no local opencode directory is touched.
 | `run.sh` | host entrypoint for every scenario |
 | `lib/common.sh` | docker/port/ownership helpers |
 | `probe-a1/` | §9/A.1 + A.6 supplementary probe (form reply channel, natural question flow) |
+| `probe-lineage/` | §9 supplementary probe (subagent lineage / parentID observability) |
 | `harness/` | container e2e scenario + mechanism-validation double + real-TG recipe scripts |
 | `assert/` | node assertion suites over the collected evidence |
 | `evidence/` | recorded outputs of the green runs in this round |
@@ -17,10 +18,10 @@ Requirements: docker with `hipc/opencode2:latest` (opencode v2.0.15) and
 `otg-toolchain:latest` (node+bun for the bundle build); `node` on the host for
 the assertion scripts.
 
-Resource discipline: every container runs `--rm` with a unique `t05-` name,
-no ports are published (the serve port lives in the container network
+Resource discipline: every container runs `--rm` with a unique `t05`/`t05b-`
+name, no ports are published (the serve port lives in the container network
 namespace and is picked dynamically, checked against the host listener table),
-and the runner stops what it starts. `run.sh clean` removes leftover `t05-`
+and the runner stops what it starts. `run.sh clean` removes leftover `t05*`
 containers if a run is interrupted.
 
 ---
@@ -62,6 +63,33 @@ Result summary (all 18 checks green):
 
 ---
 
+## 1b. §9 probe — subagent lineage / parentID
+
+```sh
+tests/e2e/container/run.sh probe-lineage          # ~50 s incl. one model turn
+tests/e2e/container/run.sh assert-probe-lineage   # evidence summary
+```
+
+Findings and the contract-facing verdict: **`probe-lineage/VERDICT.md`**.
+Evidence: `evidence/probe-lineage/`.
+
+Result summary (all 7 structural checks green):
+
+- **parent linkage IS observable**: a child session spawned by the real `subagent`
+  tool carries `parentID` in `session.created` data and in
+  `client.session.get` results; `GET /api/session?parentID=<root>` lists it.
+- Deterministic model-free control: `POST /api/experimental/session/import` with
+  an explicit `info.parentID` produces the same observable shape.
+- Fork control: `session.fork` emits `session.forked` with `data.parentID`
+  (= source), but the forked session itself has `parentID=null` and
+  `fork:{sessionID,boundary}` — it is not a `parentID` child.
+- No parent key appears in execution/step/tool event data or `session.context`.
+- Contract input: §9 item closes as observable; §2.1's `session.created` field
+  list should add `parentID?` / `agent?` / `model?`. The adapted `src/**`
+  (03) does not consume `parentID` yet — follow-up work item for dev-lead.
+
+---
+
 ## 2. Container e2e harness
 
 Drives a real opencode v2 server with the plugin under test auto-discovered
@@ -71,21 +99,36 @@ from `<configDir>/plugin/telegram-session-monitor.ts`, a synthetic
 API triggers (`opencode api`), no model is required.
 
 ```sh
-# mechanism validation now (stub double, ~18 s, all 20 checks green):
+# mechanism validation (stub double, ~20 s):
 T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh harness \
   --plugin tests/e2e/container/harness/plugins/harness-stub.ts
 T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh assert-harness
 
-# final green-run (after tickets 03/04 are merged; builds the bundle first):
-tests/e2e/container/run.sh harness            # T05_PLUGIN_SRC defaults to this worktree
+# green-run against the adapted plugin (tickets 03+04 merged; builds the
+# bundle from this worktree, all 21 checks green — see evidence/harness):
+T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh harness
 T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh assert-harness
+
+# optional settled-request capture (ticket 04 isNotFoundError evidence; run
+# into its own evidence dir so the canonical green-run evidence stays intact):
+T05_HARNESS_OUT="$PWD/tests/e2e/container/evidence/harness-resolved-reply" \
+T05_HARNESS_FORM_REPLY=1 T05_HARNESS_RESOLVED_REPLY=1 T05_HARNESS_REPLY_ERROR_PROBE=1 \
+  tests/e2e/container/run.sh harness
+T05_HARNESS_OUT="$PWD/tests/e2e/container/evidence/harness-resolved-reply" \
+T05_HARNESS_FORM_REPLY=1 T05_HARNESS_RESOLVED_REPLY=1 T05_HARNESS_REPLY_ERROR_PROBE=1 \
+  tests/e2e/container/run.sh assert-harness
 ```
 
 `T05_HARNESS_FORM_REPLY=1` additionally exercises the form write-back closure
 (only meaningful once the plugin implements the §9/A.1 channel; without it the
 form check is reported as `pending`, never as a failure). `T05_HARNESS_MODEL=1`
 adds an optional model-backed success turn (slow/flaky by nature; off by
-default).
+default). `T05_HARNESS_RESOLVED_REPLY=1` adds P2c: it restores the pending
+permission record and re-injects `reply:"once"` after the request was settled
+(stale TG button), capturing the plugin's 404 classification / raw error shape
+in `tgdiag-resolved-reply.txt`. `T05_HARNESS_REPLY_ERROR_PROBE=1` additionally
+loads a diagnostic double that re-calls `client.permission.reply` on the settled
+request and writes the full client-side error shape to `reply-error-shape.json`.
 
 ### Phases and observables
 
@@ -96,12 +139,21 @@ default).
 | P2 | external `reply:"once"` injection (same write the TG button does) | record deleted + `permission.replied` on `GET /api/event` |
 | P2b | external `q_answers:[["A"]]` injection (same write the TG wizard does) | record deleted + `form.replied` on the wire |
 | P3 | bogus model + `session.prompt` → `session.execution.failed` | terminal notification attempt in `tgdiag.log` (`Telegram message send failed`) |
+| P2c | optional settled-request re-reply (stale button) | `tgdiag-resolved-reply.txt` 404 classification / raw error shape; `reply-error-shape.json` client-side shape |
 
 Assertion catalog (`assert/harness.mjs`): H1.1–H1.3 loading/init,
-H2.1x permission record, H2.2x question record, H3.1–H3.3 permission closure,
-H3.4–H3.5 form closure (gated), H4.1–H4.2 lifecycle.
+H2.1x permission record, H2.2x question record, H3.1/H3.2/H3.2a/H3.3 permission
+closure, H3.4–H3.5 form closure (gated), H3.6/H3.7 settled-reply capture
+(gated), H4.1–H4.2 lifecycle.
 Green output is recorded in `evidence/harness/commands.txt` and the assertion
 transcript is embedded in the ticket return.
+
+Note on H3.3: the adapted plugin's success path is silent by design — it logs
+only the 404 terminal path and apply failures (contract §3.3 / 04). H3.3
+therefore asserts "the request was tracked and no apply failure was logged";
+the positive closure evidence is H3.1 (record deleted) plus H3.2/H3.2a
+(`permission.replied` on the wire with the injected decision). The earlier
+stub-era regex expected a stub-only diag marker and was fixed here.
 
 ### Bundle build
 
@@ -134,7 +186,7 @@ Observed evidence (`evidence/real-tg-recipe/commands.txt`):
 - the config copies to `/tmp/home/.otg` (6 entries, names/sizes only printed);
 - a marker written into the copy does not appear under `/host-otg`.
 
-### 3b. Full run (orchestrator-scheduled after 03/04)
+### 3b. Full run (final verification phase; pending)
 
 ```sh
 # safe mode (default): the container never calls getUpdates, so it cannot
@@ -170,23 +222,34 @@ host `~/.otg` unchanged (the runner also records before/after fingerprints in
 
 ---
 
-## 4. Pending items (explicitly not faked)
+## 4. Status (explicitly not faked)
 
-- **Final green-run against the adapted plugin (tickets 03/04)** — pending by
-  design; the orchestrator schedules `run.sh harness` + `assert-harness` after
-  both merge. The stub run above validates the harness mechanics only.
-- **Real-TG smoke execution** — pending until the adapted bundle exists; the
-  mechanism is validated now (§3a).
-- **Form write-back closure** — the channel is proven (§1), the harness phase is
-  ready and gated; it passes against the stub double. It turns green for the
-  real plugin once 04 applies `q_answers` through the contract-revised channel.
+- **Green-run against the adapted plugin (tickets 03/04)** — **done**: all 21
+  checks green, form write-back closure included (`evidence/harness/`, run
+  2026-09-25 on task HEAD `8f3572f`).
+- **Settled-request reply capture (ticket 04 `isNotFoundError` open item)** —
+  **done**: the real v2 `client.permission.reply` error on an already-settled
+  request is a plain `Error` (`name="Error"`,
+  `message="Permission request not found: <perID>"`, no `status`/`_tag`/
+  enumerable props), so the current `isNotFoundError` does not classify it as
+  404 and the record is retried forever; raw HTTP 404 body
+  `{"_tag":"PermissionNotFoundError",...}` and the full client-side shape are in
+  `evidence/harness-resolved-reply/`. Contract §3.3 terminal semantics need a
+  04 follow-up (dev-lead).
+- **Subagent lineage / parentID** — **done** (see §1b): observable; feeds a
+  contract revision and a `src/**` follow-up.
+- **Real-TG smoke execution** — **pending** (final verification phase): the
+  mechanism is validated read-only now (§3a); the full `--run` recipe executes
+  in the orchestrator's final phase.
 - **Model-backed success lifecycle** — `T05_HARNESS_MODEL=1` optional path;
   the deterministic P3 failure path is the default CI-stable lifecycle check.
 
 ## 5. Evidence layout
 
-`evidence/probe-a1/` raw probe run · `evidence/harness/` stub-run mechanism
-validation (all checks green, form phase included) · `evidence/real-tg-recipe/`
-read-only mount check · `evidence/build/` toolchain build transcript.
-Regenerating any scenario replaces its evidence directory (`run.sh` wipes it
-first), so re-running is safe and reproducible.
+`evidence/probe-a1/` form-channel probe run · `evidence/probe-lineage/`
+subagent-lineage probe run · `evidence/harness/` green-run against the adapted
+plugin (all 21 checks green, form phase included) ·
+`evidence/harness-resolved-reply/` settled-request capture (H3.6/H3.7) ·
+`evidence/real-tg-recipe/` read-only mount check · `evidence/build/` toolchain
+build transcript. Regenerating any scenario replaces its evidence directory
+(`run.sh` wipes it first), so re-running is safe and reproducible.

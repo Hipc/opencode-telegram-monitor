@@ -60,12 +60,12 @@ fix_ownership() {
     chown -R "$HOST_UID_GID" /w >/dev/null
 }
 
-# Kill leftover containers from an interrupted run (only our own t05- prefix).
+# Kill leftover containers from an interrupted run (only our own t05*/t05b* prefix).
 cleanup_containers() {
   local names
-  names=$(docker ps -a --filter "name=^/t05-" --format '{{.Names}}' 2>/dev/null || true)
+  names=$(docker ps -a --filter "name=^/t05" --format '{{.Names}}' 2>/dev/null || true)
   if [ -n "$names" ]; then
-    log "removing leftover t05- containers: $(echo "$names" | tr '\n' ' ')"
+    log "removing leftover t05* containers: $(echo "$names" | tr '\n' ' ')"
     # shellcheck disable=SC2086
     docker rm -f $names >/dev/null 2>&1 || true
   fi

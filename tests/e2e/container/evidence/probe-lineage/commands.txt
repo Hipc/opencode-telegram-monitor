@@ -1,0 +1,157 @@
+=== scenario: probe-lineage (subagent lineage / parentID observability) ===
+=== exact command ===
+docker run --rm --name t05b-lineage-1673674 \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t05b/tests/e2e/container/probe-lineage:/probe-lineage:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t05b/tests/e2e/container/evidence/probe-lineage:/evidence \
+  -e T05_PORT=20702 -e T05_PASSWORD=<redacted> -e T05_PROBE_LOG=/evidence/probe-lineage.jsonl \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /probe-lineage/scenario.sh'
+=== output follows ===
++ export HOME=/tmp/home
++ mkdir -p /tmp/home/.config/opencode/plugin /tmp/home/.otg
++ cd /tmp
++ cp /probe-lineage/plugin.ts /tmp/home/.config/opencode/plugin/t05-probe-lineage.ts
++ PORT=20702
++ set +x
++ SPID=10
++ API=opencode api --server http://127.0.0.1:20702
++ + setsid opencode serve --port 20702 --print-logs
+seq 1 60
++ opencode api --server http://127.0.0.1:20702 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:20702 plugin.list
++ break
++ seq 1 60
++ grep -q "type":"probe.setup" /evidence/probe-lineage.jsonl
++ sleep 0.5
++ grep -q "type":"probe.setup" /evidence/probe-lineage.jsonl
++ break
++ sleep 1
++ set +x
++ opencode api --server http://127.0.0.1:20702 session.create -d {"title":"lineage-root"}
++ ROOT_OUT={"data":{"id":"ses_f2b5334bfffeL3hMu80BIHYwa3","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790274489153,"updated":1790274489153},"title":"lineage-root","location":{"directory":"/tmp"}}}
++ echo {"data":{"id":"ses_f2b5334bfffeL3hMu80BIHYwa3","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790274489153,"updated":1790274489153},"title":"lineage-root","location":{"directory":"/tmp"}}}
++ echo {"data":{"id":"ses_f2b5334bfffeL3hMu80BIHYwa3","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790274489153,"updated":1790274489153},"title":"lineage-root","location":{"directory":"/tmp"}}}
++ grep -o "id":"ses_[^"]*"
++ head -1
++ cut -d" -f4
+ROOT=ses_f2b5334bfffeL3hMu80BIHYwa3
++ ROOT=ses_f2b5334bfffeL3hMu80BIHYwa3
++ echo ROOT=ses_f2b5334bfffeL3hMu80BIHYwa3
++ seq 1 40
++ grep -q "sessionID":"ses_f2b5334bfffeL3hMu80BIHYwa3" /evidence/probe-lineage.jsonl
++ break
++ sleep 1
++ SUBAGENT_PROMPT=Use the subagent tool to launch a general subagent. Pass agent general and prompt: Reply with exactly lineage-child-ok. Do not use any other tool. When the subagent finishes, reply with exactly lineage-parent-done.
++ timeout 300 opencode api --server http://127.0.0.1:20702 session.prompt --param sessionID=ses_f2b5334bfffeL3hMu80BIHYwa3 -d {"text":"Use the subagent tool to launch a general subagent. Pass agent general and prompt: Reply with exactly lineage-child-ok. Do not use any other tool. When the subagent finishes, reply with exactly lineage-parent-done.","delivery":"queue"}
++ echo P2 prompt_exit=0
++ CHILD=
++ wait_child 60
++ local limit=60
++ seq 1 60
+P2 prompt_exit=0
++ child_ids
++ grep "type":"session.created" /evidence/probe-lineage.jsonl
++ grep -o "sessionID":"ses_[^"]*"
++ cut -d" -f4
++ sort -u
++ grep -v ^ses_f2b5334bfffeL3hMu80BIHYwa3$
++ true
++ [ -n  ]
++ sleep 2
++ child_ids
++ grep "type":"session.created" /evidence/probe-lineage.jsonl
++ grep -o "sessionID":"ses_[^"]*"
++ sort -u
++ grep -v ^ses_f2b5334bfffeL3hMu80BIHYwa3$
++ cut -d" -f4
++ true
++ [ -n  ]
++ sleep 2
++ child_ids
++ + grep -o "sessionID":"ses_[^"]*"
+grep "type":"session.created" /evidence/probe-lineage.jsonl
++ cut -d" -f4
++ sort -u
++ grep -v ^ses_f2b5334bfffeL3hMu80BIHYwa3$
++ true
++ [ -n  ]
++ sleep 2
++ child_ids
++ grep "type":"session.created" /evidence/probe-lineage.jsonl
++ grep -o "sessionID":"ses_[^"]*"
++ cut -d" -f4
++ sort -u
++ grep -v ^ses_f2b5334bfffeL3hMu80BIHYwa3$
++ [ -n ses_f2b531c22fferkdt3oasOoPCzf ]
++ return 0
++ first_child_id
++ grep "type":"session.created" /evidence/probe-lineage.jsonl
++ grep -o "sessionID":"ses_[^"]*"
++ cut -d" -f4
++ + headgrep -1
+ -v ^ses_f2b5334bfffeL3hMu80BIHYwa3$
++ CHILD=ses_f2b531c22fferkdt3oasOoPCzf
++ echo P2 child=ses_f2b531c22fferkdt3oasOoPCzf
++ wait_child_terminal ses_f2b531c22fferkdt3oasOoPCzf 45
++ local child=ses_f2b531c22fferkdt3oasOoPCzf limit=45
+P2 child=ses_f2b531c22fferkdt3oasOoPCzf
++ seq 1 45
++ + grep -q ses_f2b531c22fferkdt3oasOoPCzf
+grep -E "type":"session\.execution\.(succeeded|failed|interrupted)" /evidence/probe-lineage.jsonl
++ sleep 2
++ grep -E "type":"session\.execution\.(succeeded|failed|interrupted)"+  /evidence/probe-lineage.jsonl
+grep -q ses_f2b531c22fferkdt3oasOoPCzf
++ sleep 2
++ + grep -q ses_f2b531c22fferkdt3oasOoPCzf
+grep -E "type":"session\.execution\.(succeeded|failed|interrupted)" /evidence/probe-lineage.jsonl
++ return 0
++ [ -z ses_f2b531c22fferkdt3oasOoPCzf ]
++ [ -n ses_f2b531c22fferkdt3oasOoPCzf ]
++ grep "sessionID":"ses_f2b531c22fferkdt3oasOoPCzf"
++ grep "type":"session.created" /evidence/probe-lineage.jsonl
++ head -1
++ set +x
++ grep -o "projectID":"[^"]*" /tmp/root-info.json
++ head -1
++ cut -d" -f4
++ PROJ=470c8549ef01a2a9d3c85b22965766cefc874134
++ grep -o "directory":"[^"]*" /tmp/root-info.json
++ head -1
++ cut -d" -f4
++ DIR=/tmp
++ date +%s
++ NOW=1790274500000
++ IMPORT_ID=ses_t05lineageimportchild000001
++ IMPORT_MSG_ID=msg_t05lineageimportseed0000001
++ printf {"info":{"id":"%s","parentID":"%s","projectID":"%s","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":%s,"updated":%s},"title":"t05 lineage import child","location":{"directory":"%s"}},"messages":[{"id":"%s","time":{"created":%s},"text":"lineage import seed","type":"user"}]} ses_t05lineageimportchild000001 ses_f2b5334bfffeL3hMu80BIHYwa3 470c8549ef01a2a9d3c85b22965766cefc874134 1790274500000 1790274500000 /tmp msg_t05lineageimportseed0000001 1790274500000
++ set +x
++ cat /evidence/api-import-child.status
++ echo P3 import status=200
++ sleep 5
+P3 import status=200
++ grep -c "type":"session.forked" /evidence/probe-lineage.jsonl
++ true
++ FLINE=0
++ timeout 60 opencode api --server http://127.0.0.1:20702 session.fork --param sessionID=ses_f2b5334bfffeL3hMu80BIHYwa3 -d {}
++ seq 1 10
++ grep -q "type":"session.forked" /evidence/probe-lineage.jsonl
++ break
++ sleep 2
++ set +x
++ sleep 5
+--- plugin loader lines ---
++ echo --- plugin loader lines ---
++ grep -E loading plugin|failed to load plugin|configured plugin /tmp/home/.local/share/opencode/log/opencode.log
+timestamp=2026-09-24T18:28:07.602Z level=INFO run=9e53424e msg="loading plugin" id=/tmp/home/.config/opencode/plugin/t05-probe-lineage.ts entrypoint=file:///tmp/home/.config/opencode/plugin/t05-probe-lineage.ts http.span=75 role=server
++ cp /tmp/home/.local/share/opencode/log/opencode.log /evidence/server-log.txt
++ kill -TERM 57
++ kill -TERM -10
++ sleep 1
+--- evidence line count ---
++ echo --- evidence line count ---
++ wc -l /evidence/probe-lineage.jsonl /evidence/sse-raw.txt
+   73 /evidence/probe-lineage.jsonl
+  106 /evidence/sse-raw.txt
+  179 total
+CHILD=ses_f2b531c22fferkdt3oasOoPCzf
++ echo CHILD=ses_f2b531c22fferkdt3oasOoPCzf

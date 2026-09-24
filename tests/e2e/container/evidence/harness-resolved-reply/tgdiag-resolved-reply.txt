@@ -1,0 +1,24 @@
+2026-09-24T18:24:42.679Z [13] MODULE LOADED
+2026-09-24T18:24:42.835Z [13] initialize() called
+2026-09-24T18:24:42.835Z [13] runTelegram() started
+2026-09-24T18:24:42.835Z [13] reply scan: starting 1s ticker
+2026-09-24T18:24:42.837Z [13] poller lock acquired
+2026-09-24T18:24:42.837Z [13] sessions scan: starting 1s ticker
+2026-09-24T18:24:42.837Z [13] deleteWebhook: calling
+2026-09-24T18:24:45.137Z [13] [error] Telegram initialization failed; continuing to poll {"error":"TelegramApiError(401)"}
+2026-09-24T18:24:45.137Z [13] init failed: TelegramApiError(401); continuing to poll
+2026-09-24T18:24:45.137Z [13] poll loop: starting
+2026-09-24T18:24:45.137Z [13] getUpdates: calling
+2026-09-24T18:24:46.534Z [13] [error] Telegram rejected the configured bot token
+2026-09-24T18:24:47.311Z [13] scheduleWaitingNotify(per_0d4a9b6cd001kcg0LISxqZhnhJ) type=permission
+2026-09-24T18:24:47.836Z [13] self-update: skipped (not an npm cache install)
+2026-09-24T18:24:48.841Z [13] [warn] Session record removal skipped: registry mutate timeout or no matching record {"requestID":"per_0d4a9b6cd001kcg0LISxqZhnhJ"}
+2026-09-24T18:24:49.845Z [13] [warn] removeSessionRecord skipped (no match or lock timeout); will retry on next scan {"requestId":"frm_0d4a9bafe001HUXn5ei9TkQd7r"}
+2026-09-24T18:24:50.625Z [13] inbox enqueued session=f2b563cd inbox=msg_0d4a type=user delivery=steer
+2026-09-24T18:24:55.924Z [13] [error] Telegram message send failed {"error":"TelegramApiError(401)"}
+2026-09-24T18:24:56.843Z [13] [warn] Permission reply apply failed; record kept, will retry on next scan {"requestId":"per_0d4a9b6cd001kcg0LISxqZhnhJ","sessionId":"ses_f2b564d69ffeJvfxQRlZD0u3E1","error":"Error"}
+2026-09-24T18:24:56.843Z [13] [warn] applySessionReply failed; will retry on next reply scan {"requestId":"per_0d4a9b6cd001kcg0LISxqZhnhJ","error":"Error"}
+2026-09-24T18:24:57.844Z [13] [warn] Permission reply apply failed; record kept, will retry on next scan {"requestId":"per_0d4a9b6cd001kcg0LISxqZhnhJ","sessionId":"ses_f2b564d69ffeJvfxQRlZD0u3E1","error":"Error"}
+2026-09-24T18:24:57.844Z [13] [warn] applySessionReply failed; will retry on next reply scan {"requestId":"per_0d4a9b6cd001kcg0LISxqZhnhJ","error":"Error"}
+2026-09-24T18:24:58.844Z [13] [warn] Permission reply apply failed; record kept, will retry on next scan {"requestId":"per_0d4a9b6cd001kcg0LISxqZhnhJ","sessionId":"ses_f2b564d69ffeJvfxQRlZD0u3E1","error":"Error"}
+2026-09-24T18:24:58.845Z [13] [warn] applySessionReply failed; will retry on next reply scan {"requestId":"per_0d4a9b6cd001kcg0LISxqZhnhJ","error":"Error"}

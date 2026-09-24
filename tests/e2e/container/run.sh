@@ -8,12 +8,20 @@
 # Usage:
 #   tests/e2e/container/run.sh probe-a1                 # §9/A.1 + A.6 probe
 #   tests/e2e/container/run.sh harness [--plugin FILE]  # e2e harness (stub or bundle)
+#   tests/e2e/container/run.sh probe-lineage            # §9 subagent lineage probe
 #   tests/e2e/container/run.sh build                    # bundle src/ via otg-toolchain
 #   tests/e2e/container/run.sh real-tg-recipe --check   # read-only ~/.otg mechanism check
 #   tests/e2e/container/run.sh real-tg-recipe --run     # full real-TG smoke (later)
 #   tests/e2e/container/run.sh assert-probe-a1          # assertions over existing evidence
 #   tests/e2e/container/run.sh assert-harness           # assertions over existing evidence
-#   tests/e2e/container/run.sh clean                    # remove leftover t05- containers
+#   tests/e2e/container/run.sh assert-probe-lineage     # lineage evidence summary
+#   tests/e2e/container/run.sh clean                    # remove leftover t05 containers
+#
+# Environment: T05_HARNESS_FORM_REPLY=1 adds the form closure phase,
+# T05_HARNESS_RESOLVED_REPLY=1 adds the already-settled reply capture,
+# T05_HARNESS_REPLY_ERROR_PROBE=1 adds the auxiliary client-error-shape double
+# (run it with T05_HARNESS_OUT=<dir> to keep it separate from the canonical
+# green-run evidence).
 #
 # Requirements: docker (images hipc/opencode2:latest, otg-toolchain:latest) and
 # node on the host (assertions only). See README.md for details.
@@ -24,6 +32,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib/common.sh"
 
 PROBE_A1_DIR="$CONTAINER_DIR/probe-a1"
+PROBE_LINEAGE_DIR="$CONTAINER_DIR/probe-lineage"
 HARNESS_DIR="$CONTAINER_DIR/harness"
 ASSERT_DIR="$CONTAINER_DIR/assert"
 
@@ -75,7 +84,9 @@ scenario_harness() {
     plugin_file="$PWD/$plugin_file"
   fi
 
-  local out="$EVIDENCE_ROOT/harness"
+  # T05_HARNESS_OUT lets the resolved-reply capture run into its own evidence
+  # directory without clobbering the canonical green-run evidence.
+  local out="${T05_HARNESS_OUT:-$EVIDENCE_ROOT/harness}"
   rm -rf "$out"; mkdir -p "$out"
 
   if [ -z "$plugin_file" ]; then
@@ -96,7 +107,7 @@ scenario_harness() {
   local plugin_base
   plugin_base="$(basename "$plugin_file")"
   log "harness: port=$port password=<len ${#pw}> plugin=$plugin_file evidence=$out"
-  log "harness: form_reply=${T05_HARNESS_FORM_REPLY:-0} model=${T05_HARNESS_MODEL:-0}"
+  log "harness: form_reply=${T05_HARNESS_FORM_REPLY:-0} model=${T05_HARNESS_MODEL:-0} resolved_reply=${T05_HARNESS_RESOLVED_REPLY:-0} reply_error_probe=${T05_HARNESS_REPLY_ERROR_PROBE:-0}"
   {
     echo "=== scenario: harness (lifecycle / waiting records / permission write-back closure) ==="
     echo "=== plugin under test ==="
@@ -108,6 +119,8 @@ scenario_harness() {
     echo "  -v $out:/evidence \\"
     echo "  -e T05_PLUGIN=/plugin/$plugin_base -e T05_PORT=$port -e T05_PASSWORD=<redacted> \\"
     echo "  -e T05_HARNESS_FORM_REPLY=${T05_HARNESS_FORM_REPLY:-0} -e T05_HARNESS_MODEL=${T05_HARNESS_MODEL:-0} \\"
+    echo "  -e T05_HARNESS_RESOLVED_REPLY=${T05_HARNESS_RESOLVED_REPLY:-0} \\"
+    echo "  -e T05_HARNESS_REPLY_ERROR_PROBE=${T05_HARNESS_REPLY_ERROR_PROBE:-0} \\"
     echo "  --entrypoint sh $OPENCODE_IMAGE -c 'sh /harness/scenario.sh'"
     echo "=== output follows ==="
   } > "$out/commands.txt"
@@ -120,6 +133,8 @@ scenario_harness() {
     -e T05_PASSWORD="$pw" \
     -e T05_HARNESS_FORM_REPLY="${T05_HARNESS_FORM_REPLY:-0}" \
     -e T05_HARNESS_MODEL="${T05_HARNESS_MODEL:-0}" \
+    -e T05_HARNESS_RESOLVED_REPLY="${T05_HARNESS_RESOLVED_REPLY:-0}" \
+    -e T05_HARNESS_REPLY_ERROR_PROBE="${T05_HARNESS_REPLY_ERROR_PROBE:-0}" \
     --entrypoint sh "$OPENCODE_IMAGE" -c 'sh /harness/scenario.sh' \
     >> "$out/commands.txt" 2>&1 || log "harness container exited non-zero (evidence preserved)"
   fix_ownership "$out"
@@ -158,13 +173,57 @@ assert_probe_a1() {
 }
 
 assert_harness() {
-  local out="$EVIDENCE_ROOT/harness"
-  [ -d "$out" ] || fail "no harness evidence; run: run.sh harness"
+  local out="${T05_HARNESS_OUT:-$EVIDENCE_ROOT/harness}"
+  [ -d "$out" ] || fail "no harness evidence at $out; run: run.sh harness"
+  local args=()
   if [ "${T05_HARNESS_FORM_REPLY:-0}" = "1" ]; then
-    node "$ASSERT_DIR/harness.mjs" "$out" --form-reply
-  else
-    node "$ASSERT_DIR/harness.mjs" "$out"
+    args+=(--form-reply)
   fi
+  if [ "${T05_HARNESS_RESOLVED_REPLY:-0}" = "1" ]; then
+    args+=(--resolved-reply)
+  fi
+  if [ "${T05_HARNESS_REPLY_ERROR_PROBE:-0}" = "1" ]; then
+    args+=(--reply-error-probe)
+  fi
+  node "$ASSERT_DIR/harness.mjs" "$out" "${args[@]}"
+}
+
+# ---- subagent lineage probe (contract §9 open item) --------------------------
+scenario_lineage() {
+  require_image "$OPENCODE_IMAGE"
+  local out="$EVIDENCE_ROOT/probe-lineage"
+  rm -rf "$out"; mkdir -p "$out"
+  local port pw name
+  port="$(free_port)"
+  pw="$(synthetic_password)"
+  name="t05b-lineage-$$"
+  log "probe-lineage: port=$port password=<len ${#pw}> evidence=$out"
+  {
+    echo "=== scenario: probe-lineage (subagent lineage / parentID observability) ==="
+    echo "=== exact command ==="
+    echo "docker run --rm --name $name \\"
+    echo "  -v $PROBE_LINEAGE_DIR:/probe-lineage:ro \\"
+    echo "  -v $out:/evidence \\"
+    echo "  -e T05_PORT=$port -e T05_PASSWORD=<redacted> -e T05_PROBE_LOG=/evidence/probe-lineage.jsonl \\"
+    echo "  --entrypoint sh $OPENCODE_IMAGE -c 'sh /probe-lineage/scenario.sh'"
+    echo "=== output follows ==="
+  } > "$out/commands.txt"
+  timeout 900 docker run --rm --name "$name" \
+    -v "$PROBE_LINEAGE_DIR:/probe-lineage:ro" \
+    -v "$out:/evidence" \
+    -e T05_PORT="$port" \
+    -e T05_PASSWORD="$pw" \
+    -e T05_PROBE_LOG=/evidence/probe-lineage.jsonl \
+    --entrypoint sh "$OPENCODE_IMAGE" -c 'sh /probe-lineage/scenario.sh' \
+    >> "$out/commands.txt" 2>&1 || log "probe-lineage container exited non-zero (evidence preserved)"
+  fix_ownership "$out"
+  log "probe-lineage: evidence written to $out"
+}
+
+assert_lineage() {
+  local out="$EVIDENCE_ROOT/probe-lineage"
+  [ -d "$out" ] || fail "no probe-lineage evidence; run: run.sh probe-lineage"
+  node "$ASSERT_DIR/probe-lineage.mjs" "$out"
 }
 
 scenario_build() {
@@ -274,13 +333,15 @@ scenario_real_tg_recipe() {
 case "${1:-}" in
   probe-a1) shift; scenario_probe_a1 "$@" ;;
   harness) shift; scenario_harness "$@" ;;
+  probe-lineage) shift; scenario_lineage "$@" ;;
   build) shift; scenario_build "$@" ;;
   assert-probe-a1) shift; assert_probe_a1 "$@" ;;
   assert-harness) shift; assert_harness "$@" ;;
+  assert-probe-lineage) shift; assert_lineage "$@" ;;
   real-tg-recipe) shift; scenario_real_tg_recipe "$@" ;;
   clean) cleanup_containers ;;
   *)
-    sed -n '2,18p' "${BASH_SOURCE[0]}"
+    sed -n '2,26p' "${BASH_SOURCE[0]}"
     exit 1
     ;;
 esac

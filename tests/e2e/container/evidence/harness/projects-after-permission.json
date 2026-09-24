@@ -6,14 +6,14 @@
       "addedAt": "2026-01-01T00:00:00.000Z",
       "sessions": [
         {
-          "session_id": "ses_f2b8eaba0ffeHatU5zjaAiIqtt",
+          "session_id": "ses_f2b4ef4eaffelcwqMPzfUFPJrC",
           "session_name": "e2e-waiting",
           "type": "permission",
-          "message": "{\"id\":\"per_0d471589e001j9FFezUBT3NMmH\",\"sessionID\":\"ses_f2b8eaba0ffeHatU5zjaAiIqtt\",\"action\":\"shell\",\"resources\":[\"echo e2e-waiting\"]}",
+          "message": "{\"id\":\"per_0d4b10f60001762ccmZYT6q47a\",\"sessionID\":\"ses_f2b4ef4eaffelcwqMPzfUFPJrC\",\"action\":\"shell\",\"resources\":[\"echo e2e-waiting\"]}",
           "send": false,
           "resolved": false,
-          "request_id": "per_0d471589e001j9FFezUBT3NMmH",
-          "created_at": "2026-09-24T17:23:14.183Z"
+          "request_id": "per_0d4b10f60001762ccmZYT6q47a",
+          "created_at": "2026-09-24T18:32:49.739Z"
         }
       ]
     }

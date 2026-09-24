@@ -1,2 +1,12 @@
-2026-09-24T17:23:08.663Z [12] MODULE LOADED
-2026-09-24T17:23:08.663Z [12] initialize() called
+2026-09-24T18:32:44.080Z [12] MODULE LOADED
+2026-09-24T18:32:44.221Z [12] initialize() called
+2026-09-24T18:32:44.221Z [12] runTelegram() started
+2026-09-24T18:32:44.221Z [12] reply scan: starting 1s ticker
+2026-09-24T18:32:44.224Z [12] poller lock acquired
+2026-09-24T18:32:44.224Z [12] sessions scan: starting 1s ticker
+2026-09-24T18:32:44.224Z [12] deleteWebhook: calling
+2026-09-24T18:32:45.800Z [12] [error] Telegram initialization failed; continuing to poll {"error":"TelegramApiError(401)"}
+2026-09-24T18:32:45.800Z [12] init failed: TelegramApiError(401); continuing to poll
+2026-09-24T18:32:45.800Z [12] poll loop: starting
+2026-09-24T18:32:45.800Z [12] getUpdates: calling
+2026-09-24T18:32:46.068Z [12] [error] Telegram rejected the configured bot token

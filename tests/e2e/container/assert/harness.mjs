@@ -156,18 +156,35 @@ const sseEvents = sse
     }
   })
   .filter(Boolean);
+const repliedEvent = sseEvents.find(
+  (e) => e.type === "permission.replied" && e.data?.requestID === ids.permissionID,
+);
 check(
   "H3.2",
-  sseEvents.some(
-    (e) => e.type === "permission.replied" && e.data?.requestID === ids.permissionID,
-  ),
+  Boolean(repliedEvent),
   `permission.replied emitted on the wire for ${ids.permissionID}`,
 );
+// scenario.sh P2 injects reply:"once"; the wire event must echo that decision
+// (decision passthrough, contract §2.5 / sessions-relay §13.6).
+check(
+  "H3.2a",
+  repliedEvent?.data?.reply === "once",
+  `permission.replied carries the injected decision (got ${repliedEvent?.data?.reply})`,
+);
 const diagFinal = readText("tgdiag-final.txt") ?? "";
+// The adapted plugin logs no success line for an applied reply: applySessionReply
+// only logs the 404 terminal path or an apply failure (04 implementation,
+// contract §3.3). The positive closure evidence is H3.1 (record deleted) +
+// H3.2/H3.2a (permission.replied on the wire with the injected decision). H3.3
+// asserts the plugin tracked the request and did not log an apply failure.
+const trackedPermission = diagFinal.includes(
+  `scheduleWaitingNotify(${ids.permissionID})`,
+);
+const permissionApplyFailed = /Permission reply apply failed/i.test(diagFinal);
 check(
   "H3.3",
-  /reply applied|applySessionReply|permission reply applied/i.test(diagFinal),
-  "plugin diag records the permission reply application",
+  trackedPermission && !permissionApplyFailed,
+  `plugin tracked the request and logged no reply-apply failure (tracked=${trackedPermission}, applyFailed=${permissionApplyFailed})`,
 );
 
 // ---- H3.4/H3.5: optional form write-back closure ----------------------------
@@ -193,6 +210,55 @@ if (formReplyEvidence !== undefined) {
   markPending(
     "H3.4",
     "form write-back closure not exercised (set T05_HARNESS_FORM_REPLY=1 once the plugin implements the §9/A.1 channel)",
+  );
+}
+
+// ---- H3.6: optional already-resolved reply capture (T05_HARNESS_RESOLVED_REPLY) ----
+// P2c restores the pending permission record and re-injects reply:"once" after the
+// request was already settled (a stale TG button press). The plugin's reply scan
+// must attempt client.permission.reply on the settled request; the client-side
+// error shape / 404 classification is captured in tgdiag-resolved-reply.txt. This
+// check is informational (either outcome is a valid capture) and exists to make
+// the ticket 04 open item (isNotFoundError shape) observable.
+const resolvedDiag = readText("tgdiag-resolved-reply.txt");
+if (resolvedDiag !== undefined) {
+  const notFoundHandled = /Permission request no longer exists \(404\)/.test(
+    resolvedDiag,
+  );
+  const resolvedApplyFailed = /Permission reply apply failed/.test(resolvedDiag);
+  check(
+    "H3.6",
+    notFoundHandled || resolvedApplyFailed,
+    `settled-request reply attempt recorded (isNotFoundError matched=${notFoundHandled}, raw failure logged=${resolvedApplyFailed})`,
+  );
+  if (resolvedApplyFailed && !notFoundHandled) {
+    warn(
+      "H3.6a",
+      "settled-request error was NOT classified as 404 by isNotFoundError (raw shape in tgdiag-resolved-reply.txt)",
+    );
+  }
+} else if (process.argv.includes("--resolved-reply")) {
+  failures += 1;
+  console.error(
+    "FAIL H3.6: --resolved-reply requested but tgdiag-resolved-reply.txt is missing (plugin did not run the P2c phase)",
+  );
+}
+
+// ---- H3.7: optional client-side error-shape capture (T05_HARNESS_REPLY_ERROR_PROBE) ----
+// The auxiliary diagnostic double re-calls client.permission.reply on the settled
+// request and writes the caught error's introspection to reply-error-shape.json.
+const replyErrorShape = readJSON("reply-error-shape.json");
+if (replyErrorShape !== undefined) {
+  const shape = replyErrorShape.caught?.shape;
+  check(
+    "H3.7",
+    Boolean(shape) && replyErrorShape.caught?.resolved === false,
+    `client-side settled-reply error shape captured (name=${shape?.name}, message=${shape?.message}, tag=${shape?.tag}, status=${shape?.status ?? shape?.statusCode})`,
+  );
+} else if (process.argv.includes("--reply-error-probe")) {
+  failures += 1;
+  console.error(
+    "FAIL H3.7: --reply-error-probe requested but reply-error-shape.json is missing (auxiliary probe did not run)",
   );
 }
 

@@ -1,0 +1,11 @@
+2026-09-24T18:24:42.679Z [13] MODULE LOADED
+2026-09-24T18:24:42.835Z [13] initialize() called
+2026-09-24T18:24:42.835Z [13] runTelegram() started
+2026-09-24T18:24:42.835Z [13] reply scan: starting 1s ticker
+2026-09-24T18:24:42.837Z [13] poller lock acquired
+2026-09-24T18:24:42.837Z [13] sessions scan: starting 1s ticker
+2026-09-24T18:24:42.837Z [13] deleteWebhook: calling
+2026-09-24T18:24:45.137Z [13] [error] Telegram initialization failed; continuing to poll {"error":"TelegramApiError(401)"}
+2026-09-24T18:24:45.137Z [13] init failed: TelegramApiError(401); continuing to poll
+2026-09-24T18:24:45.137Z [13] poll loop: starting
+2026-09-24T18:24:45.137Z [13] getUpdates: calling
