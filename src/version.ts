@@ -1,5 +1,5 @@
 export const SERVICE = "telegram-session-monitor";
-export const TARGET_OPENCODE_VERSION = "1.18.23";
+export const TARGET_OPENCODE_VERSION = "2.0.15";
 // PLUGIN_VERSION is injected at bundle time by scripts/build.mjs from
 // package.json "version" (see docs/modules/version-injection.md). Running the
 // sources directly (tests/dev) without the define yields the dev fallback

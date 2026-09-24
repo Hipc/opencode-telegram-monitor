@@ -32,7 +32,6 @@ export const PLANNED_COMMANDS = new Set([
   "sessions",
   "use",
   "status",
-  "todo",
   "usage",
 ]);
 
@@ -49,7 +48,6 @@ export const ICON_RETRYING = "🔁";
 export const ICON_IDLE = "💤";
 export const ICON_WAITING = "⏳";
 export const ICON_USAGE = "📊";
-export const ICON_TODO = "📋";
 export const ICON_HELP = "💁";
 export const ICON_SESSIONS = "🗂️";
 export const ICON_READY = "🟢";

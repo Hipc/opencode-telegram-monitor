@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { PluginInput } from "@opencode-ai/plugin";
+import { dline } from "../diagnostics";
 import type { TelegramConfig } from "../types";
 import { SERVICE } from "../version";
 
@@ -60,19 +60,10 @@ export function isMissingFile(error: unknown): boolean {
   );
 }
 
-export async function writeInitializationError(
-  client: PluginInput["client"],
-  message: string,
-): Promise<void> {
-  try {
-    await client.app.log({
-      body: {
-        service: SERVICE,
-        level: "error",
-        message,
-      },
-    });
-  } catch {
-    console.error(`[${SERVICE}] ${message}`);
-  }
+// v2's client.app is metadata-only and has no log method (§3.2), so
+// initialization errors go to the plugin's own diagnostics log and to console
+// (host-captured process output) instead of the removed v1 `client.app.log`.
+export function writeInitializationError(message: string): void {
+  dline(`[error] ${message}`);
+  console.error(`[${SERVICE}] ${message}`);
 }

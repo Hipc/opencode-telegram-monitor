@@ -10,17 +10,6 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 
-import type { PluginInput } from "@opencode-ai/plugin";
-import type {
-  AssistantMessage,
-  Part,
-  QuestionV2Info,
-  Session,
-  SessionStatus,
-  Todo,
-  ToolPart,
-} from "@opencode-ai/sdk";
-
 import {
   ICON_READY,
   ICON_SESSIONS,
@@ -62,7 +51,6 @@ import {
   fieldTable,
   formatStatus,
   formatTerminalNotification,
-  formatTodos,
   formatUsage,
   helpText,
   iconForWaitingType,
@@ -73,17 +61,14 @@ import {
   paragraph,
   questionInputCancelledText,
   questionInputPromptText,
-  questionLabel,
   record,
   rememberBounded,
-  safeProgress,
   safeText,
   safeTextKeepPaths,
   safeToolTarget,
   sessionLabel,
   sessionTitle,
   shortID,
-  status as coerceStatus,
   string,
   summarizeError,
   titleLine,
@@ -118,10 +103,12 @@ import {
 } from "./telegram";
 import type {
   LogLevel,
+  QuestionV2Info,
   RuntimeEvent,
   SessionOutcome,
   SessionProjection,
   SessionState,
+  SessionStatus,
   TelegramCallbackQuery,
   TelegramConfig,
   TelegramInlineKeyboard,
@@ -129,6 +116,7 @@ import type {
   ToolProjection,
   WaitingProjection,
 } from "./types";
+import type { V2Client, V2SessionInfo } from "./v2/types";
 
 dline("MODULE LOADED");
 
@@ -136,7 +124,7 @@ export class TelegramSessionMonitor {
   private readonly root: string;
   private readonly projectLabel: string;
   private readonly sessions = new Map<string, SessionProjection>();
-  private readonly sessionInfo = new Map<string, Session>();
+  private readonly sessionInfo = new Map<string, V2SessionInfo>();
   private readonly seenEventIDs = new Set<string>();
   private readonly seenWaitingRequestIDs = new Set<string>();
   private readonly waitingNotifyTimers = new Map<
@@ -171,7 +159,7 @@ export class TelegramSessionMonitor {
   private replyScanInFlight = false;
 
   constructor(
-    private readonly client: PluginInput["client"],
+    private readonly client: V2Client,
     private readonly config: TelegramConfig,
     root: string,
     private readonly registry: ProjectRegistryStore,
@@ -182,13 +170,12 @@ export class TelegramSessionMonitor {
 
   initialize() {
     dline("initialize() called");
-    // Start the Telegram poller immediately instead of waiting for the session
-    // reconciliation to finish: the SDK's session API can hang while the opencode
-    // server is still starting up (fetch timeouts are disabled), which would
-    // otherwise prevent the poller (and therefore all Telegram commands) from ever
-    // starting. bootstrap() runs in the background and only reconciles known state.
+    // Start the Telegram poller immediately instead of waiting for session
+    // reconciliation: session state is fully event-driven on v2 (§3.2 — the v2
+    // client surface has no session.list/session.status, so the v1 background
+    // bootstrap/reconcile pass is gone), and the poller must come up even while
+    // the opencode server is still starting.
     this.track(this.runTelegram(), "Telegram poller failed");
-    void this.bootstrap();
     this.scheduleRegistration();
     this.scheduleSelfUpdate();
     this.startReplyScan();
@@ -430,7 +417,8 @@ export class TelegramSessionMonitor {
     }
   }
 
-  accept(event: unknown) {
+  // §7.3 冻结：accept 收 client.event.subscribe() 原样产出的 v2 envelope。
+  accept(event: V2EventEnvelope) {
     if (this.disposed) return;
     this.track(this.handleEvent(event), "OpenCode event handler failed");
   }
@@ -505,119 +493,55 @@ export class TelegramSessionMonitor {
     this.scheduleRegistration();
   }
 
-  private async bootstrap() {
-    // The opencode SDK client disables fetch timeouts, so a call issued while the
-    // opencode server is still starting up can hang forever without resolving or
-    // rejecting. Guard each call with a timeout and retry with backoff until the
-    // server responds, so initialize() can always proceed to runTelegram().
-    const withTimeout = async <T>(
-      promise: Promise<T>,
-    ): Promise<T | undefined> => {
-      try {
-        return await Promise.race([
-          promise,
-          new Promise<undefined>((resolve) =>
-            setTimeout(() => resolve(undefined), 8_000),
-          ),
-        ]);
-      } catch {
-        return undefined;
-      }
-    };
-
-    let attempts = 0;
-    const maxAttempts = 10;
-    while (attempts < maxAttempts) {
-      attempts += 1;
-      const [sessionsResult, statusResult] = await Promise.all([
-        withTimeout(this.client.session.list({ throwOnError: true })),
-        withTimeout(this.client.session.status({ throwOnError: true })),
-      ]);
-
-      let ok = false;
-      if (sessionsResult?.data) {
-        ok = true;
-        for (const info of sessionsResult.data)
-          this.sessionInfo.set(info.id, info);
-      }
-
-      if (statusResult?.data) {
-        ok = true;
-        for (const [sessionID, status] of Object.entries(statusResult.data)) {
-          const session = this.ensureSession(sessionID);
-          session.info = this.sessionInfo.get(sessionID);
-          this.applyStatus(session, status, false);
-        }
-      }
-
-      if (ok) {
-        if (attempts > 1) {
-          await this.log(
-            "info",
-            "Session reconciliation succeeded after retries",
-            { attempts },
-          );
-        }
-        dline(
-          `bootstrap: succeeded (attempt ${attempts}), sessions tracked=${this.sessions.size}`,
-        );
-        return;
-      }
-
-      await this.log(
-        "warn",
-        `Session reconciliation incomplete (attempt ${attempts}/${maxAttempts}); retrying`,
-        {
-          hasSessions: Boolean(sessionsResult?.data),
-          hasStatus: Boolean(statusResult?.data),
-        },
-      );
-      await this.sleep(2_000 * attempts);
-    }
-  }
-
   private async handleEvent(value: unknown) {
     const event = this.parseRuntimeEvent(value);
     if (!event || !this.rememberEvent(event.id)) return;
 
     const properties = event.properties;
     const sessionID = string(properties.sessionID);
+    const ctx = { root: this.root, botToken: this.config.botToken };
 
     switch (event.type) {
-      case "session.created":
-      case "session.updated": {
-        const info = this.session(properties.info);
-        if (!info) return;
-        this.sessionInfo.set(info.id, info);
-        const projection = this.sessions.get(info.id);
+      // ---- session lifecycle（§2.1）----
+      case "session.created": {
+        if (!sessionID) return;
+        const location = record(properties.location);
+        const info: V2SessionInfo = {
+          id: sessionID,
+          title: string(properties.title) ?? string(properties.slug),
+          projectID: string(properties.projectID),
+          location: {
+            directory: string(location?.directory) ?? this.root,
+          },
+        };
+        this.sessionInfo.set(sessionID, info);
+        const projection = this.sessions.get(sessionID);
         if (projection) projection.info = info;
         return;
       }
 
       case "session.deleted": {
-        const info = this.session(properties.info);
-        const id = sessionID ?? info?.id;
-        if (!id) return;
-        if (info) this.sessionInfo.set(info.id, info);
-        const root = await this.primarySession(id);
-        const projection = this.sessions.get(id);
+        if (!sessionID) return;
+        const root = await this.primarySession(sessionID);
+        const projection = this.sessions.get(sessionID);
         if (projection?.idleTimer) clearTimeout(projection.idleTimer);
         for (const requestID of projection?.waitingByRequestID.keys() ?? []) {
           this.cancelWaitingNotify(requestID);
         }
-        this.sessions.delete(id);
-        this.sessionInfo.delete(id);
-        if (this.selectedSessionID === id) this.selectedSessionID = undefined;
-        if (this.lastCompletedSessionID === id)
+        this.sessions.delete(sessionID);
+        this.sessionInfo.delete(sessionID);
+        if (this.selectedSessionID === sessionID)
+          this.selectedSessionID = undefined;
+        if (this.lastCompletedSessionID === sessionID)
           this.lastCompletedSessionID = undefined;
         // Round 6（§16）：会话终结 → 删除该 session 的全部落盘记录
         // （path ②）；mutate undefined（锁超时/无记录）由方法内 logWarn 容忍。
         this.track(
-          this.cleanupSessionRecords(id),
+          this.cleanupSessionRecords(sessionID),
           "Session deleted records cleanup failed",
         );
         if (
-          root.sessionID !== id &&
+          root.sessionID !== sessionID &&
           root.status === "idle" &&
           root.observedRunning
         ) {
@@ -626,102 +550,187 @@ export class TelegramSessionMonitor {
         return;
       }
 
-      case "session.status": {
+      case "session.execution.started": {
         if (!sessionID) return;
-        const status = coerceStatus(properties.status, { root: this.root, botToken: this.config.botToken });
-        if (!status) return;
-        this.applyStatus(this.ensureSession(sessionID), status, true);
+        // 本轮 turn +1 的唯一入口（§2.1）：applyStatus busy 的
+        // !observedRunning 分支负责 turn/字段重置。
+        this.applyStatus(this.ensureSession(sessionID), { type: "busy" }, true);
         return;
       }
 
-      case "session.idle": {
+      case "session.execution.succeeded": {
         if (!sessionID) return;
         this.applyStatus(this.ensureSession(sessionID), { type: "idle" }, true);
         return;
       }
 
-      case "session.error": {
-        if (!sessionID) {
-          await this.log(
-            "error",
-            "OpenCode reported an unscoped session error",
-          );
-          return;
-        }
+      case "session.execution.failed": {
+        if (!sessionID) return;
         const projection = this.ensureSession(sessionID);
-        projection.pendingError = summarizeError(
+        projection.pendingError = summarizeError(properties.error, ctx);
+        this.applyStatus(projection, { type: "idle" }, true);
+        return;
+      }
+
+      case "session.execution.interrupted": {
+        if (!sessionID) return;
+        const projection = this.ensureSession(sessionID);
+        const reason = string(properties.reason);
+        // 终态 cancelled：走 v1 cancelled 分支语义（取消去抖、清 waiting、
+        // 删该 session 落盘记录、idle 终态）；reason 透传不映射（脱敏后仅日志）。
+        projection.pendingError = {
+          name: reason ? safeText(reason, 80, ctx) : "interrupted",
+          cancelled: true,
+        };
+        for (const requestID of projection.waitingByRequestID.keys()) {
+          this.cancelWaitingNotify(requestID);
+        }
+        projection.waitingByRequestID.clear();
+        this.track(
+          this.cleanupSessionRecords(sessionID),
+          "Session cancelled records cleanup failed",
+        );
+        this.applyStatus(projection, { type: "idle" }, true);
+        return;
+      }
+
+      // ---- step / text / reasoning（§2.2）----
+      case "session.step.started": {
+        if (!sessionID) return;
+        const projection = this.ensureSession(sessionID);
+        const assistantMessageID = string(properties.assistantMessageID);
+        if (assistantMessageID)
+          projection.currentAssistantMessageID = assistantMessageID;
+        const agent = string(properties.agent);
+        if (agent) projection.agent = safeText(agent, 80, ctx);
+        return;
+      }
+
+      case "session.step.streamed": {
+        // §2.2：流式中间态，无状态变化、不触发通知。
+        return;
+      }
+
+      case "session.step.ended": {
+        if (!sessionID) return;
+        // §2.4：绝对聚合值赋值（非累加）；finish 仅诊断，不驱动状态。
+        const finish = string(properties.finish);
+        if (finish)
+          dline(`step ended session=${shortID(sessionID)} finish=${finish}`);
+        this.applyUsage(this.ensureSession(sessionID), properties);
+        return;
+      }
+
+      case "session.step.failed": {
+        if (!sessionID) return;
+        this.ensureSession(sessionID).pendingError = summarizeError(
           properties.error,
-          { root: this.root, botToken: this.config.botToken },
+          ctx,
         );
-        if (projection.pendingError?.cancelled) {
-          // ESC abort（MessageAbortedError，契约 §16 path ②）：opencode 服务端
-          // 对 abort 的取消 finalizer 只清内存 pending map，不发布
-          // permission/question 终结事件——插件只收到 session.error 且
-          // cancelled=true。镜像 session.deleted 清理（~603-605）：取消去抖
-          // 定时器、清 waitingByRequestID，再删除该 session 全部落盘记录。
-          for (const requestID of projection.waitingByRequestID.keys() ?? []) {
-            this.cancelWaitingNotify(requestID);
-          }
-          projection.waitingByRequestID.clear();
-          this.track(
-            this.cleanupSessionRecords(sessionID),
-            "Session cancelled records cleanup failed",
+        return;
+      }
+
+      // ---- usage（§2.4）----
+      case "session.usage.updated": {
+        if (!sessionID) return;
+        this.applyUsage(this.ensureSession(sessionID), properties);
+        return;
+      }
+
+      // ---- tool projection（§2.3）----
+      case "session.tool.input.started": {
+        if (!sessionID) return;
+        const callID = string(properties.id);
+        if (!callID) return;
+        this.upsertTool(
+          sessionID,
+          callID,
+          {
+            tool: string(properties.name) ?? "tool",
+            state: "pending",
+          },
+          "v2",
+        );
+        return;
+      }
+
+      case "session.tool.input.ended": {
+        if (!sessionID) return;
+        const callID = string(properties.id);
+        if (!callID) return;
+        const input = this.parseToolInput(string(properties.text));
+        if (!input) return; // 解析失败：target 缺省，不抛（§2.3）。
+        const tool =
+          this.ensureSession(sessionID).toolsByCallID.get(callID)?.tool ??
+          "tool";
+        this.upsertTool(
+          sessionID,
+          callID,
+          { target: safeToolTarget(tool, input, ctx) },
+          "v2",
+        );
+        return;
+      }
+
+      case "session.tool.called": {
+        if (!sessionID) return;
+        const callID = string(properties.id);
+        if (!callID) return;
+        const tool =
+          this.ensureSession(sessionID).toolsByCallID.get(callID)?.tool ??
+          "tool";
+        const input = record(properties.input);
+        this.upsertTool(
+          sessionID,
+          callID,
+          {
+            state: "running",
+            ...(input ? { target: safeToolTarget(tool, input, ctx) } : {}),
+          },
+          "v2",
+        );
+        return;
+      }
+
+      case "session.tool.progress": {
+        if (!sessionID) return;
+        const callID = string(properties.id);
+        if (!callID) return;
+        // §2.3：progress = metadata.shellID（无则跳过）。
+        const shellID = string(record(properties.metadata)?.shellID);
+        if (shellID)
+          this.upsertTool(
+            sessionID,
+            callID,
+            { progress: safeText(shellID, 80, ctx) },
+            "v2",
           );
-        }
         return;
       }
 
-      case "message.updated": {
-        const info = record(properties.info);
-        const id = string(info?.id);
-        const idFromMessage = string(info?.sessionID);
-        if (!info || !id || !idFromMessage || info.role !== "assistant") return;
-        const session = this.ensureSession(idFromMessage);
-        const message = info as AssistantMessage;
-        session.messagesByID.set(id, message);
-        if (this.isCurrentTurnMessage(session, message)) {
-          session.currentAssistantMessageID = id;
-        }
-        this.recalculateTokens(session);
+      case "session.tool.success": {
+        if (!sessionID) return;
+        const callID = string(properties.id);
+        if (!callID) return;
+        this.upsertTool(sessionID, callID, { state: "completed" }, "v2");
         return;
       }
 
-      case "message.removed": {
-        const messageID = string(properties.messageID);
-        if (!sessionID || !messageID) return;
-        const session = this.ensureSession(sessionID);
-        session.messagesByID.delete(messageID);
-        this.recalculateTokens(session);
-        return;
-      }
-
-      case "message.part.updated": {
-        const part = record(properties.part);
-        if (!part) return;
-        this.applyPart(part as Part);
-        return;
-      }
-
-      case "message.part.removed": {
-        const partID = string(properties.partID);
-        if (!sessionID || !partID) return;
-        const session = this.ensureSession(sessionID);
-        for (const [callID, tool] of session.toolsByCallID) {
-          if (tool.partID === partID) session.toolsByCallID.delete(callID);
-        }
-        return;
-      }
-
-      case "todo.updated": {
-        if (!sessionID || !Array.isArray(properties.todos)) return;
-        this.ensureSession(sessionID).todos = properties.todos.filter(
-          this.isTodo,
+      case "session.tool.failed": {
+        if (!sessionID) return;
+        const callID = string(properties.id);
+        if (!callID) return;
+        this.upsertTool(sessionID, callID, { state: "error" }, "v2");
+        // error 归 pendingError 候选，供终态判定（§2.3）。
+        this.ensureSession(sessionID).pendingError = summarizeError(
+          properties.error,
+          ctx,
         );
         return;
       }
 
-      case "permission.asked":
-      case "permission.v2.asked": {
+      // ---- waiting: permission（§2.5；完整映射与回写归 ticket 04）----
+      case "permission.asked": {
         if (!sessionID) return;
         const requestID = string(properties.id);
         if (!requestID) return;
@@ -731,35 +740,23 @@ export class TelegramSessionMonitor {
           "permission";
         const tool = record(properties.tool);
         const source = record(properties.source);
-        this.addWaiting(sessionID, {
-          requestID,
-          type: "permission",
-          summary: `${safeText(permission, 80, { root: this.root, botToken: this.config.botToken })} permission`,
-          toolCallID: string(tool?.callID) ?? string(source?.callID),
-        }, properties);
+        this.addWaiting(
+          sessionID,
+          {
+            requestID,
+            type: "permission",
+            summary: `${safeText(permission, 80, ctx)} permission`,
+            toolCallID: string(tool?.callID) ?? string(source?.callID),
+          },
+          properties,
+        );
         return;
       }
 
-      case "permission.updated": {
-        if (!sessionID) return;
-        const requestID = string(properties.id);
-        if (!requestID) return;
-        const permission = string(properties.type) ?? "permission";
-        this.addWaiting(sessionID, {
-          requestID,
-          type: "permission",
-          summary: `${safeText(permission, 80, { root: this.root, botToken: this.config.botToken })} permission`,
-          toolCallID: string(properties.callID),
-        }, properties);
-        return;
-      }
-
-      case "permission.replied":
-      case "permission.v2.replied": {
+      case "permission.replied": {
         if (!sessionID) return;
         const requestID =
-          string(properties.requestID) ??
-          string(properties.permissionID);
+          string(properties.requestID) ?? string(properties.permissionID);
         if (requestID) {
           const debounceActive = this.waitingNotifyTimers.has(requestID);
           this.cancelWaitingNotify(requestID);
@@ -775,164 +772,46 @@ export class TelegramSessionMonitor {
         }
         return;
       }
-
-      case "question.asked":
-      case "question.v2.asked": {
-        if (!sessionID) return;
-        const requestID = string(properties.id);
-        if (!requestID) return;
-        const questions = Array.isArray(properties.questions)
-          ? properties.questions
-          : [];
-        const firstQuestion = record(questions[0]);
-        const header = string(firstQuestion?.header);
-        const question = string(firstQuestion?.question);
-        const tool = record(properties.tool);
-        this.addWaiting(sessionID, {
-          requestID,
-          type: "question",
-          summary: safeText(
-            header ?? question ?? "OpenCode question",
-            120,
-            { root: this.root, botToken: this.config.botToken },
-          ),
-          toolCallID: string(tool?.callID),
-        }, properties);
-        return;
-      }
-
-      case "question.replied":
-      case "question.rejected":
-      case "question.v2.replied":
-      case "question.v2.rejected": {
-        if (!sessionID) return;
-        const requestID = string(properties.requestID);
-        if (requestID) {
-          const debounceActive = this.waitingNotifyTimers.has(requestID);
-          this.cancelWaitingNotify(requestID);
-          this.ensureSession(sessionID).waitingByRequestID.delete(requestID);
-          if (!debounceActive) {
-            // 记录已落盘（question 立即写入，无去抖窗口）：删除该记录
-            // （Round 6 §16 supersede：终态 = 删除，不再是置 resolved=true）。
-            this.track(
-              this.resolveWaitingRecord(requestID),
-              "Session resolved record removal failed",
-            );
-          }
-        }
-        return;
-      }
-
-      case "session.next.agent.switched":
-      case "session.next.step.started": {
-        if (!sessionID) return;
-        const agent = string(properties.agent);
-        if (agent)
-          this.ensureSession(sessionID).agent = safeText(agent, 80, { root: this.root, botToken: this.config.botToken });
-        return;
-      }
-
-      case "session.next.tool.input.started": {
-        if (!sessionID) return;
-        const callID = string(properties.callID);
-        if (!callID) return;
-        this.upsertTool(
-          sessionID,
-          callID,
-          {
-            tool: string(properties.name) ?? "tool",
-            state: "pending",
-          },
-          "v2",
-        );
-        return;
-      }
-
-      case "session.next.tool.called": {
-        if (!sessionID) return;
-        const callID = string(properties.callID);
-        if (!callID) return;
-        const tool = string(properties.tool) ?? "tool";
-        this.upsertTool(
-          sessionID,
-          callID,
-          {
-            tool,
-            state: "running",
-            target: safeToolTarget(tool, record(properties.input), { root: this.root, botToken: this.config.botToken }),
-          },
-          "v2",
-        );
-        return;
-      }
-
-      case "session.next.tool.progress": {
-        if (!sessionID) return;
-        const callID = string(properties.callID);
-        if (!callID) return;
-        const structured = record(properties.structured);
-        const progress = safeProgress(structured, properties.content, { root: this.root, botToken: this.config.botToken });
-        if (progress) this.upsertTool(sessionID, callID, { progress }, "v2");
-        return;
-      }
-
-      case "session.next.tool.success":
-      case "session.next.tool.failed": {
-        if (!sessionID) return;
-        const callID = string(properties.callID);
-        if (!callID) return;
-        this.upsertTool(
-          sessionID,
-          callID,
-          {
-            state: event.type.endsWith("success") ? "completed" : "error",
-          },
-          "v2",
-        );
-        return;
-      }
-
-      case "session.next.retried": {
-        if (!sessionID) return;
-        const attempt = number(properties.attempt) ?? 1;
-        this.applyStatus(
-          this.ensureSession(sessionID),
-          {
-            type: "retry",
-            attempt,
-            message: "Provider retry",
-            next: Date.now(),
-          },
-          true,
-        );
-        return;
-      }
     }
   }
 
-  private applyPart(part: Part) {
-    const sessionID = string(part.sessionID);
-    if (!sessionID) return;
-    const session = this.ensureSession(sessionID);
+  /**
+   * v2 用量映射（§2.4）：usage.updated / step.ended 的 cost/tokens 为**绝对
+   * 聚合值**，直接覆盖 projection.tokens（v1 recalculateTokens 的逐 part
+   * 累加语义被取代），先到先得、后到覆盖均可。
+   */
+  private applyUsage(
+    session: SessionProjection,
+    properties: Record<string, unknown>,
+  ) {
+    const tokens = record(properties.tokens);
+    if (!tokens) return;
+    const cache = record(tokens.cache);
+    const cost = number(properties.cost);
+    session.tokens = {
+      input: number(tokens.input) ?? 0,
+      output: number(tokens.output) ?? 0,
+      reasoning: number(tokens.reasoning) ?? 0,
+      cacheRead: number(cache?.read) ?? 0,
+      cacheWrite: number(cache?.write) ?? 0,
+      cost: cost ?? 0,
+      hasCost: cost !== undefined,
+    };
+  }
 
-    if (part.type === "agent") {
-      session.agent = safeText(part.name, 80, { root: this.root, botToken: this.config.botToken });
-      return;
+  /**
+   * tool.input.ended 的 text 为 JSON 字符串（shell 输入）；解析失败/非对象
+   * 返回 undefined（§2.3：target 缺省，不抛）。
+   */
+  private parseToolInput(
+    text: string | undefined,
+  ): Record<string, unknown> | undefined {
+    if (text === undefined) return undefined;
+    try {
+      return record(JSON.parse(text));
+    } catch {
+      return undefined;
     }
-
-    if (part.type !== "tool") return;
-    const toolPart = part as ToolPart;
-    this.upsertTool(
-      sessionID,
-      toolPart.callID,
-      {
-        partID: toolPart.id,
-        tool: toolPart.tool,
-        state: toolPart.state.status,
-        target: safeToolTarget(toolPart.tool, toolPart.state.input, { root: this.root, botToken: this.config.botToken }),
-      },
-      "stable",
-    );
   }
 
   private addWaiting(
@@ -1140,6 +1019,9 @@ export class TelegramSessionMonitor {
   }
 
   private scheduleIdleFinalization(session: SessionProjection) {
+    // §2.7：存在未交付 steer inbox 项时推迟 idle 终态（由 ticket 04 的
+    // inbox delivered/cancelled/delivery.changed 清标记后再触发）。
+    if (session.awaitingInput) return;
     if (session.idleTimer || session.notifiedTurn === session.turn) return;
     const turn = session.turn;
     session.idleTimer = setTimeout(() => {
@@ -1154,14 +1036,6 @@ export class TelegramSessionMonitor {
   private async finalizeIdle(sessionID: string, turn: number) {
     let session = this.sessions.get(sessionID);
     if (!this.canFinalize(session, turn)) return;
-
-    const reconciliation = await this.reconcileSession(sessionID);
-    session = this.sessions.get(sessionID);
-    if (!this.canFinalize(session, turn)) return;
-    if (!reconciliation.messages && !session.pendingError) {
-      this.scheduleIdleFinalization(session);
-      return;
-    }
 
     const root = await this.primarySession(sessionID);
     session = this.sessions.get(sessionID);
@@ -1218,6 +1092,7 @@ export class TelegramSessionMonitor {
   ): session is SessionProjection {
     return Boolean(
       session &&
+      !session.awaitingInput &&
       session.status === "idle" &&
       session.turn === turn &&
       session.observedRunning &&
@@ -1226,13 +1101,9 @@ export class TelegramSessionMonitor {
   }
 
   private commitIdleOutcome(session: SessionProjection) {
-    const currentMessage = session.currentAssistantMessageID
-      ? session.messagesByID.get(session.currentAssistantMessageID)
-      : undefined;
-    const messageError = currentMessage?.error
-      ? summarizeError(currentMessage.error, { root: this.root, botToken: this.config.botToken })
-      : undefined;
-    const error = messageError ?? session.pendingError;
+    // v2 终态判定（§2.1）：execution.* / step.failed 已把错误写入
+    // pendingError（v1 的 currentMessage?.error 路径随 message.* 事件移除）。
+    const error = session.pendingError;
     const outcome: SessionOutcome = error?.cancelled
       ? "cancelled"
       : error
@@ -1253,10 +1124,9 @@ export class TelegramSessionMonitor {
 
     for (const child of descendants) {
       const turn = child.turn;
-      const reconciliation = await this.reconcileSession(child.sessionID);
       const current = this.sessions.get(child.sessionID);
       if (!this.canFinalize(current, turn)) continue;
-      if (!reconciliation.messages && !current.pendingError) {
+      if (!current.currentAssistantMessageID && !current.pendingError) {
         this.scheduleIdleFinalization(current);
         continue;
       }
@@ -1265,82 +1135,6 @@ export class TelegramSessionMonitor {
         current.idleTimer = undefined;
       }
       this.commitIdleOutcome(current);
-    }
-  }
-
-  private async reconcileSession(sessionID: string) {
-    const session = this.ensureSession(sessionID);
-    await this.ensureSessionInfo(sessionID);
-    let messagesReconciled = false;
-    let todosReconciled = false;
-
-    const [messagesResult, todoResult] = await Promise.allSettled([
-      this.client.session.messages({
-        path: { id: sessionID },
-        throwOnError: true,
-      }),
-      this.client.session.todo({ path: { id: sessionID }, throwOnError: true }),
-    ]);
-
-    if (messagesResult.status === "fulfilled" && messagesResult.value.data) {
-      session.messagesByID.clear();
-      session.toolsByCallID.clear();
-      for (const message of messagesResult.value.data) {
-        if (message.info.role === "assistant") {
-          session.messagesByID.set(message.info.id, message.info);
-          if (this.isCurrentTurnMessage(session, message.info)) {
-            session.currentAssistantMessageID = message.info.id;
-          }
-        }
-        for (const part of message.parts) this.applyPart(part);
-      }
-      this.recalculateTokens(session);
-      messagesReconciled = true;
-    } else if (messagesResult.status === "rejected") {
-      await this.log("warn", "Session message reconciliation failed", {
-        sessionID: shortID(sessionID),
-        error: errorCategory(messagesResult.reason, { root: this.root, botToken: this.config.botToken }),
-      });
-    }
-
-    if (todoResult.status === "fulfilled" && todoResult.value.data) {
-      session.todos = todoResult.value.data;
-      todosReconciled = true;
-    } else if (todoResult.status === "rejected") {
-      await this.log("warn", "Session todo reconciliation failed", {
-        sessionID: shortID(sessionID),
-        error: errorCategory(todoResult.reason, { root: this.root, botToken: this.config.botToken }),
-      });
-    }
-    return { messages: messagesReconciled, todos: todosReconciled };
-  }
-
-  private async reconcileStatuses() {
-    try {
-      const result = await this.client.session.status({ throwOnError: true });
-      if (!result.data) {
-        dline("reconcileStatuses: session.status returned no data");
-        return;
-      }
-      const active = new Set(Object.keys(result.data));
-      dline(
-        `reconcileStatuses: session.status returned ${active.size} active session(s): ${[...active].slice(0, 5).join(",")}`,
-      );
-
-      for (const [sessionID, status] of Object.entries(result.data)) {
-        this.applyStatus(this.ensureSession(sessionID), status, false);
-      }
-
-      for (const session of this.sessions.values()) {
-        if (session.status !== "idle" && !active.has(session.sessionID)) {
-          this.applyStatus(session, { type: "idle" }, false);
-        }
-      }
-    } catch (error) {
-      dline(`reconcileStatuses: FAILED ${errorCategory(error, { root: this.root, botToken: this.config.botToken })}`);
-      await this.log("warn", "Session status reconciliation failed", {
-        error: errorCategory(error, { root: this.root, botToken: this.config.botToken }),
-      });
     }
   }
 
@@ -1355,14 +1149,11 @@ export class TelegramSessionMonitor {
     }
 
     try {
-      const result = await this.client.session.get({
-        path: { id: sessionID },
-        throwOnError: true,
-      });
-      if (!result.data) return undefined;
-      this.sessionInfo.set(result.data.id, result.data);
-      session.info = result.data;
-      return result.data;
+      // v2 §3.1：client.session.get({sessionID}) 直接返回会话对象（非 {data} 包装）。
+      const info = await this.client.session.get({ sessionID });
+      this.sessionInfo.set(info.id, info);
+      session.info = info;
+      return info;
     } catch (error) {
       await this.log("warn", "Session metadata reconciliation failed", {
         sessionID: shortID(sessionID),
@@ -1398,9 +1189,7 @@ export class TelegramSessionMonitor {
       turn: 0,
       emptyMessageRetries: 0,
       lastTransitionAt: Date.now(),
-      messagesByID: new Map(),
       toolsByCallID: new Map(),
-      todos: [],
       waitingByRequestID: new Map(),
       tokens: emptyTokens(),
     };
@@ -1435,36 +1224,6 @@ export class TelegramSessionMonitor {
       progress: patch.progress ?? existing?.progress,
       updatedAt: Date.now(),
     });
-  }
-
-  private recalculateTokens(session: SessionProjection) {
-    const totals = emptyTokens();
-    for (const message of session.messagesByID.values()) {
-      totals.input += message.tokens.input || 0;
-      totals.output += message.tokens.output || 0;
-      totals.reasoning += message.tokens.reasoning || 0;
-      totals.cacheRead += message.tokens.cache.read || 0;
-      totals.cacheWrite += message.tokens.cache.write || 0;
-      if (Number.isFinite(message.cost)) {
-        totals.cost += message.cost;
-        totals.hasCost = true;
-      }
-    }
-    session.tokens = totals;
-  }
-
-  private isCurrentTurnMessage(
-    session: SessionProjection,
-    message: AssistantMessage,
-  ) {
-    if (!session.observedRunning || !session.turnStartedAt) return false;
-    return (
-      message.time.created >= session.turnStartedAt - 1_000 ||
-      Boolean(
-        message.time.completed &&
-        message.time.completed >= session.turnStartedAt - 1_000,
-      )
-    );
   }
 
   private async runTelegram() {
@@ -1742,27 +1501,24 @@ export class TelegramSessionMonitor {
   }
 
   /**
-   * 把一条 permission 记录的 reply 应用到 opencode 会话（契约 §13.6/§13.8）。
-   * 透传语义（决策 #1）：response = record.reply 原样（"once"|"always"|"reject"），
-   * 不映射不校验（parse 已保证合法）。SDK 签名已核验（本机 opencode 安装
-   * @opencode-ai/sdk types.gen.d.ts）：
-   *   client.postSessionIdPermissionsPermissionId({
-   *     path: { id: sessionID, permissionID: requestID },
-   *     body: { response },
-   *   })
+   * 把一条 permission 记录的 reply 应用到 opencode 会话（契约 §13.6/§13.8，
+   * v2 通道见 §3.1）。透传语义（决策 #1）：decision = record.reply 原样
+   * （"once"|"always"|"reject"），不映射不校验（parse 已保证合法）。
+   *   client.permission.reply({ sessionID, requestID, decision })
    * 成功（API resolve）→ mutate(removeSessionRecord)（Round 6 §16 supersede：
    * 终态 = 删除记录，不再置 resolved=true）；失败/抛错 → logWarn 不置位
    * （下轮重试）。已 resolved 记录由调用方筛选跳过（兼容历史数据）。
+   * 注：404 终态语义与回写闭环测试归 ticket 04（§3.3）。
    */
   private async applySessionReply(record: SessionRecord) {
     if (record.reply == null) return;
     try {
-      // throwOnError: true —— HTTP 错误（400/404，如 permission 已被 TUI 处理）
-      // 会抛错被捕获 → logWarn 不删除，下轮读到记录已消失即跳过。
-      await this.client.postSessionIdPermissionsPermissionId({
-        path: { id: record.session_id, permissionID: record.request_id },
-        body: { response: record.reply },
-        throwOnError: true,
+      // 失败（400/404，如 permission 已被 TUI 处理）会抛错被捕获 → logWarn
+      // 不删除，下轮读到记录已消失即跳过。
+      await this.client.permission.reply({
+        sessionID: record.session_id,
+        requestID: record.request_id,
+        decision: record.reply,
       });
     } catch (error) {
       await this.log(
@@ -2625,19 +2381,11 @@ export class TelegramSessionMonitor {
   }
 
   private async commandStart() {
-    let connected = true;
-    try {
-      await this.client.session.status({ throwOnError: true });
-    } catch {
-      connected = false;
-    }
-
+    // v2 无 session.status ping 等价物（§3.2：client surface 不含 list/status，
+    // §3.1 允许面里没有可用的连接检查方法），因此不再渲染连接状态行；本方法
+    // 属 PLANNED_COMMANDS 拦截后的未开放路径，恢复 /start 时需按 v2 重设检查。
     const rows = [
       fieldRow("OpenCode target", TARGET_OPENCODE_VERSION),
-      fieldRow(
-        "OpenCode connection",
-        connected ? "available" : "unavailable",
-      ),
       fieldRow("Authorization", "verified"),
       fieldRow("Mode", "read-only"),
     ];
@@ -2651,7 +2399,6 @@ export class TelegramSessionMonitor {
   }
 
   private async commandSessions() {
-    await this.reconcileStatuses();
     const active = this.activePrimarySessions();
     dline(
       `commandSessions: total tracked=${this.sessions.size}, activePrimary=${active.length}`,
@@ -2694,7 +2441,6 @@ export class TelegramSessionMonitor {
       return;
     }
 
-    await this.reconcileStatuses();
     const matches = [...this.sessions.values()].filter((session) =>
       matchesSessionID(session.sessionID, argument),
     );
@@ -2725,12 +2471,11 @@ export class TelegramSessionMonitor {
 
     const session = matches[0]!;
     this.selectedSessionID = session.sessionID;
-    await this.reconcileSession(session.sessionID);
+    await this.ensureSessionInfo(session.sessionID);
     this.enqueueMessage(paragraph(`Selected: ${sessionLabel(session, { root: this.root, botToken: this.config.botToken })}`));
   }
 
   private async commandStatus() {
-    await this.reconcileStatuses();
     const session = this.selectedSession();
     if (!session) {
       const active = this.activePrimarySessions();
@@ -2765,22 +2510,8 @@ export class TelegramSessionMonitor {
       return;
     }
 
-    await this.reconcileSession(session.sessionID);
+    await this.ensureSessionInfo(session.sessionID);
     this.enqueueMessage(formatStatus(session, { root: this.root, botToken: this.config.botToken, projectLabel: this.projectLabel, sessions: this.sessions, sessionInfo: this.sessionInfo }));
-  }
-
-  private async commandTodo() {
-    const session = this.selectedSession();
-    if (!session) {
-      this.enqueueMessage(
-        paragraph(
-          "No session selected. Use /sessions and /use &lt;short-id&gt; first.",
-        ),
-      );
-      return;
-    }
-    await this.reconcileSession(session.sessionID);
-    this.enqueueMessage(formatTodos(session, { root: this.root, botToken: this.config.botToken, projectLabel: this.projectLabel, sessions: this.sessions, sessionInfo: this.sessionInfo }));
   }
 
   private async commandUsage() {
@@ -2793,7 +2524,7 @@ export class TelegramSessionMonitor {
       );
       return;
     }
-    await this.reconcileSession(session.sessionID);
+    await this.ensureSessionInfo(session.sessionID);
     this.enqueueMessage(formatUsage(session, { root: this.root, botToken: this.config.botToken, projectLabel: this.projectLabel, sessions: this.sessions, sessionInfo: this.sessionInfo }));
   }
 
@@ -3685,17 +3416,15 @@ export class TelegramSessionMonitor {
     });
   }
 
-  private session(value: unknown): Session | undefined {
-    const info = record(value);
-    if (!info || typeof info.id !== "string" || typeof info.title !== "string")
-      return undefined;
-    return info as Session;
-  }
-
+  /**
+   * §2.0/§7.3：accept() 收原始 v2 envelope；此处把 `envelope.data` 归一化为
+   * 内部 `properties`（`envelope.id` 继续作为去重键）。data 缺失/非对象 →
+   * 丢弃该事件（同 v1 parse 失败返回 undefined 语义）。
+   */
   private parseRuntimeEvent(value: unknown): RuntimeEvent | undefined {
     const event = record(value);
     const type = string(event?.type);
-    const properties = record(event?.properties);
+    const properties = record(event?.data);
     if (!event || !type || !properties) return undefined;
     return { id: string(event.id), type, properties };
   }
@@ -3706,13 +3435,6 @@ export class TelegramSessionMonitor {
     rememberBounded(this.seenEventIDs, eventID);
     return true;
   }
-
-  private isTodo = (value: unknown): value is Todo => {
-    const todo = record(value);
-    return Boolean(
-      todo && typeof todo.id === "string" && typeof todo.content === "string",
-    );
-  };
 
   private track(promise: Promise<void>, failureMessage: string) {
     let tracked: Promise<void>;
@@ -3726,28 +3448,23 @@ export class TelegramSessionMonitor {
     this.tasks.add(tracked);
   }
 
+  /**
+   * v2 诊断日志（§3.2）：client.app 只有元数据、没有 log 方法，客户端也不
+   * 提供日志 sink；日志走既有 dline（~/.otg/tgdiag.log）+ console（宿主进程
+   * 输出）。extra 字段沿用调用方已脱敏值（errorCategory 等）。
+   */
   private async log(
     level: LogLevel,
     message: string,
     extra?: Record<string, unknown>,
   ) {
-    try {
-      await this.client.app.log({
-        body: {
-          service: SERVICE,
-          level,
-          message,
-          extra,
-        },
-      });
-    } catch {
-      const method =
-        level === "error"
-          ? console.error
-          : level === "warn"
-            ? console.warn
-            : console.log;
-      method(`[${SERVICE}] ${message}`);
-    }
+    dline(`[${level}] ${message}${extra ? ` ${JSON.stringify(extra)}` : ""}`);
+    const method =
+      level === "error"
+        ? console.error
+        : level === "warn"
+          ? console.warn
+          : console.log;
+    method(`[${SERVICE}] ${message}`);
   }
 }

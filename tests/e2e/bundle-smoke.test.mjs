@@ -1,17 +1,17 @@
 // tests/e2e/bundle-smoke.test.mjs
 //
-// API-006: bundle 产物 import 冒烟（计划「最终验证测试任务」API-006 条目；来源：插件约定——
-// 根目录 monitor.ts 是 npm tarball / 本地单文件复制 / self-update staging 三种安装路径
-// 消费的同一产物，必须可被插件宿主 import() 加载）。
+// API-006: bundle 产物 import 冒烟（v2 入口契约 docs/modules/opencode-v2-contract.md
+// §1.1/§1.2/§5.2）。来源：插件约定——根目录 monitor.ts 是 npm tarball / 本地单文件
+// 复制 / self-update staging 三种安装路径消费的同一产物，必须可被插件宿主 import()。
 //
-// 前置：`node scripts/build.mjs`（API-004）已执行，根目录 monitor.ts 产物存在。
+// 前置：`node scripts/build.mjs` 已执行，根目录 monitor.ts 产物存在。
 // 断言：
 //   1. 产物可被 dynamic import() 加载（模块不抛错）；
-//   2. default 导出为函数（原入口 `export default ... satisfies Plugin` 的形态；
-//      opencode 插件按 default 函数挂载）；
+//   2. default 导出为 `{ id: string, setup: function }`（v2 冻结形态；v1 的
+//      default 函数形态在 v2 会被加载器拒绝）；
 //   3. 除 default 外没有其它函数/类导出（回归断言，2026-09-02 事故：曾 re-export
-//      TelegramSessionMonitor 类，opencode legacy 插件加载器 Object.values(mod)
-//      遍历全部导出、把类当 server 插件无 new 调用 → 整个插件加载失败）。
+//      TelegramSessionMonitor 类，插件加载器 Object.values(mod) 遍历全部导出、
+//      把类当插件无 new 调用 → 整个插件加载失败）。
 //      tests/behavior.test.mjs 需要类时直接 import src/monitor.ts，不依赖产物。
 //
 // 用法：bun tests/e2e/bundle-smoke.test.mjs（cwd = 仓库根；产物 monitor.ts 必须在场）
@@ -43,18 +43,30 @@ try {
 }
 
 if (mod) {
-  // 断言 2：default 导出为函数（satisfies Plugin 形态）
-  if (typeof mod.default !== "function") {
+  // 断言 2：default 导出为 { id, setup } 形态（v2 §1.1 冻结）
+  const definition = mod.default;
+  const isDefinition =
+    definition !== null &&
+    typeof definition === "object" &&
+    typeof definition.id === "string" &&
+    definition.id.length > 0 &&
+    typeof definition.setup === "function";
+  if (!isDefinition) {
     failures += 1;
     console.error(
-      `FAIL API-006: default export is not a function (got ${typeof mod.default})`,
+      `FAIL API-006: default export is not a {id, setup} definition (got ${JSON.stringify(
+        definition === null || typeof definition !== "object"
+          ? typeof definition
+          : { id: definition.id, setup: typeof definition.setup },
+      )})`,
     );
   } else {
-    console.log("ok   API-006: default export is a function (Plugin entry shape)");
+    console.log(
+      `ok   API-006: default export is a {id, setup} definition (id=${definition.id})`,
+    );
   }
 
-  // 断言 3：除 default 外不得有任何函数/类导出（opencode legacy 加载器会把它们
-  // 当 server 插件逐个调用——类会被无 new 调用而炸掉整个插件）。
+  // 断言 3：除 default 外不得有任何函数/类导出（插件加载器会把它们逐个当插件调用）。
   const extraFunctions = Object.entries(mod)
     .filter(([key]) => key !== "default")
     .filter(([, value]) => typeof value === "function")
@@ -63,7 +75,7 @@ if (mod) {
     failures += 1;
     console.error(
       `FAIL API-006: extra function/class exports present: ${extraFunctions.join(", ")} ` +
-        "(opencode legacy loader would call them as plugins and fail)",
+        "(opencode plugin loader would call them as plugins and fail)",
     );
   } else {
     console.log(
