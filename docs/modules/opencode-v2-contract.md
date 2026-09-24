@@ -10,6 +10,11 @@
 > `docs/modules/sessions-relay.md` 头部行内标注与 §11。
 > 关联：`docs/00-overview.md`（指针与总览）、`tools/v2-probe/FINDINGS.md`（证据原卷）。
 
+> **修订 1（2026-09-25，r1）**：A.1/A.6 定案 —— form 回复通道与自然提问流证据见
+> `tests/e2e/container/probe-a1/VERDICT.md` + `tests/e2e/container/evidence/probe-a1/**`
+> （05 commit `2f29103`）；03 实现修订同步（bootstrap/reconcile/status 移除、无新超时包装，
+> commit `0da0f3c`）；新增 subagent lineage（parentID）开放项（§9）。契约以本修订 commit 定版。
+
 ---
 
 ## 0. 冻结基线
@@ -117,8 +122,9 @@ export default {
 ### 1.6 monitor 类构造位置
 
 `TelegramSessionMonitor` 在 `setup(client)` 内构造（config/registry 就绪后），
-构造签名冻结于 §7.2；构造完成后 `monitor.initialize()`（v1 语义：立即起 Telegram poller，
-后台 bootstrap 对账）。**不在 index.ts 做任何事件归一化**——envelope 原样交给 `accept()`。
+构造签名冻结于 §7.2；构造完成后 `monitor.initialize()`（poller 先起；**实现修订（03，r1）**：
+v2 client 无 `session.list/status`，原 v1 的 bootstrap/reconcile 对账已移除，会话状态完全
+事件驱动，见 §3.3）。**不在 index.ts 做任何事件归一化**——envelope 原样交给 `accept()`。
 
 ---
 
@@ -218,15 +224,24 @@ reply API（§3、§7）。
 
 | v2 事件 | 消费的 `data.*`（精确字段） | 映射 |
 |---|---|---|
-| `form.created` | `data.form:{id, sessionID, title, fields:[...]}`；`fields[]` 项 = `{key, title, type, options?:[{value, label, description?}], custom?:boolean, required?, hidden?, when?, format?, minLength?, maxLength?, pattern?, default?}`（`type in "string"|"number"|"integer"|"boolean"|"multiselect"|"external"`） | `addWaiting(sessionID, {requestID: data.form.id, type:"question", summary: safeText(data.form.title ?? fields[0]?.title ?? "OpenCode question", 120, ctx)})`。**完整 fields 数组随 `properties` 原样 JSON 落盘**（relay §4.2 message=完整 payload），供 TG 向导（relay §14）渲染：**每个 field = 一个向导 stage**（title=问题文案、type 映射 §14 题目类型、options=选项、custom=允许自定义输入、multiselect=多选）。 |
+| `form.created` | `data.form:{id, sessionID, title, metadata?, fields:[...]}`；`metadata?`：可选（实测仅在自然提问流出现，见下方注意）；`fields[]` 项 = `{key, title, type, options?:[{value, label, description?}], custom?:boolean, required?, hidden?, when?, format?, minLength?, maxLength?, pattern?, default?}`（`type in "string"|"number"|"integer"|"boolean"|"multiselect"|"external"`） | `addWaiting(sessionID, {requestID: data.form.id, type:"question", summary: safeText(data.form.title ?? fields[0]?.title ?? "OpenCode question", 120, ctx)})`。**完整 fields 数组随 `properties` 原样 JSON 落盘**（relay §4.2 message=完整 payload），供 TG 向导（relay §14）渲染：**每个 field = 一个向导 stage**（title=问题文案、type 映射 §14 题目类型、options=选项、custom=允许自定义输入、multiselect=多选）。 |
 | `form.replied` | `{id, sessionID, answer:{key: value, ...}}` | 取消 question waiting（同 v1 question.replied 语义：`cancelWaitingNotify(requestID)` + `resolveWaitingRecord(requestID)`）。 |
 | `form.cancelled` | `{id, sessionID}` | 取消 question waiting（同 v1 question.rejected 语义）。 |
 
 - TG 向导按钮/纯文本捕获/状态机（relay §14.1–§14.9）机制与落盘结构保持；v2 只换
   「事件 ↔ 记录」两端的事件形状。**向导到 form 的字段形态映射以本表为唯一输入**，
   04 不得发明 `questions: [{header, question}]` 之外的 v1 形状。
-- **form 回复的「应用」通道未冻结**（客户端 surface 无 form 命名空间），见附录 A.1——
-  04 不得使用 v1 `_client.post` 私货猜测通道。
+- **`data.form.metadata?`（r1 增补）**：`{kind:"question", tool:{messageID, id:"call_..."}}`——
+  **可选，实测仅在自然提问流出现**（API 创建的控制表单无；05 probe-a1，
+  `tests/e2e/container/evidence/probe-a1/probe-a1.jsonl` + `sse-raw.txt`）；
+  不参与 waiting 记录判定，仅标记形态。
+- **自然提问流实测（05 probe-a1，§A.6 关闭）**：模型 question tool → `form.created`
+  （`metadata.kind="question"`），`questions[] -> fields[]`（键 `q0..qN`、`title=header`、
+  `description=question`、`options=[{value:label, label, description}]`、`custom:true`）。
+  选项回写必须提交 `option.value`（字符串），**不是** label（VERDICT.md）。
+- **form 回复的「应用」通道已定案**（§9/A.1）：客户端 surface 无 form 命名空间（05 实测
+  `client.rpc` 仅 `["register"]`、`client.session` 无 form/inbox 方法），唯一通道是
+  **进程内 HTTP Basic 回写**（§3.2 + 附录 A.1）；仍**禁止** v1 `_client.post` 私货。
 
 ### 2.7 等待记录与状态：inbox（不产生 waiting 记录，仅 busy 守卫）
 
@@ -243,9 +258,11 @@ reply API（§3、§7）。
 - `awaitingInput` 是**新增内部状态位**（`SessionProjection` 增可选字段，03 落地；
   03 必须保证旧投影无该字段时按 false 处理）。
 - 该守卫只影响 idle 终态时机，**不**影响 permission/question 记录（两者照常落盘/发送）。
-- **open mapping**：真实模型提问自然流（question tool → ?）在探针中未触发（附录 A.6）；
-  若 05 e2e 发现自然流是 `inbox.user steer` 而非 `form.created`，回看本表 §2.6/§2.7
-  是否需新增 waiting 来源——届时由 dev-lead 决议，本契约不预先发明。
+- **自然提问流已定案（05 probe-a1，§A.6 关闭）**：模型 question tool 产生的是
+  `form.created`（`metadata.kind="question"`），**不是** `inbox.user steer` —— §2.6
+  假设成立，本表**不**新增 waiting 来源；`inbox` 仍只做 busy 守卫（delivery="steer"）。
+  唯一观察到的 steer 相关行为是 headless `opencode run` 对 question form 的自动取消
+  （`form.cancelled` → tool.failed `aborted` → `execution.interrupted`），与插件无关。
 
 ### 2.8 忽略事件（out of scope，及理由）
 
@@ -273,7 +290,7 @@ reply API（§3、§7）。
 | `client.permission.reply({sessionID, requestID, decision, message?})` | `decision in "once"|"always"|"reject"` | resolve `undefined`；服务端发 `permission.replied {reply}`（C2，`evidence/api` `probe.permission.reply.result`） | **TG 三按钮回写的唯一通道**（relay §13.6 apply 改用它；`message?` 未在探针使用，保留透传不校验）。**替代** v1 `postSessionIdPermissionsPermissionId({path, body:{response}})`。 |
 | `client.permission.list({sessionID})` | — | pending 请求数组 `[{id, sessionID, action, resources, save?, source?}]` | 04 诊断/按钮刷新可选（不强制）；不可用于代替事件。 |
 | `client.permission.get({sessionID, requestID})` | — | 同 list 项；不存在 → error | 同上（诊断可选）。 |
-| `client.session.get({sessionID})` | — | 会话对象（直接返回，非 `{data}` 包装）：`{id, projectID, cost, tokens:{input,output,reasoning,cache:{read,write}}, time:{created,updated}, title, location:{directory}}`（C2，`probe.session.get`） | `ensureSessionInfo`（title 兜底）与 reconciliation 的唯一会话查询；**替代** v1 `session.get({path})` 包装形态。 |
+| `client.session.get({sessionID})` | — | 会话对象（直接返回，非 `{data}` 包装）：`{id, projectID, cost, tokens:{input,output,reasoning,cache:{read,write}}, time:{created,updated}, title, location:{directory}}`（C2，`probe.session.get`） | `ensureSessionInfo`/`primarySession` 的唯一会话查询（03 落地，§3.3）；**替代** v1 `session.get({path})` 包装形态。 |
 | `client.session.create({title})` | — | 同 get 形状 | 探针验证可用；主插件**不消费**（冻结：不创建会话）。 |
 | `client.session.context({sessionID})` | — | 消息数组（compaction 后）；新会话 `[]`（C2） | 诊断可选；**不消费**到投影（v1 reconcile 的 messages/todo 已移除，§2.1/§2.4）。 |
 
@@ -283,20 +300,26 @@ reply API（§3、§7）。
 |---|---|---|
 | `client.storage.*`（get/set/remove/scan，key 按 `plugin:<hex-id>:` 命名空间） | **不使用** | 自有 `~/.otg/` 落盘（telegram.json/projects.json/tgdiag.log/*.lock）v1 语义已 116 用例覆盖；迁移到 v2 storage 无收益且有既有数据兼容成本（spec 决策：全量功能对齐，落盘语义不动）。 |
 | `client.app.log` | **不存在**（app 仅元数据） | 日志走既有 `dline`/console 路径：`monitor.log()` 方法改为 dline/console（保留现 fallback；无 app.log 时永不抛）。 |
-| `client.session.list` / `session.messages` / `session.todo` | **不存在**（C3） | bootstrap/reconcile 相应移除；HTTP API 有等价物（`GET /api/session`、`/api/session/:id/message`），第三方测试可用，插件内**不**引入 fetch 通道（除附录 A.1 未决项）。 |
+| `client.session.list` / `session.messages` / `session.todo` | **不存在**（C3） | bootstrap/reconcile 相应移除（§3.3 实现修订）；HTTP API 有等价物（`GET /api/session`、`/api/session/:id/message`），第三方测试可用，插件内**不**引入 fetch 通道（唯一例外：form 回复通道，见下两行）。 |
 | `client.tui` | **不存在** | v1 亦仅 v1 TUI 用。 |
-| `(client as any)._client.post` 及任何扁平 question/reply 私货 | **禁止**（issue 04） | v1 实机修复轮的私货通道；v2 契约面明确（permission.reply）或未决（form 应用通道，附录 A.1）。 |
-| HTTP `fetch` 到自身 server | 默认**不使用**；仅当附录 A.1 证据齐备且 dev-lead 决议后才允许 | 保持插件只依赖 client 契约面；不入 SSE/HTTP 竞态。 |
+| `(client as any)._client.post` 及任何扁平 question/reply 私货 | **禁止**（issue 04） | v1 实机修复轮的私货通道；v2 契约面明确（permission.reply），form 应用通道已定案为 HTTP 回写（附录 A.1）。 |
+| HTTP `fetch` 到自身 server | **仅限 form 回复通道**（05 定案，附录 A.1）；其它场景一律**不使用** | `POST /api/session/:id/form/:id/reply`（Basic auth，见 A.1）；端口不可发现或请求失败时**显式失败**（记录原因日志），**不做任何兜底**（VERDICT.md 限制）；不参与事件消费/轮询竞态。 |
 
 ### 3.3 幂等/事务/超时/事件顺序语义（适用项冻结，不适用项注明）
 
+- **实现修订（03，r1）**：v2 client 无 `session.list/status`（§3.2）→ v1 的
+  bootstrap/reconcile 对账整体移除（`initialize()` 不再做回核对账），poller-first 语义保持
+  （poller 先起、注册/自更新/replyScan 后台启动，§7.2）；`withTimeout` 8s 守卫随之删除，
+  **不新增**任何超时/重试包装（避免新增降级路径，issue 03 铁律）——04 的 waiting/回写
+  代码同样不得引入新的守卫包装。
 - **幂等**：`permission.reply` 对已决请求 404（`[observed]` `evidence/tool-permission/commands.txt`）→
   保持 relay §14.8.2 的 404 终态语义（删除记录、不重试）。reply 重试由扫描 ticker 驱动
   （每次重试都重新 `permission.reply`，opencode 侧幂等——已决即 404 终态）。
+  同理，form 回写遇 `409 FormAlreadySettledError`（VERDICT.md）即已定案 → 删除记录、不重试。
 - **事务**：落盘仍走 `registry.mutate`（SharedFileStore 短临界区读写，既有契约不动；
   projects-registry.md §3/§4 零改动）。
-- **超时/重试**：client 方法若挂起，沿用 `withTimeout` 8s 守卫 + 退避重试（bootstrap 现状保留）；
-  Telegram 侧 `telegramWithRetry` 不变。
+- **超时/重试**：**不新增** client 超时包装（见上实现修订）；`permission.reply` 与 form
+  回写的重试由扫描 ticker 自然驱动（幂等语义见上）；Telegram 侧 `telegramWithRetry` 不变。
 - **事件顺序**：v2 envelope 按 emit 顺序到达插件流（SSE/总线保序，B1）；plugin 内
   `handleEvent` 逐条 `await`（现有 `track` 包装保留）。durable `seq` 仅供诊断，**不**做
   投影重放。
@@ -311,7 +334,7 @@ reply API（§3、§7）。
 
 - 探针事实：本地 `.ts` 插件由 Bun 二进制直接编译加载（A2），无 node_modules、无 `.d.ts`
   类型来源可依赖；未验证（也不承诺）本地插件可 `import "@opencode-ai/*"`。
-- **冻结：v2 类型全部本地定义**，新文件 `src/v2/types.ts`：
+- **冻结：v2 类型全部本地定义**，新文件 `src/v2/types.ts`（03 已落地）：
   - `V2Client`（§3 方法子集的类型化面，含 `event.subscribe(): AsyncIterable<V2EventEnvelope>`）；
   - `V2EventEnvelope`（§2.0 形状）；
   - 各事件族 `data` 类型（`PermissionAskedData`、`FormCreatedData`、
@@ -439,6 +462,9 @@ const fakeClient = {
 - `fakeClient.replyCalls` 断言 04 的按钮回写：`permission.reply` 被调且参数精确
   `{sessionID, requestID, decision}`（decision = record.reply 原样透传 `"once"|"always"|"reject"`）。
 - 04 删除 `postSessionIdPermissionsPermissionId` stub 与 `_client.post` stub（二者 v2 禁止）。
+- 04 增 form 回写替身：`fakeClient.formReply` 或等价可注入的 HTTP 回写函数（按附录 A.1
+  通道形状：`(sessionID, formID, answer)` → 204/401/400/404/409 可注入），断言 04 的
+  `q_answers` 消费端用 `option.value` 组装 `{"answer": ...}`。
 
 ### 7.2 主类构造签名（冻结，03 起生效）
 
@@ -451,7 +477,8 @@ new TelegramSessionMonitor(
 )
 ```
 
-参数顺序/arity 不变；`initialize()` 行为不变（poller 先起 + 后台 bootstrap）。
+参数顺序/arity 不变；`initialize()`（**03 修订，r1**）：poller 先起 + 注册/自更新/
+replyScan 后台启动；bootstrap/reconcile 已移除（v2 client 无 `session.list/status`，§3.3）。
 
 ### 7.3 `accept()` 输入决策（冻结）：**原始 v2 envelope**
 
@@ -472,7 +499,7 @@ new TelegramSessionMonitor(
 |---|---|---|---|
 | **03**（src 核心 + todo 移除） | 02 合入 | `src/**`、`tests/behavior.test.mjs`、`tests/e2e/bundle-smoke.test.mjs` | 入口/生命周期/会话与用量/todo 移除/类型策略落地；容器内可加载（探针配方）。 |
 | **05**（容器 e2e + 真实 TG 冒烟） | 02 合入（与 03 同时就绪） | `tests/e2e/container/**`、新脚本（`scripts/*.sh` 或 `tools/*`，复用 `run-probe.sh` 基座） | 与 03/04 的 `src`/`tests/*.test.mjs` **零交集**；对适配后插件的 green-run 在 03/04 合入后由编排器调度。 |
-| **04**（等待/审批适配） | 02 + 03 合入 | `src/**`（基于 03 合入后的新基线）、`tests/sessions-poller.test.mjs`、`tests/poller-loop.test.mjs` | 同文件串行（`src/monitor.ts`/`index.ts`/`types.ts` 与 03 冲突面）；permission 去抖/回写、inbox/form 向导、`permission.reply` 通道。 |
+| **04**（等待/审批适配） | 02 + 03 合入 | `src/**`（基于 03 合入后的新基线）、`tests/sessions-poller.test.mjs`、`tests/poller-loop.test.mjs` | 同文件串行（`src/monitor.ts`/`index.ts`/`types.ts` 与 03 冲突面）；permission 去抖/回写、inbox/form 向导、`permission.reply` 通道 + `q_answers` HTTP 回写（§3.2/A.1）。 |
 | **06**（发布元数据 + 文档） | 03 + 04 合入 | `README.md`、`package.json`、`docs/00-overview.md` | 版本 1.0.0；README 移除 Todo 特性；00-overview 终态同步（02 先写契约指针版，06 做行为终态版，无提交冲突——03/04 不触碰 docs）。 |
 
 **批次间依赖说明**：03 与 05 并行（文件零交集）；04 严格等 03（同文件）；
@@ -481,6 +508,12 @@ new TelegramSessionMonitor(
 
 **唯一集成测试编写所有者**：05（容器 e2e 断言 ≥ 生命周期 1 条 / 等待记录 1 条 /
 回写闭环 1 条，issue 05 验收）。
+
+**修订 1（2026-09-25）批次状态**：03 已合入 `0da0f3c`（src 核心 + todo 移除 + 本地 v2 类型）；
+05 已合入 `2f29103`（容器 e2e harness + probe-a1 form 回复证据 + real-TG 只读配方）；
+04 为下一就绪批次（同文件串行，基于 03 新基线）；06 仍等 03+04。05 对适配后插件的
+green-run（含 harness 的 form 回写 P2b 与 A.6 类自然流 re-dispatch probe，§9）由编排器在
+04 合入后调度。
 
 ---
 
@@ -492,26 +525,48 @@ new TelegramSessionMonitor(
 | `session.compaction.*` | 目录存在，**未触发**（长会话才可能） | 05 e2e 长会话若触发，评估对消息/上下文投影影响；本契约不含其语义。 |
 | `effect` 返回语义 | effect 形态加载成功但 Effect 值消费未验证 | 冻结用 `setup`；effect 形态不承诺。 |
 | `permission.updated`（v2） | 未在事件流观测 | 不接线（§2.5）；05 若观测到再决议。 |
-| **form/inbox 的插件内回复通道**（A.1） | client surface 无 form/inbox 命名空间；HTTP `session.form.reply` 存在但**插件内调用方式未验证** | 04 阻塞项；证据见附录 A.1。 |
-| 真实模型提问自然流（question tool → form? inbox?） | 探针未用模型自然触发提问 | 05 必测项；若与 §2.6 假设不符，dev-lead 决议。 |
+| **form 回复通道**（原 A.1） | **已定案（05 probe-a1）**：进程内 HTTP Basic 回写（`POST /api/session/:id/form/:id/reply`，204），端口 argv 发现、密码双 env；`run --standalone` 端口不可发现 | 04 按 A.1/§3.2 实现；端口不可发现**显式失败、无兜底**。 |
+| 真实模型提问自然流 | **已定案（05 probe-a1，§A.6 关闭）**：question tool → `form.created`（`metadata.kind="question"`），§2.6 成立 | 已并入 §2.6/§2.7。 |
+| **subagent lineage / parentID** | v2.0.15 无 parent 关联——`session.created` 数据与 `session.get` 形状均无 `parentID`，v1 的 `parentID` 投影（`primarySession`/`childSessions`/`synchronizeIdleDescendants`）在 v2 下**永不填充**（03 已按此实现，`src/v2/types.ts`） | **待验证**：05 最终 green-run 的 re-dispatch probe 复核真实模型回合是否携带父链；**04 不得依赖 parentID 填充**。验证前已知降级面：根会话 token 聚合不含子会话；idle-后代同步（`synchronizeIdleDescendants`）退化为 no-op。 |
 
 ---
 
 ## 附录 A：open mapping items（需要的精确证据）
 
-### A.1 form 答案回写通道（04 最大未决项）
+### A.1 form 答案回写通道（**已定案 05 probe-a1**，原 04 最大未决项）
 
-- 事实：插件 client surface **无 form 命名空间**（C1）；HTTP API 有
-  `session.form.list/create/get/reply/cancel`、`session.inbox.list/cancel/update`（B3，
-  `[binary]` + `opencode api` 实测：`session.form.reply --param sessionID=... --param
-  formID=... -d '{"answer":{"key":"value"}}'`，`evidence/api/commands.txt`）。
-- 未验证：插件进程内如何带认证调该 HTTP（`OPENCODE_SERVER_PASSWORD` /
-  `OPENCODE_PASSWORD` 环境变量是否对插件可见；serve 未设密码时行为）。
-- **需要的证据**（05/04 补充探针）：在插件 `setup` 内 `fetch("/api/session/:id/form/:id/reply")`
-  对比 `client.permission.reply` 的认证形态（探针已证明 permission 有 client 方法，
-  form 没有）；记录成功/失败及必要 header。证据齐备后由 dev-lead 决议通道选型并修订本契约；
-  **在此之前 04 不得实现 question→form 回写**（TG 向导的「回复应用」步骤保持未接线，
-  通知与记录照常，属范围截断而非降级路径）。
+- **通道（冻结）**：插件进程内对自身 server 的 loopback HTTP 回写——
+  `POST http://127.0.0.1:<port>/api/session/<sessionID>/form/<formID>/reply`，
+  `authorization: Basic base64("opencode:" + <password>)`、`content-type: application/json`、
+  body `{"answer": {"<fieldKey>": <value>, ...}}` → **204**（form settled，`form.replied`
+  在插件流与 `GET /api/event` 均可见）。
+- **认证**：用户名固定 `opencode`（Basic challenge `realm="Secure Area"`）；密码取
+  `process.env.OPENCODE_SERVER_PASSWORD`（serve 侧）或 `process.env.OPENCODE_PASSWORD`
+  （client env）——**两者在插件进程内都可见**（05 实测 `probe.setup.envPresence`）。
+  缺密码/错凭据 → 401（**Bearer 不接受**）；`400 FormInvalidAnswerError|InvalidRequestError`、
+  `404 SessionNotFoundError|FormNotFoundError`、`409 FormAlreadySettledError`。
+- **answer 值类型**（OpenAPI `Form.Value`）：string | number | boolean | array-of-string
+  （multiselect）；选项字段提交 `option.value`（字符串），**不是** label。
+- **补充 API**：`GET /openapi.json`（需认证，完整 OpenAPI 3.1，250037 字节）；
+  `session.form.cancel` = `DELETE /api/session/<sid>/form/<fid>`；全局列表 `GET /api/form`
+  —— 插件主流程只用 `reply`；`cancel`/列表留给诊断/向导可选，不强制。
+- **端口发现（限制，冻结）**：`<port>` 从 `process.argv` 解析（serve 形态
+  `["bun","/$bunfs/root/opencode","serve","--port","<N>",...]`）；`opencode run
+  --standalone` 实际是 `serve --stdio --port 0`（临时端口不在 argv）→ **不可发现**。
+  **04 必须显式失败**（记录原因日志，`q_answers` 保持未应用），**不得发明兜底**；
+  `permission.reply` 的 client 通道不受影响。
+- **证据**：`tests/e2e/container/probe-a1/VERDICT.md`（裁定 + 证据矩阵）；
+  `tests/e2e/container/evidence/probe-a1/probe-a1.jsonl`（`probe.reply.http.attempt` 三次
+  auth 尝试、`form.replied`）、`sse-raw.txt`；`probe.setup.*` 显示 `client.rpc` 仅
+  `["register"]`、`client.session` 无 form/inbox 方法。
+- **harness 接口（05 e2e 契约，04 必须匹配）**：TG 向导最终提交 = 记录字段
+  `q_answers: Array<Array<string>>`（relay §14 冻结字段；每题 = label/文本数组，按
+  fields[] 顺序）。harness 以完全相同的外部写入注入：`inject_json_field "$FRMID"
+  q_answers '[["A"]]'`（`tests/e2e/container/harness/scenario.sh` P2b）→ 断言记录删除 +
+  `form.replied` 上线（`tests/e2e/container/assert/harness.mjs` H3.4/H3.5）。04 消费端：
+  label → `option.value` → `{"answer":{fieldKey: value}}`（单选取首个、multiselect 取数组；
+  与 `tests/e2e/container/harness/plugins/harness-stub.ts` 的 `buildAnswer` 行为一致）。
+  如 04 改动字段名/语义，**必须同步更新 harness 与断言**。
 
 ### A.2 `session.usage.recorded`（见 §9）
 
@@ -521,17 +576,28 @@ new TelegramSessionMonitor(
 
 ### A.5 `permission.updated`（见 §9）
 
-### A.6 自然提问流验证（05 必做）
+### A.6 自然提问流验证（**已关闭 05 probe-a1**）
 
-- 需要证据：容器内用真实模型（`hipc/opencode2:latest` 免费模型）触发一次「模型向用户提问」
-  （如让模型用 question 工具或要求澄清），记录原始事件序列。若为 `form.created`（预期）→
-  §2.6 生效；若为 `session.inbox.enqueued {item.type:"user", delivery:"steer"}` 无 form →
-  dev-lead 决议是否把 steer 提问升级为 waiting 记录（本契约当前冻结为不产生，§2.7）。
+- **结论**：question tool → `form.created`（`metadata.kind="question"`，
+  `tool:{messageID, id:"call_..."}`），§2.6 生效；**不是** `inbox.user steer`。
+  `questions[] -> fields[]` 键 `q0..qN`（`title=header`、`description=question`、
+  `options=[{value:label, label, description}]`、`custom:true`）；插件经 A.1 通道回写 →
+  `form.replied` → `session.tool.success` → `session.execution.succeeded`。
+- 附带观察（headless）：`opencode run` 无 UI 呈现 form → 立即自动取消
+  （`form.cancelled` → `session.tool.failed {type:"aborted"}` → `session.execution.interrupted
+  {reason:"shutdown"}`）；`opencode serve` 下 form 保持 pending（TG 向导可服务的形态）。
+- 证据：`tests/e2e/container/probe-a1/VERDICT.md` §A.6 + `tests/e2e/container/evidence/probe-a1/`
+  （`probe-a1.jsonl` seq 38 form.created、seq 44 tool.success）、`api-natural-prompt.json`。
 
 ---
 
 ## 变更记录
 
+- 2026-09-25 修订 1（doc-prep follow-up，Ticket 03/05 落地后）：§9/A.1 + §A.6 定案
+  （form 回复通道 = 进程内 HTTP Basic 回写，证据 `tests/e2e/container/probe-a1/VERDICT.md`
+  + `evidence/probe-a1/**`，05 `2f29103`）；03 实现修订同步（§1.6/§3.1/§3.3/§7.2/§8：
+  bootstrap/reconcile/status 移除、无新超时包装）；§2.6 增 `form.metadata?`；§2.7 自然流
+  定案；§9 新增 subagent lineage（parentID）开放项；§7.1 增 form 回写替身；§8 批次状态更新。
 - 2026-09-25 冻结（Ticket 02）：本文档建立。依据 01 探针证据（`tools/v2-probe/FINDINGS.md` +
   `evidence/**`）；supersede 记入 sessions-relay.md 头部行内标注 + §11；
   docs/00-overview.md 同步指针与目标版本。
