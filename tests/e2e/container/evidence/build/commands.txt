@@ -1,0 +1,5 @@
+=== scenario: build (scripts/build.mjs via otg-toolchain) ===
+=== exact command ===
+docker run --rm --name t05-build-<pid> -v <repo>:/src:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t05/tests/e2e/container/evidence/build:/out --entrypoint sh otg-toolchain:latest -c 'cp -r /src /build && cd /build && node scripts/build.mjs && cp monitor.ts /out/plugin-under-test.ts'
+=== output follows ===
+built: /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t05/tests/e2e/container/evidence/build/plugin-under-test.ts (146235 bytes)

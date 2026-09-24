@@ -1,0 +1,72 @@
+data: {"id":"evt_0d4710224001lHF02gmnkhrUpF","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d471025b0016eBKUJ7xXjVxgk","created":1790270571099,"type":"session.created","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","slug":"lucky-orchid","version":"2.0.15","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","location":{"directory":"/tmp"},"subpath":"","title":"t05-a1-control"},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":0,"version":1}}
+
+data: {"id":"evt_0d47102a1002d2JFS3w2VVO6Ux","created":1790270571169,"type":"form.created","location":{"directory":"/tmp"},"data":{"form":{"id":"frm_0d47102a1001g4UfzydAVnkyqh","sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","title":"a1 control form","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true},{"key":"notes","title":"Notes","type":"string"}]}}}
+
+data: {"id":"evt_0d47102a70013CbgjhePDQdwzo","created":1790270571175,"type":"form.replied","location":{"directory":"/tmp"},"data":{"id":"frm_0d47102a1001g4UfzydAVnkyqh","sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","answer":{"choice":"a","notes":"t05-e2e-answer"}}}
+
+data: {"id":"evt_0d471085f001Lv1hD6yNbTnrrq","created":1790270572639,"type":"models-dev.refreshed","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d47108ac001u4ToQ31FIEVSqA","created":1790270572716,"type":"integration.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d47108cf001POLxumdhR7y8a4","created":1790270572751,"type":"provider.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d47108d4001SNEChghTycvl63","created":1790270572756,"type":"model.updated","location":{"directory":"/tmp"},"data":{}}
+
+data: {"id":"evt_0d4710abb001lJZW0PmN8R3aqI","created":1790270573243,"type":"session.inbox.enqueued","location":{"directory":"/tmp"},"data":{"inboxID":"msg_0d4710aba001v0Qf9QAji5hUuS","sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","item":{"type":"user","payload":{"text":"Use the question tool to ask me which option I prefer: option A or option B. Do not use any other tool. After asking, stop."},"delivery":"queue"}},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":1,"version":1}}
+
+data: {"id":"evt_0d4710acf0010ES32AKaziPURv","created":1790270573263,"type":"session.execution.started","data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA"},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":2,"version":1}}
+
+data: {"id":"evt_0d4710ae3001t30OSf2XNh8USK","created":1790270573283,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","delta":{"core/environment":"c4d202cd2d43aedbbc2d0aec89b140dae54861a7709ab9c104613cf2f716a43b","core/date":"ade00e1aa759b4d8ec62b951b7f4a0980802006f34bb8b5db1fab6b639c8d61c","core/codemode":"9bbeb19ab2fa0ee4cafd3d2e36b9cfb6c72f8148481e8c67444eb0c9d38b5a22","core/skill-guidance":"8394362d28c82fa4d13c7a9f5568c05680f6687e07db8f426a0e3c92f3027dc9"}},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":3,"version":2}}
+
+data: {"id":"evt_0d4710ae6001DPXhgwdtNB1qQd","created":1790270573286,"type":"session.inbox.delivered","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","inboxID":"msg_0d4710aba001v0Qf9QAji5hUuS"},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":4,"version":1}}
+
+data: {"id":"evt_0d47115bc001dh5q4743s7WXCs","created":1790270576060,"type":"session.step.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","agent":"build","model":{"id":"space-bunny-free","providerID":"opencode"},"assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","started":1790270573301},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":5,"version":1}}
+
+data: {"id":"evt_0d47115be001qbGu1uUG7SCviP","created":1790270576062,"type":"session.reasoning.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","ordinal":0,"state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":6,"version":1}}
+
+data: {"id":"evt_0d4711624001b52bTJFKsezZzY","created":1790270576164,"type":"session.reasoning.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","ordinal":0,"delta":"We need obey"}}
+
+data: {"id":"evt_0d471173e001VJK53x3Yse7joh","created":1790270576446,"type":"session.reasoning.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","ordinal":0,"delta":" use question only and stop. Need ask which A/B, descriptions? They didn't tell what options entail"}}
+
+data: {"id":"evt_0d47117f9001kIB8ikJ834pvaN","created":1790270576634,"type":"session.tool.input.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","id":"call_function_io9rekkx6ae4_1","name":"question"},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":7,"version":1}}
+
+data: {"id":"evt_0d471185d001YBFgoNI8W0NIYF","created":1790270576733,"type":"session.reasoning.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","ordinal":0,"delta":", so straightforward options labels. The question tool automatically type own answer. Use commentary. No other tool."}}
+
+data: {"id":"evt_0d4711b13001OL2ZijdpB1ctCO","created":1790270577427,"type":"session.reasoning.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","ordinal":0,"text":"We need obey use question only and stop. Need ask which A/B, descriptions? They didn't tell what options entail, so straightforward options labels. The question tool automatically type own answer. Use commentary. No other tool.","state":{"reasoningField":"reasoning_content"}},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":8,"version":1}}
+
+data: {"id":"evt_0d4711b16001MkDOgHalMJpYSW","created":1790270577430,"type":"session.tool.input.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","id":"call_function_io9rekkx6ae4_1","text":"{\"questions\": [{\"question\": \"Which option do you prefer: A or B?\", \"header\": \"Choose an option\", \"options\": [{\"label\": \"Option A\", \"description\": \"Choose option A.\"}, {\"label\": \"Option B\", \"description\": \"Choose option B.\"}], \"multiple\": false}]}"},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":9,"version":1}}
+
+data: {"id":"evt_0d4711b170018LdR7cWRpjKHjm","created":1790270577431,"type":"session.tool.called","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","id":"call_function_io9rekkx6ae4_1","input":{"questions":[{"question":"Which option do you prefer: A or B?","header":"Choose an option","options":[{"label":"Option A","description":"Choose option A."},{"label":"Option B","description":"Choose option B."}],"multiple":false}]},"executed":false},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":10,"version":1}}
+
+data: {"id":"evt_0d4711b19001G4nOyl8GU3RBs6","created":1790270577433,"type":"session.step.streamed","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m"},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":11,"version":1}}
+
+data: {"id":"evt_0d4711b1e002NuLNYmODX9l7ua","created":1790270577438,"type":"form.created","location":{"directory":"/tmp"},"data":{"form":{"id":"frm_0d4711b1e001RGBP7tzpMWcB06","sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","title":"Questions","metadata":{"kind":"question","tool":{"messageID":"msg_0d4710aed001wGh2Ke07hjGA3m","id":"call_function_io9rekkx6ae4_1"}},"fields":[{"key":"q0","title":"Choose an option","description":"Which option do you prefer: A or B?","type":"string","options":[{"value":"Option A","label":"Option A","description":"Choose option A."},{"value":"Option B","label":"Option B","description":"Choose option B."}],"custom":true}]}}}
+
+data: {"id":"evt_0d4711b22001iLK6JlmqCzawe3","created":1790270577442,"type":"form.replied","location":{"directory":"/tmp"},"data":{"id":"frm_0d4711b1e001RGBP7tzpMWcB06","sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","answer":{"q0":"Option A"}}}
+
+data: {"id":"evt_0d4711b23001jGgzg7HP4Cef2b","created":1790270577443,"type":"session.tool.success","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","id":"call_function_io9rekkx6ae4_1","content":[{"type":"text","text":"User has answered your questions: \"Which option do you prefer: A or B?\"=\"Option A\". You can now continue with the user's answers in mind."}],"metadata":{"answers":[["Option A"]],"truncated":false},"executed":false},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":12,"version":2}}
+
+data: {"id":"evt_0d4711b25001R3ENjIfK6xEvvp","created":1790270577445,"type":"session.step.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4710aed001wGh2Ke07hjGA3m","finish":"tool-calls","rawFinish":"tool_calls","cost":0,"tokens":{"input":6014,"output":137,"reasoning":46,"cache":{"read":476,"write":0}}},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":13,"version":1}}
+
+data: {"id":"evt_0d4711b27001i2uuk33GZ2Jwaf","created":1790270577447,"type":"session.usage.updated","data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","cost":0,"tokens":{"input":6014,"output":137,"reasoning":46,"cache":{"read":476,"write":0}}}}
+
+data: {"id":"evt_0d47122f1001to6yOvEEJsCyV4","created":1790270579441,"type":"session.step.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","agent":"build","model":{"id":"space-bunny-free","providerID":"opencode"},"assistantMessageID":"msg_0d4711b2f001hGPvh4BB6cKVxr","started":1790270577464},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":14,"version":1}}
+
+data: {"id":"evt_0d47122f3001wBHb3T5v7tRtkr","created":1790270579443,"type":"session.text.started","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4711b2f001hGPvh4BB6cKVxr","ordinal":0},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":15,"version":1}}
+
+data: {"id":"evt_0d47122f60010NYoMR07rP4GDA","created":1790270579446,"type":"session.text.delta","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4711b2f001hGPvh4BB6cKVxr","ordinal":0,"delta":"Option A."}}
+
+data: {"id":"evt_0d47122f6002JF5wNFrdsganXg","created":1790270579446,"type":"session.text.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4711b2f001hGPvh4BB6cKVxr","ordinal":0,"text":"Option A."},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":16,"version":1}}
+
+data: {"id":"evt_0d47122f7001kvs1NTdHGZaZDc","created":1790270579447,"type":"session.step.streamed","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4711b2f001hGPvh4BB6cKVxr"},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":17,"version":1}}
+
+data: {"id":"evt_0d47122f8001SeQyJeoAva8kTF","created":1790270579448,"type":"session.step.ended","location":{"directory":"/tmp"},"data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","assistantMessageID":"msg_0d4711b2f001hGPvh4BB6cKVxr","finish":"stop","rawFinish":"stop","cost":0,"tokens":{"input":49,"output":4,"reasoning":0,"cache":{"read":6671,"write":0}}},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":18,"version":1}}
+
+data: {"id":"evt_0d47122fa001qQTh5VlAVAybWe","created":1790270579450,"type":"session.usage.updated","data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA","cost":0,"tokens":{"input":6063,"output":141,"reasoning":46,"cache":{"read":7147,"write":0}}}}
+
+data: {"id":"evt_0d47122fa0021fLHwTG31tREO2","created":1790270579451,"type":"session.execution.succeeded","data":{"sessionID":"ses_f2b8efda5ffekVhShKU33bDbvA"},"durable":{"aggregateID":"ses_f2b8efda5ffekVhShKU33bDbvA","seq":19,"version":1}}
+

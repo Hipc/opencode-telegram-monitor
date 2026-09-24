@@ -1,0 +1,62 @@
+=== scenario: real-tg-recipe --check (read-only mount mechanism) ===
+=== exact command ===
+docker run --rm --name t05-real-tg-check-1355277 -v $HOME/.otg:/host-otg:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t05/tests/e2e/container/harness:/harness:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t05/tests/e2e/container/evidence/real-tg-recipe:/evidence --entrypoint sh hipc/opencode2:latest -c 'sh /harness/real-tg-check.sh'
+=== output follows ===
+--- mount entry for /host-otg ---
++ echo --- mount entry for /host-otg ---
++ grep host-otg /proc/mounts
+/dev/sdc /host-otg ext4 ro,relatime,discard,errors=remount-ro,data=ordered 0 0
++ echo --- host files visible (names/sizes only) ---
+--- host files visible (names/sizes only) ---
++ + lsawk {print $5, $9}
+ -la /host-otg
+ 
+4096 .
+4096 ..
+22 menu.json
+110 poller.lock
+40889 projects.json
+396 telegram.json
+37460781 tgdiag.log
+4096 update-staging
+--- write attempt into /host-otg (must fail) ---
++ echo --- write attempt into /host-otg (must fail) ---
++ touch /host-otg/t05-must-not-write
++ cat /tmp/t05-ro-error.txt
+RESULT: ok host mount rejected write: touch: cannot touch '/host-otg/t05-must-not-write': Read-only file system
+--- copy to writable location ---
++ echo RESULT: ok host mount rejected write: touch: cannot touch '/host-otg/t05-must-not-write': Read-only file system
++ echo --- copy to writable location ---
++ mkdir -p /tmp/home/.otg
++ ls -A /host-otg
++ [ -n menu.json
+poller.lock
+projects.json
+telegram.json
+tgdiag.log
+update-staging ]
++ cp -r /host-otg/. /tmp/home/.otg/
++ ls -A /tmp/home/.otg
++ wc -l
+RESULT: copied 6 entries
+--- copy isolation check ---
++ echo RESULT: copied 6 entries
++ echo --- copy isolation check ---
++ echo t05-marker
++ [ -e /host-otg/t05-copy-marker ]
++ echo RESULT: ok copy write stayed inside the container
++ rm -f /tmp/home/.otg/t05-copy-marker
+RESULT: ok copy write stayed inside the container
+--- copy contents (names/sizes only) ---
++ echo --- copy contents (names/sizes only) ---
++ ls -la /tmp/home/.otg
++ awk {print $5, $9}
+ 
+4096 .
+4096 ..
+22 menu.json
+110 poller.lock
+40889 projects.json
+396 telegram.json
+37460781 tgdiag.log
+4096 update-staging
