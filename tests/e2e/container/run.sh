@@ -11,7 +11,7 @@
 #   tests/e2e/container/run.sh probe-lineage            # §9 subagent lineage probe
 #   tests/e2e/container/run.sh build                    # bundle src/ via otg-toolchain
 #   tests/e2e/container/run.sh real-tg-recipe --check   # read-only ~/.otg mechanism check
-#   tests/e2e/container/run.sh real-tg-recipe --run     # full real-TG smoke (later)
+#   tests/e2e/container/run.sh real-tg-recipe --run     # full real-TG smoke (serve-based send path)
 #   tests/e2e/container/run.sh assert-probe-a1          # assertions over existing evidence
 #   tests/e2e/container/run.sh assert-harness           # assertions over existing evidence
 #   tests/e2e/container/run.sh assert-probe-lineage     # lineage evidence summary
@@ -21,7 +21,9 @@
 # T05_HARNESS_RESOLVED_REPLY=1 adds the already-settled reply capture,
 # T05_HARNESS_REPLY_ERROR_PROBE=1 adds the auxiliary client-error-shape double
 # (run it with T05_HARNESS_OUT=<dir> to keep it separate from the canonical
-# green-run evidence).
+# green-run evidence). T05_REAL_SMOKE_HOST_OTG overrides the host otg directory
+# mounted read-only at /host-otg (default ~/.otg) — point it at a synthetic
+# copy to exercise the send-path mechanism check without real credentials.
 #
 # Requirements: docker (images hipc/opencode2:latest, otg-toolchain:latest) and
 # node on the host (assertions only). See README.md for details.
@@ -253,24 +255,27 @@ scenario_real_tg_recipe() {
       *) fail "real-tg-recipe: unknown argument: $1" ;;
     esac
   done
-  [ -d "$HOME/.otg" ] || fail "real-tg-recipe: $HOME/.otg not found (docker would create it on the host)"
+  # Default is the real host otg dir; T05_REAL_SMOKE_HOST_OTG points the recipe
+  # at a synthetic copy for the send-path mechanism check.
+  local host_otg="${T05_REAL_SMOKE_HOST_OTG:-$HOME/.otg}"
+  [ -d "$host_otg" ] || fail "real-tg-recipe: $host_otg not found (docker would create it on the host)"
   if [ "$mode" = "run" ]; then
-    [ -f "$HOME/.otg/telegram.json" ] || fail "real-tg-recipe: $HOME/.otg/telegram.json not found"
+    [ -f "$host_otg/telegram.json" ] || fail "real-tg-recipe: $host_otg/telegram.json not found"
   fi
   local out="$EVIDENCE_ROOT/real-tg-recipe"
   rm -rf "$out"; mkdir -p "$out"
 
   if [ "$mode" = "check" ]; then
     local name="t05-real-tg-check-$$"
-    log "real-tg-recipe: read-only mount mechanism check"
+    log "real-tg-recipe: read-only mount mechanism check (host otg: $host_otg)"
     {
       echo "=== scenario: real-tg-recipe --check (read-only mount mechanism) ==="
       echo "=== exact command ==="
-      echo "docker run --rm --name $name -v \$HOME/.otg:/host-otg:ro -v $HARNESS_DIR:/harness:ro -v $out:/evidence --entrypoint sh $OPENCODE_IMAGE -c 'sh /harness/real-tg-check.sh'"
+      echo "docker run --rm --name $name -v $host_otg:/host-otg:ro -v $HARNESS_DIR:/harness:ro -v $out:/evidence --entrypoint sh $OPENCODE_IMAGE -c 'sh /harness/real-tg-check.sh'"
       echo "=== output follows ==="
     } > "$out/commands.txt"
     docker run --rm --name "$name" \
-      -v "$HOME/.otg:/host-otg:ro" \
+      -v "$host_otg:/host-otg:ro" \
       -v "$HARNESS_DIR:/harness:ro" \
       -v "$out:/evidence" \
       --entrypoint sh "$OPENCODE_IMAGE" -c 'sh /harness/real-tg-check.sh' \
@@ -287,45 +292,57 @@ scenario_real_tg_recipe() {
     plugin_file="$PWD/$plugin_file"
   fi
   [ -f "$plugin_file" ] || fail "real-tg-recipe: plugin not found: $plugin_file"
-  local plugin_dir plugin_base name
+  local plugin_dir plugin_base name port pw
   plugin_dir="$(cd "$(dirname "$plugin_file")" && pwd)"
   plugin_base="$(basename "$plugin_file")"
   name="t05-real-tg-$$"
+  port="$(free_port)"
+  pw="$(synthetic_password)"
   # Host-side fingerprint (information only): the container must not change it.
+  # The header line is identical in both files so the diff compares entries only.
   {
-    echo "=== host ~/.otg fingerprint BEFORE (name size mtime) ==="
-    ( cd "$HOME/.otg" && find . -maxdepth 1 -type f -printf '%P\t%s\t%T@\n' | sort )
+    echo "=== host otg fingerprint (name size mtime; source: $host_otg) ==="
+    ( cd "$host_otg" && find . -maxdepth 1 -type f -printf '%P\t%s\t%T@\n' | sort )
   } > "$out/host-otg-before.txt"
   {
-    echo "=== scenario: real-tg-recipe --run (one real Telegram notification) ==="
+    echo "=== scenario: real-tg-recipe --run (serve-based, one Telegram notification attempt) ==="
     echo "=== exact command ==="
     echo "docker run --rm --name $name \\"
-    echo "  -v \$HOME/.otg:/host-otg:ro \\"
+    echo "  -v $host_otg:/host-otg:ro \\"
     echo "  -v $plugin_dir:/plugin:ro \\"
     echo "  -v $HARNESS_DIR:/harness:ro \\"
     echo "  -v $out:/evidence \\"
-    echo "  -e T05_PLUGIN=/plugin/$plugin_base -e T05_REAL_SMOKE_FULL=${T05_REAL_SMOKE_FULL:-0} \\"
+    echo "  -e T05_PLUGIN=/plugin/$plugin_base -e T05_PORT=$port -e T05_PASSWORD=<redacted> \\"
+    echo "  -e T05_REAL_SMOKE_FULL=${T05_REAL_SMOKE_FULL:-0} \\"
     echo "  --entrypoint sh $OPENCODE_IMAGE -c 'sh /harness/real-tg-recipe.sh'"
     echo "=== output follows ==="
   } > "$out/commands.txt"
-  timeout 300 docker run --rm --name "$name" \
-    -v "$HOME/.otg:/host-otg:ro" \
+  local rc=0
+  timeout 600 docker run --rm --name "$name" \
+    -v "$host_otg:/host-otg:ro" \
     -v "$plugin_dir:/plugin:ro" \
     -v "$HARNESS_DIR:/harness:ro" \
     -v "$out:/evidence" \
     -e T05_PLUGIN="/plugin/$plugin_base" \
+    -e T05_PORT="$port" \
+    -e T05_PASSWORD="$pw" \
     -e T05_REAL_SMOKE_FULL="${T05_REAL_SMOKE_FULL:-0}" \
     --entrypoint sh "$OPENCODE_IMAGE" -c 'sh /harness/real-tg-recipe.sh' \
-    >> "$out/commands.txt" 2>&1 || log "real-tg recipe exited non-zero (see evidence)"
+    >> "$out/commands.txt" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log "real-tg-recipe: container reported ok (see RESULT line in $out/commands.txt)"
+  else
+    log "real-tg-recipe: container exited rc=$rc (see RESULT line in $out/commands.txt)"
+  fi
   fix_ownership "$out"
   {
-    echo "=== host ~/.otg fingerprint AFTER (name size mtime) ==="
-    ( cd "$HOME/.otg" && find . -maxdepth 1 -type f -printf '%P\t%s\t%T@\n' | sort )
+    echo "=== host otg fingerprint (name size mtime; source: $host_otg) ==="
+    ( cd "$host_otg" && find . -maxdepth 1 -type f -printf '%P\t%s\t%T@\n' | sort )
   } > "$out/host-otg-after.txt"
   if diff -u "$out/host-otg-before.txt" "$out/host-otg-after.txt" > "$out/host-otg-diff.txt"; then
-    log "real-tg-recipe: host ~/.otg unchanged"
+    log "real-tg-recipe: host otg dir unchanged"
   else
-    log "real-tg-recipe: host ~/.otg fingerprint changed (see host-otg-diff.txt; the host's own processes may be responsible)"
+    log "real-tg-recipe: host otg fingerprint changed (see host-otg-diff.txt; the host's own processes may be responsible)"
   fi
   log "real-tg-recipe: evidence written to $out"
 }

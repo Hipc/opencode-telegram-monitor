@@ -1,0 +1,5 @@
+=== host otg fingerprint (name size mtime; source: /tmp/t08-synthetic-otg) ===
+poller.lock	64	1790278434.4967480920
+projects.json	16	1790278434.4967480920
+telegram.json	106	1790278434.4967480920
+tgdiag.log	241	1790278434.4967480920

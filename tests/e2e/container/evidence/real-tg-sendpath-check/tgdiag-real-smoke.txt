@@ -1,0 +1,19 @@
+2026-09-01T00:00:00.000Z [999999] MODULE LOADED
+2026-09-01T00:00:00.000Z [999999] requestViaProxy[sendRichMessage] http done status=200
+2026-09-01T00:00:01.000Z [999999] [error] Telegram message send failed {"error":"TelegramApiError(401)"}
+2026-09-24T19:38:29.017Z [18] MODULE LOADED
+2026-09-24T19:38:29.157Z [18] initialize() called
+2026-09-24T19:38:29.157Z [18] runTelegram() started
+2026-09-24T19:38:29.158Z [18] reply scan: starting 1s ticker
+2026-09-24T19:38:29.159Z [18] poller lock held elsewhere; scheduling retry
+2026-09-24T19:38:29.649Z [18] inbox enqueued session=f2b12ceb inbox=msg_0d4e type=user delivery=steer
+2026-09-24T19:38:33.269Z [18] step ended session=f2b12ceb finish=stop
+2026-09-24T19:38:34.159Z [18] self-update: skipped (not an npm cache install)
+2026-09-24T19:38:38.271Z [18] requestViaProxy[sendRichMessage] start
+2026-09-24T19:38:38.273Z [18] requestViaProxy[sendRichMessage] tunnel ok
+2026-09-24T19:38:40.536Z [18] requestViaProxy[sendRichMessage] tls ok
+2026-09-24T19:38:40.537Z [18] requestViaProxy[sendRichMessage] http written, waiting for response
+2026-09-24T19:38:40.805Z [18] requestViaProxy[sendRichMessage] http header (405 bytes): HTTP/1.1 401 Unauthorized
+2026-09-24T19:38:40.805Z [18] requestViaProxy[sendRichMessage] http done status=401 bodyLen=58
+2026-09-24T19:38:40.805Z [18] [error] Telegram message send failed {"error":"TelegramApiError(401)"}
+2026-09-24T19:38:48.709Z [18] event stream ended

@@ -175,10 +175,13 @@ host.
 ## 3. Real-TG smoke recipe
 
 Reads the host `~/.otg` (real bot credentials) **read-only**, copies it inside
-the container, and runs one brief real notification. The host directory is
-never written (verified below).
+the container, and drives one trivial session through a long-lived
+`opencode serve` until the terminal notification send is attempted (and
+asserted). `T05_REAL_SMOKE_HOST_OTG=<dir>` points the recipe at a synthetic
+copy instead of `~/.otg` — used for the send-path mechanism check in §3b. The
+host directory is never written (verified below).
 
-### 3a. Mechanism check (runnable now, no Telegram traffic)
+### 3a. Read-only mount check (runnable now, no Telegram traffic)
 
 ```sh
 tests/e2e/container/run.sh real-tg-recipe --check
@@ -191,7 +194,7 @@ Observed evidence (`evidence/real-tg-recipe/commands.txt`):
 - the config copies to `/tmp/home/.otg` (6 entries, names/sizes only printed);
 - a marker written into the copy does not appear under `/host-otg`.
 
-### 3b. Full run (final verification phase; pending)
+### 3b. Full run (final verification phase) — serve-based, asserts the send path
 
 ```sh
 # safe mode (default): the container never calls getUpdates, so it cannot
@@ -210,20 +213,71 @@ Inside the container (`harness/real-tg-recipe.sh`):
    contents are never printed);
 3. writes a synthetic `projects.json` in the **copy** with the container project
    `/tmp/proj` `enabled: true` (the host registry points at host paths);
-4. safe mode: writes a fresh guard `poller.lock` so the copied lock is
-   not-stale and the container does not poll for up to 60 s (a brief run stays
-   under that); full mode: removes copied `*.lock` files;
-5. runs `timeout 180 opencode run --standalone "Reply with exactly: tg-smoke-ok"`
-   with the plugin auto-discovered;
-6. collects `tgdiag.log`, the server log and the copied registry into
-   `evidence/real-tg-recipe/`, and reports whether any send-failure line exists.
+4. records the pre-run diag line offset (the copy is a snapshot, so every later
+   line belongs to this run); safe mode writes a fresh guard `poller.lock` and
+   **keeps refreshing its mtime every 10 s** for the whole run — the lock TTL is
+   60 s, so a longer run must not let the container consider the lock stale and
+   poll `getUpdates` against the host bot; full mode removes copied lock files;
+5. starts a long-lived `opencode serve --hostname 127.0.0.1 --port <free>` with
+   a synthetic password and drives one trivial turn via `opencode api
+   session.create` + `session.prompt`; after `step ended ... finish=stop` it
+   **keeps the server alive ≥ 15 s** so the 5 s idle debounce finalizes and the
+   ✅ terminal notification send actually fires, then stops the server process
+   group and confirms the port is released;
+6. collects `tgdiag.log`, the server log, the password-filtered serve stdout and
+   the copied registry into `evidence/real-tg-recipe/`, and finally scans
+   **this run's own diag block** (pre-run offset + plugin PID) for the send.
 
 **Expected observations:** one `✅` lifecycle notification for `proj` in the
-real Telegram chat; the copied `tgdiag.log` shows `MODULE LOADED` /
-`initialize() called` / `runTelegram() started` and **no**
-`Telegram message send failed`; in safe mode `poller lock held elsewhere`;
-host `~/.otg` unchanged (the runner also records before/after fingerprints in
-`host-otg-{before,after,diff}.txt` as information).
+real Telegram chat; the run's own diag block shows `MODULE LOADED` /
+`initialize() called` / `runTelegram() started`, `poller lock held elsewhere`
+(safe mode; no `getUpdates` lines) and the proxy send diagnostics
+`requestViaProxy[sendRichMessage] ... http done status=200`; host `~/.otg`
+unchanged (fingerprints in `host-otg-{before,after,diff}.txt`, identical
+headers so the diff compares entries only).
+
+**The recipe FAILS unless the run's own diag block shows a send attempt** —
+absence of a failure line alone is no longer sufficient. Possible RESULT lines:
+
+- `RESULT: ok send succeeded ...` — `sendRichMessage http 200` in this run's block;
+- `RESULT: FAIL send attempt reached Telegram but was rejected (401); ...` — the
+  attempt is proven but the token is invalid (expected in the synthetic check);
+- `RESULT: FAIL send attempt failed before Telegram accepted it ...`;
+- `RESULT: FAIL send attempt started but no completion line observed`;
+- `RESULT: FAIL no send attempt observed` — no send diagnostics at all,
+  including the pre-fix `opencode run --standalone` shape where the server exits
+  before the 5 s debounce fires (`dispose` clears the timer).
+
+The container exits non-zero on any FAIL. Duration: ~20-40 s (model turn + 15 s
+hold + shutdown), plus the one-off bundle build.
+
+Note: the positive (`200`) check reads the **proxy transport** diagnostics
+(`requestViaProxy[sendRichMessage]`); a direct-mode config (no `proxy`) emits no
+send-success line, so a successful direct-mode send would be reported as
+`no send attempt observed`. The recipe targets the host config, which uses the
+proxy.
+
+#### Send-path mechanism check (synthetic credentials, no real messages)
+
+Run the same recipe against a synthetic `/host-otg` copy — the real `~/.otg` is
+not mounted, no real message is sent:
+
+```sh
+mkdir -p /tmp/tg-synthetic-otg
+cat > /tmp/tg-synthetic-otg/telegram.json <<'JSON'
+{"botToken":"123456:TESTTOKEN_DO_NOT_USE","chatId":"123","proxy":"http://10.0.10.100:17892"}
+JSON
+T05_REAL_SMOKE_HOST_OTG=/tmp/tg-synthetic-otg \
+  tests/e2e/container/run.sh real-tg-recipe --run
+```
+
+Success criterion: the run's own diag block shows the send attempt reaching
+Telegram — `requestViaProxy[sendRichMessage] ... http done status=401` plus
+`[error] Telegram message send failed {"error":"TelegramApiError(401)"}`, 5 s
+after `step ended` (the idle debounce). The recipe reports FAIL **by design**
+here (the fake token is rejected); the proof is the attempt, not a 200.
+Recorded output: `evidence/real-tg-sendpath-check/` (2026-09-25, plugin bundle
+built from this worktree).
 
 ---
 
@@ -244,9 +298,14 @@ host `~/.otg` unchanged (the runner also records before/after fingerprints in
 - **Subagent lineage / parentID** — **done** (see §1b): observable and
   consumed by `src/**` since `401e7c1` (F1); contract revision r2 closes the
   §9 item.
-- **Real-TG smoke execution** — **pending** (final verification phase): the
-  mechanism is validated read-only now (§3a); the full `--run` recipe executes
-  in the orchestrator's final phase.
+- **Real-TG smoke execution** — **pending** (final verification phase, real
+  credentials): the `--run` recipe is now serve-based and fails unless this
+  run's own diag block shows a send attempt (it no longer runs
+  `opencode run --standalone`, which exited before the 5 s idle debounce could
+  fire). The send path itself is self-checked with synthetic credentials —
+  `evidence/real-tg-sendpath-check/` shows the proxy send attempt reaching
+  Telegram 5 s after `step ended` (401 rejection, by design); the
+  real-credential `--run` executes in the orchestrator's final phase.
 - **Model-backed success lifecycle** — `T05_HARNESS_MODEL=1` optional path;
   the deterministic P3 failure path is the default CI-stable lifecycle check.
 
@@ -257,6 +316,9 @@ subagent-lineage probe run · `evidence/harness/` green-run against the adapted
 plugin (20 checks green — catalog 22, form phase included; H3.6/H3.7 run only
 with the settled-reply flags) ·
 `evidence/harness-resolved-reply/` settled-request capture (H3.6/H3.7) ·
-`evidence/real-tg-recipe/` read-only mount check · `evidence/build/` toolchain
-build transcript. Regenerating any scenario replaces its evidence directory
-(`run.sh` wipes it first), so re-running is safe and reproducible.
+`evidence/real-tg-recipe/` read-only mount check ·
+`evidence/real-tg-sendpath-check/` synthetic-credential send-path mechanism
+check (serve-based recipe; `RESULT: FAIL ... rejected (401)` by design — the
+proof is the send attempt in the run's own diag block) · `evidence/build/`
+toolchain build transcript. Regenerating any scenario replaces its evidence
+directory (`run.sh` wipes it first), so re-running is safe and reproducible.

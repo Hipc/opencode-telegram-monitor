@@ -1,0 +1,42 @@
+timestamp=2026-09-24T19:38:28.446Z level=INFO run=7499032a message="database schema bootstrap started" migrations=48 role=server
+timestamp=2026-09-24T19:38:28.455Z level=INFO run=7499032a message="database schema bootstrap completed" migrations=48 durationMs=9 role=server
+server listening on http://127.0.0.1:26527
+timestamp=2026-09-24T19:38:28.964Z level=INFO run=7499032a message="watcher subscribe" path=/tmp/home/.config/opencode type=directory ignores=3 http.span=14 role=server
+timestamp=2026-09-24T19:38:28.967Z level=INFO run=7499032a message="watcher subscribe" path=/ type=entries ignores=0 http.span=17 role=server
+timestamp=2026-09-24T19:38:28.968Z level=INFO run=7499032a message="watcher started" path=/ type=entries backend=node ignores=0 http.span=18 role=server
+timestamp=2026-09-24T19:38:28.968Z level=INFO run=7499032a message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=18 role=server
+timestamp=2026-09-24T19:38:28.968Z level=INFO run=7499032a message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=18 role=server
+timestamp=2026-09-24T19:38:28.968Z level=INFO run=7499032a message="watcher subscribe" path=/tmp/proj type=entries ignores=0 http.span=18 role=server
+timestamp=2026-09-24T19:38:28.968Z level=INFO run=7499032a message="watcher started" path=/tmp/proj type=entries backend=node ignores=0 http.span=18 role=server
+timestamp=2026-09-24T19:38:28.968Z level=INFO run=7499032a message="watcher subscribe" path=/tmp/home type=entries ignores=0 http.span=18 role=server
+timestamp=2026-09-24T19:38:28.968Z level=INFO run=7499032a message="watcher started" path=/tmp/home type=entries backend=node ignores=0 http.span=18 role=server
+timestamp=2026-09-24T19:38:28.987Z level=INFO run=7499032a message="watcher started" path=/tmp/home/.config/opencode type=directory backend=inotify ignores=3 http.span=37 role=server
+timestamp=2026-09-24T19:38:28.999Z level=INFO run=7499032a message="location services booted" directory=/tmp/proj workspaceID=undefined durationMs=48 http.span=49 role=server
+timestamp=2026-09-24T19:38:29.005Z level=INFO run=7499032a msg="loading plugin" id=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts entrypoint=file:///tmp/home/.config/opencode/plugin/telegram-session-monitor.ts http.span=55 role=server
+timestamp=2026-09-24T19:38:29.017Z level=INFO run=7499032a message="watcher subscribe" path=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts type=file ignores=0 http.span=67 role=server
+timestamp=2026-09-24T19:38:29.018Z level=INFO run=7499032a message="watcher started" path=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts type=file backend=node ignores=0 http.span=68 role=server
+timestamp=2026-09-24T19:38:29.159Z level=INFO run=7499032a message="watcher subscribe" path=/tmp/home/.config/opencode/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T19:38:29.159Z level=INFO run=7499032a message="watcher started" path=/tmp/home/.config/opencode/AGENTS.md type=file backend=node ignores=0 http.span=209 role=server
+timestamp=2026-09-24T19:38:29.159Z level=INFO run=7499032a message="watcher subscribe" path=/tmp/proj/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T19:38:29.159Z level=INFO run=7499032a message="watcher started" path=/tmp/proj/AGENTS.md type=file backend=node ignores=0 http.span=209 role=server
+timestamp=2026-09-24T19:38:29.169Z level=INFO run=7499032a message="watcher subscribe" path=/tmp/home/.config/opencode/skill type=file ignores=0
+timestamp=2026-09-24T19:38:29.170Z level=INFO run=7499032a message="watcher started" path=/tmp/home/.config/opencode/skill type=file backend=node ignores=0 http.span=220 role=server
+timestamp=2026-09-24T19:38:29.171Z level=INFO run=7499032a message="watcher subscribe" path=/tmp/home/.config/opencode/skills type=file ignores=0
+timestamp=2026-09-24T19:38:29.171Z level=INFO run=7499032a message="watcher started" path=/tmp/home/.config/opencode/skills type=file backend=node ignores=0 http.span=221 role=server
+timestamp=2026-09-24T19:38:29.190Z level=INFO run=7499032a message=event event.id=evt_0d4ed2fc6001R6bylTD2keKEFb event.created=1790278709190 event.type=provider.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=240 role=server
+timestamp=2026-09-24T19:38:29.196Z level=INFO run=7499032a message=event event.id=evt_0d4ed2fcc0016aQY4WM3yrVoyP event.created=1790278709196 event.type=model.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=246 role=server
+timestamp=2026-09-24T19:38:29.198Z level=INFO run=7499032a message=event event.id=evt_0d4ed2fce001SehiQgjjp7JgDt event.created=1790278709198 event.type=agent.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=248 role=server
+timestamp=2026-09-24T19:38:29.199Z level=INFO run=7499032a message=event event.id=evt_0d4ed2fcf001eybEwJiVi2BiZO event.created=1790278709199 event.type=command.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=249 role=server
+timestamp=2026-09-24T19:38:29.994Z level=INFO run=7499032a message=event event.id=evt_0d4ed32ea0012h4coFl8cah6TE event.created=1790278709994 event.type=provider.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={}
+timestamp=2026-09-24T19:38:30.001Z level=INFO run=7499032a message=event event.id=evt_0d4ed32f1001jib0Cb1QB74bKU event.created=1790278710001 event.type=model.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=1051 role=server
+[telegram-session-monitor] Telegram message send failed
+timestamp=2026-09-24T19:38:48.700Z level=INFO run=7499032a message="watcher stopped" path=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts type=file http.span=19750 role=server
+timestamp=2026-09-24T19:38:48.701Z level=INFO run=7499032a message="watcher stopped" path=/tmp/home/.config/opencode/skill type=file http.span=19751 role=server
+timestamp=2026-09-24T19:38:48.701Z level=INFO run=7499032a message="watcher stopped" path=/tmp/home/.config/opencode/skills type=file http.span=19751 role=server
+timestamp=2026-09-24T19:38:48.703Z level=INFO run=7499032a message="watcher stopped" path=/tmp/proj/AGENTS.md type=file http.span=19753 role=server
+timestamp=2026-09-24T19:38:48.703Z level=INFO run=7499032a message="watcher stopped" path=/tmp/home/.config/opencode/AGENTS.md type=file http.span=19753 role=server
+timestamp=2026-09-24T19:38:48.710Z level=INFO run=7499032a message="watcher stopped" path=/ type=entries http.span=19760 role=server
+timestamp=2026-09-24T19:38:48.710Z level=INFO run=7499032a message="watcher stopped" path=/tmp type=entries http.span=19760 role=server
+timestamp=2026-09-24T19:38:48.710Z level=INFO run=7499032a message="watcher stopped" path=/tmp/proj type=entries http.span=19760 role=server
+timestamp=2026-09-24T19:38:48.710Z level=INFO run=7499032a message="watcher stopped" path=/tmp/home type=entries http.span=19760 role=server
+timestamp=2026-09-24T19:38:48.711Z level=INFO run=7499032a message="watcher stopped" path=/tmp/home/.config/opencode type=directory http.span=19761 role=server
