@@ -116,7 +116,7 @@ import type {
   ToolProjection,
   WaitingProjection,
 } from "./types";
-import type { V2Client, V2SessionInfo } from "./v2/types";
+import type { FormFieldData, V2Client, V2SessionInfo } from "./v2/types";
 
 dline("MODULE LOADED");
 
@@ -729,24 +729,20 @@ export class TelegramSessionMonitor {
         return;
       }
 
-      // ---- waiting: permission（§2.5；完整映射与回写归 ticket 04）----
+      // ---- waiting: permission（§2.5）----
       case "permission.asked": {
         if (!sessionID) return;
         const requestID = string(properties.id);
-        if (!requestID) return;
-        const permission =
-          string(properties.permission) ??
-          string(properties.action) ??
-          "permission";
-        const tool = record(properties.tool);
+        const action = string(properties.action);
+        if (!requestID || !action) return;
         const source = record(properties.source);
         this.addWaiting(
           sessionID,
           {
             requestID,
             type: "permission",
-            summary: `${safeText(permission, 80, ctx)} permission`,
-            toolCallID: string(tool?.callID) ?? string(source?.callID),
+            summary: `${safeText(action, 80, ctx)} permission`,
+            toolCallID: string(source?.id),
           },
           properties,
         );
@@ -755,21 +751,95 @@ export class TelegramSessionMonitor {
 
       case "permission.replied": {
         if (!sessionID) return;
-        const requestID =
-          string(properties.requestID) ?? string(properties.permissionID);
-        if (requestID) {
-          const debounceActive = this.waitingNotifyTimers.has(requestID);
-          this.cancelWaitingNotify(requestID);
-          this.ensureSession(sessionID).waitingByRequestID.delete(requestID);
-          if (!debounceActive) {
-            // 记录已落盘（去抖窗口已过）：删除该 request_id 的落盘记录
-            // （Round 6 §16 supersede：终态 = 删除，不再是置 resolved=true）。
-            this.track(
-              this.resolveWaitingRecord(requestID),
-              "Session resolved record removal failed",
-            );
-          }
+        const requestID = string(properties.requestID);
+        if (!requestID) return;
+        const debounceActive = this.waitingNotifyTimers.has(requestID);
+        this.cancelWaitingNotify(requestID);
+        this.ensureSession(sessionID).waitingByRequestID.delete(requestID);
+        if (!debounceActive) {
+          // 记录已落盘（去抖窗口已过）：删除该 request_id 的落盘记录
+          // （Round 6 §16 supersede：终态 = 删除，不再是置 resolved=true）。
+          this.track(
+            this.resolveWaitingRecord(requestID),
+            "Session resolved record removal failed",
+          );
         }
+        return;
+      }
+
+      // ---- waiting: question = v2 form（§2.6，向导机制保持仅换事件形状）----
+      case "form.created": {
+        // question（form）不产生 permission 去抖：立即写盘（决策 #4）。
+        const form = record(properties.form);
+        const formID = string(form?.id);
+        const formSessionID = string(form?.sessionID);
+        if (!formID || !formSessionID) return;
+        const fields = Array.isArray(form?.fields) ? form.fields : [];
+        const firstField = record(fields[0]);
+        const summary =
+          string(form?.title) ??
+          string(firstField?.title) ??
+          "OpenCode question";
+        this.addWaiting(
+          formSessionID,
+          {
+            requestID: formID,
+            type: "question",
+            summary: safeText(summary, 120, ctx),
+          },
+          properties,
+        );
+        return;
+      }
+
+      case "form.replied":
+      case "form.cancelled": {
+        if (!sessionID) return;
+        const formID = string(properties.id);
+        if (!formID) return;
+        // 同 v1 question.replied/rejected：取消（潜在）去抖 + 清投影 +
+        // 删除落盘记录（终态 = 删除；question 记录恒立即落盘，无窗口分支）。
+        this.cancelWaitingNotify(formID);
+        this.ensureSession(sessionID).waitingByRequestID.delete(formID);
+        this.track(
+          this.resolveWaitingRecord(formID),
+          "Session resolved record removal failed",
+        );
+        return;
+      }
+
+      // ---- inbox（§2.7）：不产生 waiting 记录，仅 busy 守卫 ----
+      case "session.inbox.enqueued": {
+        if (!sessionID) return;
+        const inboxID = string(properties.inboxID);
+        if (!inboxID) return;
+        const item = record(properties.item);
+        const delivery = string(item?.delivery);
+        dline(
+          `inbox enqueued session=${shortID(sessionID)} inbox=${shortID(inboxID)} type=${string(item?.type) ?? "?"} delivery=${delivery ?? "?"}`,
+        );
+        if (delivery === "steer" || delivery === "queue") {
+          this.setInboxDelivery(sessionID, inboxID, delivery);
+        }
+        return;
+      }
+
+      case "session.inbox.delivered":
+      case "session.inbox.cancelled": {
+        if (!sessionID) return;
+        const inboxID = string(properties.inboxID);
+        if (!inboxID) return;
+        this.clearInboxItem(sessionID, inboxID);
+        return;
+      }
+
+      case "session.inbox.delivery.changed": {
+        if (!sessionID) return;
+        const inboxID = string(properties.inboxID);
+        const delivery = string(properties.delivery);
+        if (!inboxID) return;
+        if (delivery !== "steer" && delivery !== "queue") return;
+        this.setInboxDelivery(sessionID, inboxID, delivery);
         return;
       }
     }
@@ -833,8 +903,28 @@ export class TelegramSessionMonitor {
       return;
     }
     // question: 立即写盘（不去抖，决策 #4）；旧直发 notifyWaiting 已停用。
-    this.track(
+    this.trackWaitingPersist(
       this.persistWaitingRecord(sessionID, waiting, payload),
+      waiting.requestID,
+    );
+  }
+
+  /**
+   * 在途落盘 promise（key = requestID）：permission 去抖回调与 question 立即
+   * 写盘都登记在此。resolveWaitingRecord 先 await 同名在途写盘再删除——否则
+   * 紧随 form.replied/permission.replied 到达的删除可能先于写盘执行，随后
+   * 落盘的记录会「复活」成永久残留。
+   */
+  private readonly waitingPersists = new Map<string, Promise<void>>();
+
+  private trackWaitingPersist(promise: Promise<void>, requestID: string) {
+    this.waitingPersists.set(requestID, promise);
+    this.track(
+      promise.finally(() => {
+        if (this.waitingPersists.get(requestID) === promise) {
+          this.waitingPersists.delete(requestID);
+        }
+      }),
       "Waiting record persist failed",
     );
   }
@@ -848,9 +938,9 @@ export class TelegramSessionMonitor {
     const timer = setTimeout(() => {
       this.waitingNotifyTimers.delete(waiting.requestID);
       if (this.disposed) return;
-      this.track(
+      this.trackWaitingPersist(
         this.persistWaitingRecord(sessionID, waiting, payload),
-        "Waiting record persist failed",
+        waiting.requestID,
       );
     }, WAITING_NOTIFY_DEBOUNCE_MS);
     this.waitingNotifyTimers.set(waiting.requestID, timer);
@@ -926,6 +1016,11 @@ export class TelegramSessionMonitor {
    * mutate 返回 undefined（抢锁超时或无匹配记录）→ logWarn，静默容忍。
    */
   private async resolveWaitingRecord(requestID: string) {
+    // 与在途写盘串行（见 waitingPersists）：先等在途写盘落地再删除，
+    // 杜绝「删除先于写盘 → 记录复活」的竞态。写盘失败已由 track 报告，
+    // 此处继续走删除（无记录 → mutate undefined → logWarn，容忍）。
+    const pending = this.waitingPersists.get(requestID);
+    if (pending) await pending.catch(() => undefined);
     const next = await this.registry.mutate((reg) =>
       removeSessionRecord(reg, requestID),
     );
@@ -935,6 +1030,49 @@ export class TelegramSessionMonitor {
         "Session record removal skipped: registry mutate timeout or no matching record",
         { requestID },
       );
+    }
+  }
+
+  /**
+   * inbox delivery 记录（§2.7）：inboxID → delivery；awaitingInput 由该表
+   * 派生（存在任一未交付 steer 项）。enqueued/delivery.changed 共用。
+   */
+  private setInboxDelivery(
+    sessionID: string,
+    inboxID: string,
+    delivery: "steer" | "queue",
+  ) {
+    const session = this.ensureSession(sessionID);
+    const map =
+      session.inboxDeliveryByID ??
+      (session.inboxDeliveryByID = new Map<string, "steer" | "queue">());
+    map.set(inboxID, delivery);
+    this.refreshAwaitingInput(session);
+  }
+
+  /**
+   * delivered/cancelled：清该 inboxID；steer 集清空 → 恢复被推迟的 idle 终态
+   * 路径（§2.7；scheduleIdleFinalization 在 awaitingInput 为 true 时早退）。
+   */
+  private clearInboxItem(sessionID: string, inboxID: string) {
+    const session = this.sessions.get(sessionID);
+    const map = session?.inboxDeliveryByID;
+    if (!session || !map) return;
+    map.delete(inboxID);
+    this.refreshAwaitingInput(session);
+  }
+
+  private refreshAwaitingInput(session: SessionProjection) {
+    const map = session.inboxDeliveryByID;
+    session.awaitingInput = map
+      ? [...map.values()].some((delivery) => delivery === "steer")
+      : false;
+    if (
+      !session.awaitingInput &&
+      session.status === "idle" &&
+      session.observedRunning
+    ) {
+      this.scheduleIdleFinalization(session);
     }
   }
 
@@ -1513,14 +1651,24 @@ export class TelegramSessionMonitor {
   private async applySessionReply(record: SessionRecord) {
     if (record.reply == null) return;
     try {
-      // 失败（400/404，如 permission 已被 TUI 处理）会抛错被捕获 → logWarn
-      // 不删除，下轮读到记录已消失即跳过。
       await this.client.permission.reply({
         sessionID: record.session_id,
         requestID: record.request_id,
         decision: record.reply,
       });
     } catch (error) {
+      if (this.isNotFoundError(error)) {
+        // 已决请求 404（relay §14.8.2 / 契约 §3.3）：幂等终态 → 删除记录、
+        // 不重试。
+        await this.log(
+          "info",
+          "Permission request no longer exists (404); removing session record",
+          { requestId: record.request_id, sessionId: record.session_id },
+        );
+        await this.removeAppliedRecord(record);
+        return;
+      }
+      // 其它失败（如网络/400）：记录保留，下轮 ticker 重试。
       await this.log(
         "warn",
         "Permission reply apply failed; record kept, will retry on next scan",
@@ -1535,199 +1683,178 @@ export class TelegramSessionMonitor {
       );
       throw error;
     }
-    const next = await this.registry.mutate((reg) =>
-      removeSessionRecord(reg, record.request_id),
-    );
-    if (next === undefined) {
-      // 抢锁超时或记录已被删除：记录未删除属安全重试态，静默容忍。
-      await this.log(
-        "warn",
-        "removeSessionRecord skipped (no match or lock timeout); will retry on next scan",
-        { requestId: record.request_id },
-      );
-    }
+    await this.removeAppliedRecord(record);
   }
 
-  /** 实例级缓存：question apply 分层通道中首次成功的通道序号（§14.8.1）。 */
-  private questionApplyChannel?: 1 | 2 | 3 | undefined;
-
   /**
-   * 把一条 question 记录的 q_answers 应用到 opencode 会话（契约 §14.4.2）。
-   * 透传语义（决策 #8）：answers = record.q_answers 原样（不映射不校验，parse
-   * 已保证 Array<Array<string>>）。调用通道（§14.8.1，supersede §14.4.3 兜底
-   * 形态）：运行时扁平客户端无任何 question 方法（实机实证），改走分层通道
-   * ① 扁平方法（typeof 检查，未来 SDK 若有则直用）→ ② v2 会话级路由
-   * （POST /api/session/{sessionID}/question/{requestID}/reply，body 顶层
-   * { answers }，经 (client as any)._client.post 走同一 transport 继承
-   * baseUrl/auth）→ ③ v2 全局路由（/question/{requestID}/reply，
-   * query.directory = root）。任一成功即用并缓存通道；某通道抛错判定
-   * 「不存在」（§14.8.2）→ 立即终态置 resolved 不重试；非 404 维持
-   * logWarn + rethrow 下轮重试。已 resolved 记录由调用方筛选跳过。
+   * 把一条 question（v2 form）记录的 q_answers 应用到 opencode 会话
+   * （契约 §A.1，05 probe-a1 定案）。消费端映射：按 fields[] 顺序把每题
+   * label 映射为 option.value（单选取首个、multiselect 取数组；与
+   * tests/e2e/container/harness/plugins/harness-stub.ts buildAnswer 一致），
+   * 再经进程内 loopback HTTP Basic 回写（postFormRequest）。已 resolved /
+   * 未达终态记录由调用方筛选跳过。
    */
   private async applyQuestionReply(record: SessionRecord) {
     if (record.q_answers == null) return;
-    await this.questionApply("reply", record);
+    const form = this.parseFormPayload(record.message);
+    if (!form) {
+      const reason =
+        "Form reply apply failed: record message has no parsable v2 form fields";
+      await this.log("warn", reason, { requestId: record.request_id });
+      throw new Error(reason);
+    }
+    const answer = this.buildFormAnswer(form.fields, record.q_answers);
+    await this.postFormRequest("reply", record, answer);
+    await this.removeAppliedRecord(record);
   }
 
   /**
-   * 把一条 question 记录的 q_reject 应用到 opencode 会话（契约 §14.4.2）。
-   * 与 applyQuestionReply 同构（reject API 无 body，路由 .../reject），分层
-   * 通道与 404 终态语义一致（§14.8.1/§14.8.2）。
+   * 把一条 question 记录的 q_reject 应用到 opencode 会话：向导 ❌ = 取消
+   * form。契约 §A.1 补充 API：`session.form.cancel` = DELETE
+   * /api/session/<sid>/form/<fid>（同一 HTTP Basic 通道，插件主流程只用
+   * reply，cancel 供向导可选使用）。
    */
   private async applyQuestionReject(record: SessionRecord) {
     if (record.q_reject !== true) return;
-    await this.questionApply("reject", record);
+    await this.postFormRequest("cancel", record);
+    await this.removeAppliedRecord(record);
   }
 
   /**
-   * question reply/reject 分层调用（§14.8.1，两方法共用）：每次按序尝试通道
-   * （① 扁平方法 typeof → ② v2 会话级 → ③ v2 全局），任一成功即用并缓存已
-   * 成功通道（questionApplyChannel，下次先试缓存仍按序降级）；某通道抛错判定
-   * 「不存在」→ 立即终态（删除记录 + log info + 不 rethrow，下轮自然跳过，
-   * Round 6 §16 supersede：终态 = removeSessionRecord 而非置 resolved）；
-   * 全部通道失败且非「不存在」→ logWarn（token 脱敏）+ rethrow（下轮重试）。
+   * label → form answer 映射（契约 §A.1 harness 接口）：answers[i] 对应
+   * fields[i]（每题 = label/文本数组）；命中 option（label 或 value 相等）
+   * 提交 option.value，未命中（custom 自由文本）原样提交；multiselect 提交
+   * 数组，其余取首个；空答案题跳过。
    */
-  private async questionApply(kind: "reply" | "reject", record: SessionRecord) {
-    const ctx = { root: this.root, botToken: this.config.botToken };
-    let lastError: unknown;
-    for (const channel of this.questionChannels(kind)) {
-      try {
-        await this.questionApplyViaChannel(channel, kind, record);
-        this.questionApplyChannel = channel;
-        await this.markQuestionResolved(record);
-        return;
-      } catch (error) {
-        if (this.isQuestionNotFoundError(error)) {
-          // §14.8.2 404 终态：问题/session 已不存在 → 删除记录不再重试
-          // （Round 6 §16 supersede：终态 = 删除，不再是置 resolved）。
-          await this.log(
-            "info",
-            "question no longer exists; removing session record",
-            {
-              requestId: record.request_id,
-              sessionId: record.session_id,
-            },
-          );
-          await this.markQuestionResolved(record);
-          return;
-        }
-        lastError = error;
-      }
-    }
-    const failedVerb = kind === "reply" ? "reply" : "reject";
-    await this.log(
-      "warn",
-      `Question ${failedVerb} apply failed; record kept, will retry on next scan`,
-      {
-        requestId: record.request_id,
-        sessionId: record.session_id,
-        error: errorCategory(lastError, ctx),
-      },
-    );
-    throw lastError;
+  private buildFormAnswer(
+    fields: FormFieldData[],
+    answers: Array<Array<string>>,
+  ): Record<string, unknown> {
+    const answer: Record<string, unknown> = {};
+    fields.forEach((field, index) => {
+      const picked = answers[index] ?? [];
+      const values = picked.map((label) => {
+        const option = (field.options ?? []).find(
+          (candidate) =>
+            candidate.label === label || candidate.value === label,
+        );
+        return option ? option.value : label;
+      });
+      if (field.type === "multiselect") answer[field.key] = values;
+      else if (values.length > 0) answer[field.key] = values[0];
+    });
+    return answer;
   }
 
   /**
-   * 分层通道候选（§14.8.1）：① 仅当对应扁平方法存在才纳入；缓存通道优先，
-   * 其余仍按序降级。
+   * A.1 回写通道（§3.2 唯一允许的 fetch 用途）：
+   * - reply = POST http://127.0.0.1:<port>/api/session/<sid>/form/<fid>/reply，
+   *   body `{"answer":{...}}`，`authorization: Basic base64("opencode:"+password)`、
+   *   `content-type: application/json`；204 = applied。
+   * - cancel = DELETE http://127.0.0.1:<port>/api/session/<sid>/form/<fid>。
+   * 端口从 process.argv 的 `--port <N>` 解析；密码取
+   * OPENCODE_SERVER_PASSWORD 或 OPENCODE_PASSWORD（05 probe-a1：两者在插件
+   * 进程内均可见）。端口不可发现（run --standalone / --port 0）或密码缺失 →
+   * 记录原因日志并 throw（**显式失败、无兜底**：q_answers/q_reject 保持未
+   * 应用，下轮 ticker 重试）。404/409（FormNotFound/SessionNotFound/
+   * FormAlreadySettled）→ 幂等终态（info 日志，调用方删除记录、不重试）；
+   * 其它状态 → 原因日志 + throw（记录保留，下轮重试）。
    */
-  private questionChannels(kind: "reply" | "reject"): Array<1 | 2 | 3> {
-    const client = this.client as {
-      postApiSessionSessionIDQuestionRequestIDReply?: unknown;
-      postApiSessionSessionIDQuestionRequestIDReject?: unknown;
-    };
-    const flatMethod =
-      kind === "reply"
-        ? client?.postApiSessionSessionIDQuestionRequestIDReply
-        : client?.postApiSessionSessionIDQuestionRequestIDReject;
-    const base: Array<1 | 2 | 3> =
-      typeof flatMethod === "function" ? [1, 2, 3] : [2, 3];
-    if (this.questionApplyChannel === undefined) return base;
-    return [
-      this.questionApplyChannel,
-      ...base.filter((ch) => ch !== this.questionApplyChannel),
-    ];
-  }
-
-  /**
-   * 单通道调用（§14.8.1）：②③ 走 (client as any)._client.post（v2 gen 内部
-   * 即此形态，同一 transport，自动继承 baseUrl/auth 含代理与根目录配置）。
-   * body 为顶层 { answers }（实证，非 §14.4.3 的嵌套形态）；reject 无 body。
-   */
-  private async questionApplyViaChannel(
-    channel: 1 | 2 | 3,
-    kind: "reply" | "reject",
+  private async postFormRequest(
+    kind: "reply" | "cancel",
     record: SessionRecord,
+    answer?: Record<string, unknown>,
   ): Promise<void> {
-    const client = this.client as any;
-    const suffix = kind === "reply" ? "reply" : "reject";
-    const body = kind === "reply" ? { answers: record.q_answers } : undefined;
-    if (channel === 1) {
-      const methodName =
-        kind === "reply"
-          ? "postApiSessionSessionIDQuestionRequestIDReply"
-          : "postApiSessionSessionIDQuestionRequestIDReject";
-      if (typeof client[methodName] !== "function") {
-        throw new Error(`question flat method ${methodName} not available`);
-      }
-      const options: Record<string, unknown> = {
-        path: { sessionID: record.session_id, requestID: record.request_id },
-        throwOnError: true,
-      };
-      if (body !== undefined) options.body = body;
-      await client[methodName](options);
+    const port = this.formServerPort();
+    if (port === undefined) {
+      const reason =
+        "Form reply channel unavailable: server port not discoverable in process.argv (serve --port N required; run --standalone / --port 0 has no discoverable port)";
+      await this.log("warn", reason, { requestId: record.request_id });
+      throw new Error(reason);
+    }
+    const password = this.formServerPassword();
+    if (password === undefined) {
+      const reason =
+        "Form reply channel unavailable: neither OPENCODE_SERVER_PASSWORD nor OPENCODE_PASSWORD is set";
+      await this.log("warn", reason, { requestId: record.request_id });
+      throw new Error(reason);
+    }
+    const formPath = `/api/session/${encodeURIComponent(record.session_id)}/form/${encodeURIComponent(record.request_id)}`;
+    const url =
+      kind === "reply"
+        ? `http://127.0.0.1:${port}${formPath}/reply`
+        : `http://127.0.0.1:${port}${formPath}`;
+    const body = kind === "reply" ? { answer: answer ?? {} } : undefined;
+    const response = await fetch(url, {
+      method: kind === "reply" ? "POST" : "DELETE",
+      headers: {
+        authorization: `Basic ${Buffer.from(`opencode:${password}`, "utf8").toString("base64")}`,
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      signal: this.abortController.signal,
+    });
+    const ok = kind === "reply" ? response.status === 204 : response.ok;
+    if (ok) return;
+    if (response.status === 404 || response.status === 409) {
+      await this.log(
+        "info",
+        `Form ${kind} is terminal (HTTP ${response.status}); removing session record`,
+        { requestId: record.request_id, status: response.status },
+      );
       return;
     }
-    if (channel === 2) {
-      const options: Record<string, unknown> = {
-        url: `/api/session/{sessionID}/question/{requestID}/${suffix}`,
-        path: { sessionID: record.session_id, requestID: record.request_id },
-        headers: { "Content-Type": "application/json" },
-        throwOnError: true,
-      };
-      if (body !== undefined) options.body = body;
-      await client._client.post(options);
-      return;
-    }
-    const options: Record<string, unknown> = {
-      url: `/question/{requestID}/${suffix}`,
-      path: { requestID: record.request_id },
-      query: { directory: this.root },
-      headers: { "Content-Type": "application/json" },
-      throwOnError: true,
-    };
-    if (body !== undefined) options.body = body;
-    await client._client.post(options);
+    const reason = `Form ${kind} rejected with HTTP ${response.status}`;
+    await this.log("warn", reason, {
+      requestId: record.request_id,
+      status: response.status,
+    });
+    throw new Error(reason);
   }
 
   /**
-   * 判定 question apply 错误为「对象不存在」（§14.8.2）：error 的
-   * status/statusCode === 404（SDK APIError 形态），或 errorCategory 字符串
-   * 含 404/QuestionNotFound/SessionNotFound。
+   * 端口发现（§A.1 冻结限制）：serve 形态 argv 含 `--port <N>`；不可发现
+   * （run --standalone = serve --stdio --port 0）返回 undefined → 调用方显式
+   * 失败，不得兜底猜测端口。
    */
-  private isQuestionNotFoundError(error: unknown): boolean {
-    const status = (error as { status?: unknown; statusCode?: unknown })
-      ?.status;
-    const statusCode = (error as { status?: unknown; statusCode?: unknown })
-      ?.statusCode;
-    if (status === 404 || statusCode === 404) return true;
+  private formServerPort(): number | undefined {
+    const index = process.argv.indexOf("--port");
+    if (index === -1) return undefined;
+    const port = Number(process.argv[index + 1]);
+    return Number.isInteger(port) && port > 0 ? port : undefined;
+  }
+
+  /** 密码来源（§A.1）：serve 侧 OPENCODE_SERVER_PASSWORD 或 client 侧 OPENCODE_PASSWORD。 */
+  private formServerPassword(): string | undefined {
+    const password =
+      process.env.OPENCODE_SERVER_PASSWORD ?? process.env.OPENCODE_PASSWORD;
+    return password && password.length > 0 ? password : undefined;
+  }
+
+  /**
+   * 判定 API 错误为「对象不存在」（relay §14.8.2，permission 404 终态语义
+   * 契约 §3.3）：status/statusCode === 404，或 error name 含
+   * 404/NotFound。未命中 → 视为可重试失败（保守方向）。
+   */
+  private isNotFoundError(error: unknown): boolean {
+    const shaped = error as {
+      status?: unknown;
+      statusCode?: unknown;
+      name?: unknown;
+    };
+    if (shaped?.status === 404 || shaped?.statusCode === 404) return true;
     const category = errorCategory(error, {
       root: this.root,
       botToken: this.config.botToken,
     });
-    return (
-      category.includes("404") ||
-      category.includes("QuestionNotFound") ||
-      category.includes("SessionNotFound")
-    );
+    return category.includes("404") || category.includes("NotFound");
   }
 
   /**
-   * 成功路径与 404 终态共用：removeSessionRecord（Round 6 §16 supersede：
-   * 终态 = 删除记录，不再置 resolved=true）。mutate 返回 undefined
-   * （抢锁超时/记录消失）→ logWarn（记录未删除属安全重试态）。
+   * 终态删除 helper（Round 6 §16：apply 成功 / 幂等终态 = 删除记录）。
+   * mutate 返回 undefined（抢锁超时或记录已消失）→ logWarn，容忍。
    */
-  private async markQuestionResolved(record: SessionRecord) {
+  private async removeAppliedRecord(record: SessionRecord) {
     const next = await this.registry.mutate((reg) =>
       removeSessionRecord(reg, record.request_id),
     );
@@ -1860,24 +1987,7 @@ export class TelegramSessionMonitor {
       sessions: this.sessions,
       sessionInfo: this.sessionInfo,
     };
-    let questions: Array<QuestionV2Info> | undefined;
-    try {
-      const parsed = JSON.parse(record.message) as unknown;
-      const parsedQuestions =
-        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>).questions
-          : undefined;
-      if (
-        Array.isArray(parsedQuestions) &&
-        parsedQuestions.length > 0 &&
-        typeof (parsedQuestions[0] as { question?: unknown })?.question ===
-          "string"
-      ) {
-        questions = parsedQuestions as Array<QuestionV2Info>;
-      }
-    } catch {
-      questions = undefined;
-    }
+    const questions = this.parseQuestionPayload(record.message);
     if (!questions) {
       await this.sendMessage(fallbackText);
       return;
@@ -3125,31 +3235,97 @@ export class TelegramSessionMonitor {
   }
 
   /**
-   * 解析 question 记录 message JSON 的 questions（契约 §14.3.1 同款防御：
-   * 解析抛错 / parsed 非对象 / questions 非数组 / 空数组 / 首元素缺 string 型
-   * question → undefined。与发送端 sendQuestionRecord 的校验完全一致）。
+   * 解析 question（v2 form）记录 message JSON（§2.6）：message = form.created
+   * 的 `data` 原样 JSON（`{form:{id, sessionID, title, metadata?, fields:[...]}}`，
+   * 契约 §2.6 + A.6）。返回清洗后的 fields；解析抛错 / 无 form / fields 非
+   * 数组 / 空数组 / 某 field 缺 string key 或 title+description 均缺 /
+   * type 不在冻结枚举 → undefined（显式失败，不猜测）。
+   */
+  private parseFormPayload(
+    message: string,
+  ): { fields: FormFieldData[] } | undefined {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(message);
+    } catch {
+      return undefined;
+    }
+    const form = record(record(parsed)?.form);
+    const rawFields = form?.fields;
+    if (!Array.isArray(rawFields) || rawFields.length === 0) return undefined;
+    const fields: FormFieldData[] = [];
+    for (const raw of rawFields) {
+      const field = record(raw);
+      const key = string(field?.key);
+      const title = string(field?.title);
+      const description = string(field?.description);
+      const type = this.parseFormFieldType(field?.type);
+      if (!key || type === undefined) return undefined;
+      if (title === undefined && description === undefined) return undefined;
+      const options: Array<{
+        value: string;
+        label: string;
+        description?: string;
+      }> = [];
+      if (Array.isArray(field?.options)) {
+        for (const rawOption of field.options) {
+          const option = record(rawOption);
+          const value = string(option?.value) ?? string(option?.label);
+          if (value === undefined) continue;
+          options.push({
+            value,
+            label: string(option?.label) ?? value,
+            description: string(option?.description),
+          });
+        }
+      }
+      fields.push({
+        key,
+        title,
+        description,
+        type,
+        options,
+        custom: field?.custom === true,
+      });
+    }
+    return { fields };
+  }
+
+  /** form field type 白名单（§2.6 冻结枚举）；未知类型 → undefined。 */
+  private parseFormFieldType(value: unknown): FormFieldData["type"] | undefined {
+    switch (value) {
+      case "string":
+      case "number":
+      case "integer":
+      case "boolean":
+      case "multiselect":
+      case "external":
+        return value;
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * 解析 question 记录 message JSON 为向导题目数组（契约 §2.6/A.6 字段形态
+   * 映射：每个 field = 一个 stage；自然提问流 description=question、
+   * title=header；控制表单 title=问题文案；options=选项 label/description；
+   * multiselect=多选）。解析失败 → undefined（调用方退化为原文节选发送）。
    */
   private parseQuestionPayload(
     message: string,
   ): Array<QuestionV2Info> | undefined {
-    try {
-      const parsed = JSON.parse(message) as unknown;
-      const parsedQuestions =
-        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>).questions
-          : undefined;
-      if (
-        Array.isArray(parsedQuestions) &&
-        parsedQuestions.length > 0 &&
-        typeof (parsedQuestions[0] as { question?: unknown })?.question ===
-          "string"
-      ) {
-        return parsedQuestions as Array<QuestionV2Info>;
-      }
-    } catch {
-      return undefined;
-    }
-    return undefined;
+    const form = this.parseFormPayload(message);
+    if (!form) return undefined;
+    return form.fields.map((field) => ({
+      question: field.description ?? field.title,
+      header: field.description !== undefined ? field.title : undefined,
+      options: (field.options ?? []).map((option) => ({
+        label: option.label,
+        description: option.description,
+      })),
+      multiple: field.type === "multiselect",
+    }));
   }
 
   /**

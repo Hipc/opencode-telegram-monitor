@@ -230,6 +230,8 @@ export type PermissionRepliedData = {
 export type FormFieldData = {
   key: string;
   title?: string;
+  /** Natural question flow: `description` carries the question text (§2.6/§A.6). */
+  description?: string;
   type:
     | "string"
     | "number"
@@ -254,6 +256,15 @@ export type FormCreatedData = {
     id: string;
     sessionID: string;
     title?: string;
+    /**
+     * Optional (§2.6 r1): present on the natural question flow
+     * (`{kind:"question", tool:{messageID, id}}`), absent on API-created
+     * control forms. Marked shape only — never drives the waiting record.
+     */
+    metadata?: {
+      kind?: string;
+      tool?: { messageID?: string; id?: string };
+    };
     fields: FormFieldData[];
   };
 };

@@ -83,6 +83,10 @@ export type SessionProjection = {
   // finalization. Optional so projections created before the field existed are
   // treated as false (undefined).
   awaitingInput?: boolean;
+  // v2 §2.7: delivery state per inboxID for this session; `awaitingInput` is
+  // derived from it (any "steer" entry). Optional — a projection without the
+  // map has no pending inbox items.
+  inboxDeliveryByID?: Map<string, "steer" | "queue">;
 };
 
 export type RuntimeEvent = {
