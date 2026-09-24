@@ -456,9 +456,12 @@ async function main() {
 
   // API-104：① 非终态失败（无 404 特征）→ 记录保留 + 下轮重试成功删除；
   // ② 404（已决请求，relay §14.8.2/契约 §3.3）→ 幂等终态删除、不再调用；
+  // ②b 已观测 v2 形状（evidence/harness-resolved-reply/reply-error-shape.json）：
+  // 普通 Error、message="Permission request not found: per_<id>"、无 status/_tag
+  // → 同样幂等终态删除、不再调用；
   // ③ 事件路径已删除 → 扫描器跳过不调 API（双路径，决策 #6）。
   await runCase(
-    "API-104 permission apply failure keeps+retries; 404 terminal deletes without retry; event-path-deleted skipped",
+    "API-104 permission apply failure keeps+retries; 404 and observed NotFound-shape terminal delete without retry; event-path-deleted skipped",
     async () => {
       fakeClient.replyCalls = [];
       fakeClient.replyError = undefined;
@@ -515,6 +518,34 @@ async function main() {
       const fourth = await monitor.scanReplyQueue();
       if (fourth !== 0 || fakeClient.replyCalls.length !== callsAfter404) {
         throw new Error("404 terminal must not retry");
+      }
+      // ②b 已观测 v2 client 形状（无 status/_tag，仅 message 文本）→ 终态。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-r7", reply: "reject" }),
+        ),
+      );
+      fakeClient.replyError = new Error(
+        "Permission request not found: per_0d4a9b6cd001kcg0LISxqZhnhJ",
+      );
+      const thirdB = await monitor.scanReplyQueue();
+      if (thirdB !== 1) {
+        throw new Error(
+          `observed NotFound shape must count as terminal apply, got ${thirdB}`,
+        );
+      }
+      if ((await findRecord("req-r7")) !== undefined) {
+        throw new Error("observed NotFound shape terminal must delete the record");
+      }
+      const callsAfterObserved = fakeClient.replyCalls.length;
+      const fourthB = await monitor.scanReplyQueue();
+      if (
+        fourthB !== 0 ||
+        fakeClient.replyCalls.length !== callsAfterObserved
+      ) {
+        throw new Error("observed NotFound shape terminal must not retry");
       }
       await monitor.dispose();
 

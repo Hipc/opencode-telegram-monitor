@@ -18,6 +18,9 @@
 //   LIFECYCLE-REAL 真实 5s idle 去抖 → 终态 completed（端到端定时器路径）
 //   GUARD-001 awaitingInput 未交付 steer → 推迟 idle 终态（§2.7）
 //   USAGE-001 usage.updated 绝对赋值（后到覆盖，非累加）；cost null → hasCost=false
+//   LINEAGE-001 session.created data.parentID（probe-lineage 观测）→ 根解析/
+//     子会话遍历/activePrimarySessions 根过滤/根终态通知的子 token 聚合
+//   LINEAGE-002 client.session.get 结果的 parentID → primarySession 消费
 //
 // question/form 事件映射与回写属 ticket 04（§2.6/§3.1），本文件不接线、不断言。
 //
@@ -75,6 +78,8 @@ async function main() {
   const registryModule = await import(srcRegistryURL.href);
   const { ProjectRegistryStore, registerProject, setProjectEnabled } =
     registryModule;
+  const srcFormatURL = new URL("../src/format/format.ts", import.meta.url);
+  const { aggregateTokens, childSessions } = await import(srcFormatURL.href);
 
   // 契约 §7.1 冻结 fake v2 client：方法返回直接对象（非 {data} 包装）。
   function makeFakeClient() {
@@ -103,6 +108,11 @@ async function main() {
         get: async ({ sessionID }) => ({
           id: sessionID,
           projectID: "proj-test",
+          // LINEAGE-002：子会话的 session.get 结果携带 parentID（probe-lineage
+          // 观测）；仅该测试 sessionID 返回，其它用例形状不变。
+          ...(sessionID === "s-lin-get-child"
+            ? { parentID: "s-lin-get-root" }
+            : {}),
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           time: { created: 0, updated: 0 },
@@ -780,6 +790,188 @@ async function main() {
           tokens.hasCost === false &&
           tokens.cost === 0,
         `null-cost mapping wrong: ${JSON.stringify(tokens)}`,
+      );
+    },
+  );
+
+  // LINEAGE-001: v2 parentID（§2.1 修订，probe-lineage 观测）——
+  // session.created data.parentID 写入 sessionInfo/projection.info，恢复 v1
+  // 投影：primarySession 解析根、childSessions 遍历、activePrimarySessions
+  // 过滤子会话、根会话终态通知聚合子会话 token。
+  await runCase(
+    "LINEAGE-001 session.created parentID restores root resolution, child traversal, filtering and token aggregation",
+    async ({ monitor, sent }) => {
+      const rootID = "s-lin-root";
+      const childID = "s-lin-child";
+      monitor.accept(
+        envelope(
+          "session.created",
+          {
+            sessionID: rootID,
+            projectID: "proj-test",
+            title: "root session",
+            slug: "root",
+            version: "2.0.15",
+          },
+          "evt-lin-1",
+        ),
+      );
+      monitor.accept(
+        envelope(
+          "session.created",
+          {
+            sessionID: childID,
+            parentID: rootID,
+            title: "child session",
+            agent: "general",
+            version: "2.0.15",
+          },
+          "evt-lin-2",
+        ),
+      );
+      await flush();
+
+      assert(
+        monitor.sessionInfo.get(rootID)?.parentID === undefined,
+        `root must not carry parentID: ${JSON.stringify(monitor.sessionInfo.get(rootID))}`,
+      );
+      assert(
+        monitor.sessionInfo.get(childID)?.parentID === rootID,
+        `child sessionInfo.parentID missing: ${JSON.stringify(monitor.sessionInfo.get(childID))}`,
+      );
+
+      // busy 根 + busy 子 → 投影由 ensureSession 建立并挂上
+      // sessionInfo（含 parentID）；activePrimarySessions 只列根。
+      monitor.accept(
+        envelope("session.execution.started", { sessionID: rootID }, "evt-lin-3"),
+      );
+      monitor.accept(
+        envelope("session.execution.started", { sessionID: childID }, "evt-lin-4"),
+      );
+      await flush();
+      assert(
+        monitor.sessions.get(childID)?.info?.parentID === rootID,
+        "projection.info must carry parentID",
+      );
+
+      const primary = await monitor.primarySession(childID);
+      assert(
+        primary.sessionID === rootID,
+        `primarySession(child) must resolve the root, got ${primary.sessionID}`,
+      );
+      const children = childSessions(
+        rootID,
+        monitor.sessions,
+        monitor.sessionInfo,
+      );
+      assert(
+        children.length === 1 && children[0].sessionID === childID,
+        `childSessions(root) must list the child: ${children.map((c) => c.sessionID)}`,
+      );
+
+      const primaries = monitor.activePrimarySessions().map((s) => s.sessionID);
+      assert(
+        primaries.includes(rootID),
+        `activePrimarySessions must include the root: ${JSON.stringify(primaries)}`,
+      );
+      assert(
+        !primaries.includes(childID),
+        `activePrimarySessions must filter the child: ${JSON.stringify(primaries)}`,
+      );
+
+      // 用量：根 100/10/$0.01，子 200/20/$0.02 → 根聚合 = 300/30/$0.03。
+      monitor.accept(
+        envelope(
+          "session.usage.updated",
+          { sessionID: rootID, cost: 0.01, tokens: { input: 100, output: 10 } },
+          "evt-lin-5",
+        ),
+      );
+      monitor.accept(
+        envelope(
+          "session.usage.updated",
+          { sessionID: childID, cost: 0.02, tokens: { input: 200, output: 20 } },
+          "evt-lin-6",
+        ),
+      );
+      monitor.accept(
+        envelope(
+          "session.step.started",
+          { sessionID: rootID, assistantMessageID: "msg-lin-root", agent: "build" },
+          "evt-lin-7",
+        ),
+      );
+      monitor.accept(
+        envelope(
+          "session.step.started",
+          { sessionID: childID, assistantMessageID: "msg-lin-child", agent: "general" },
+          "evt-lin-8",
+        ),
+      );
+      await flush();
+      const aggregate = aggregateTokens(monitor.sessions.get(rootID), {
+        root: "/tmp",
+        botToken: "123456789:TESTTOKEN_DO_NOT_USE_abcdefg",
+        projectLabel: "project",
+        sessions: monitor.sessions,
+        sessionInfo: monitor.sessionInfo,
+      });
+      assert(
+        aggregate.input === 300 &&
+          aggregate.output === 30 &&
+          Math.abs(aggregate.cost - 0.03) < 1e-9,
+        `root aggregate must include child tokens: ${JSON.stringify(aggregate)}`,
+      );
+
+      // 根终态：synchronizeIdleDescendants 先提交 idle 子会话，根终态通知
+      // 的 token/cost 行含子会话聚合值。
+      monitor.accept(
+        envelope("session.execution.succeeded", { sessionID: childID }, "evt-lin-9"),
+      );
+      monitor.accept(
+        envelope("session.execution.succeeded", { sessionID: rootID }, "evt-lin-10"),
+      );
+      await flush();
+      const rootProjection = monitor.sessions.get(rootID);
+      await monitor.finalizeIdle(rootID, rootProjection.turn);
+      assert(
+        monitor.sessions.get(childID)?.outcome === "completed",
+        "idle child must be committed by synchronizeIdleDescendants",
+      );
+      assert(
+        rootProjection.outcome === "completed",
+        `root outcome must be completed, got ${rootProjection.outcome}`,
+      );
+      const notification = sent[sent.length - 1] ?? "";
+      assert(
+        notification.includes("330"),
+        `terminal notification must aggregate child tokens: ${notification}`,
+      );
+      assert(
+        notification.includes("$0.030"),
+        `terminal notification must aggregate child cost: ${notification}`,
+      );
+      assert(
+        notification.includes("Subtasks"),
+        `terminal notification must report child subtasks: ${notification}`,
+      );
+    },
+  );
+
+  // LINEAGE-002: client.session.get 结果携带的 parentID（probe-lineage 观测）
+  // 被 ensureSessionInfo 原样缓存 → primarySession 沿父链解析到根。
+  await runCase(
+    "LINEAGE-002 client.session.get parentID is consumed by primarySession",
+    async ({ monitor }) => {
+      const info = await monitor.ensureSessionInfo("s-lin-get-child");
+      assert(
+        info?.parentID === "s-lin-get-root",
+        `session.get parentID must be cached: ${JSON.stringify(info)}`,
+      );
+      const primary = await monitor.primarySession("s-lin-get-child");
+      assert(
+        primary.sessionID === "s-lin-get-root",
+        `primarySession must resolve via session.get parentID, got ${primary.sessionID}`,
       );
     },
   );

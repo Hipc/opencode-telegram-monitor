@@ -217,9 +217,11 @@ if (formReplyEvidence !== undefined) {
 // P2c restores the pending permission record and re-injects reply:"once" after the
 // request was already settled (a stale TG button press). The plugin's reply scan
 // must attempt client.permission.reply on the settled request; the client-side
-// error shape / 404 classification is captured in tgdiag-resolved-reply.txt. This
-// check is informational (either outcome is a valid capture) and exists to make
-// the ticket 04 open item (isNotFoundError shape) observable.
+// error shape / 404 classification is captured in tgdiag-resolved-reply.txt.
+// F2 (contract §3.3 terminal semantics): the observed plain-Error shape
+// ("Permission request not found: per_<id>", no status/_tag) MUST be classified
+// terminal — record deleted, no "Permission reply apply failed" retry loop; the
+// pre-fix informational "either outcome" condition is superseded.
 const resolvedDiag = readText("tgdiag-resolved-reply.txt");
 if (resolvedDiag !== undefined) {
   const notFoundHandled = /Permission request no longer exists \(404\)/.test(
@@ -228,8 +230,8 @@ if (resolvedDiag !== undefined) {
   const resolvedApplyFailed = /Permission reply apply failed/.test(resolvedDiag);
   check(
     "H3.6",
-    notFoundHandled || resolvedApplyFailed,
-    `settled-request reply attempt recorded (isNotFoundError matched=${notFoundHandled}, raw failure logged=${resolvedApplyFailed})`,
+    notFoundHandled && !resolvedApplyFailed,
+    `settled-request reply classified terminal (isNotFoundError matched=${notFoundHandled}, raw failure logged=${resolvedApplyFailed})`,
   );
   if (resolvedApplyFailed && !notFoundHandled) {
     warn(

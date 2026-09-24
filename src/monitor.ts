@@ -510,6 +510,11 @@ export class TelegramSessionMonitor {
           id: sessionID,
           title: string(properties.title) ?? string(properties.slug),
           projectID: string(properties.projectID),
+          // probe-lineage 观测（2026-09-25，opencode v2.0.15）：子会话
+          // session.created data 携带 parentID（根会话无该键）；写入后 v1
+          // 投影逻辑（primarySession/childSessions/activePrimarySessions/
+          // token 聚合）在 v2 下恢复生效（契约 §2.1/§9 回写由 dev-lead 处理）。
+          parentID: string(properties.parentID),
           location: {
             directory: string(location?.directory) ?? this.root,
           },
@@ -1288,6 +1293,8 @@ export class TelegramSessionMonitor {
 
     try {
       // v2 §3.1：client.session.get({sessionID}) 直接返回会话对象（非 {data} 包装）。
+      // 结果原样缓存：子会话的 `parentID` 键（probe-lineage 观测）随对象保留，
+      // 供 primarySession/childSessions 等 v1 投影逻辑消费。
       const info = await this.client.session.get({ sessionID });
       this.sessionInfo.set(info.id, info);
       session.info = info;
@@ -1834,7 +1841,9 @@ export class TelegramSessionMonitor {
   /**
    * 判定 API 错误为「对象不存在」（relay §14.8.2，permission 404 终态语义
    * 契约 §3.3）：status/statusCode === 404，或 error name 含
-   * 404/NotFound。未命中 → 视为可重试失败（保守方向）。
+   * 404/NotFound，或 v2 client 面对已决 `permission.reply` 抛出的普通
+   * `Error`（服务端 PermissionNotFoundError 文本，见下）。未命中 → 视为
+   * 可重试失败（保守方向）。
    */
   private isNotFoundError(error: unknown): boolean {
     const shaped = error as {
@@ -1843,6 +1852,17 @@ export class TelegramSessionMonitor {
       name?: unknown;
     };
     if (shaped?.status === 404 || shaped?.statusCode === 404) return true;
+    // v2 client 面已观测（evidence/harness-resolved-reply/reply-error-shape.json）：
+    // 对已决请求再次 reply 时，client.permission.reply 抛普通 Error（无
+    // status/statusCode/_tag、ownKeys 为空），唯一信号是服务端
+    // PermissionNotFoundError 的 message "Permission request not found: <perID>"。
+    // 仅按这一精确文本归类为终态；其它 Error 一律走下面的可重试路径。
+    if (
+      error instanceof Error &&
+      /^Permission request not found: per_/.test(error.message)
+    ) {
+      return true;
+    }
     const category = errorCategory(error, {
       root: this.root,
       botToken: this.config.botToken,

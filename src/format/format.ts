@@ -575,7 +575,7 @@ export function helpText(): string {
     `<ul>${listItems}</ul>`,
     "<p>Planned (not available yet):</p>",
     `<ul>${plannedItems}</ul>`,
-    "<p>Read-only by default: since 2026-09-02 permission prompts can be answered with inline buttons (Allow once / Allow always / Deny) — only when you explicitly tap one. Questions and everything else are always handled in OpenCode.</p>",
+    "<p>Read-only by default: permission prompts render inline buttons (Allow once / Allow always / Deny) and questions render an answer wizard — both write back to OpenCode only when you explicitly tap or submit something in Telegram.</p>",
   ].join("\n");
 }
 

@@ -36,11 +36,13 @@ export type V2EventEnvelope = {
  * `client.session.get()` / `client.session.create()` return shape (§3.1, direct
  * object — v2 is not `{data}`-wrapped).
  *
- * `parentID` is never populated: the frozen v2.0.15 surface exposes no parent
- * linkage (no `parentID` in `session.created` data nor in `session.get`). It
- * stays optional so the existing parent/root projection logic
- * (childSessions/primarySession, contract §2.1 "父/根会话 idle 补齐") compiles
- * unchanged and becomes effective again if a future v2 surface exposes it.
+ * `parentID` is an optional child-session link (probe-lineage evidence,
+ * 2026-09-25, opencode v2.0.15): model-spawned subagent child sessions carry it
+ * in both `session.created` data and `session.get` results; root sessions omit
+ * the key and forks carry `parentID: null` (fork lineage is `fork.sessionID`,
+ * not `parentID`). It stays optional so the existing parent/root projection
+ * logic (childSessions/primarySession, contract §2.1 "父/根会话 idle 补齐")
+ * consumes it unchanged when present.
  */
 export type V2SessionInfo = {
   id: string;
@@ -109,6 +111,8 @@ export type V2TokenTotals = {
 export type SessionCreatedData = {
   sessionID: string;
   projectID?: string;
+  /** Child sessions only (probe-lineage observed `ses_<parent>`; roots omit). */
+  parentID?: string;
   location?: { directory?: string };
   subpath?: string;
   slug?: string;
