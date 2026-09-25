@@ -1,0 +1,6 @@
+{
+  "projects": [
+    { "path": "/tmp/projA", "enabled": true, "addedAt": "2026-09-25T16:08:58.000Z" },
+    { "path": "/tmp/projB", "enabled": true, "addedAt": "2026-09-25T16:08:58.000Z" }
+  ]
+}

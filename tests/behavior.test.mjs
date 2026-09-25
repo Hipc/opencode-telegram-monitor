@@ -21,6 +21,10 @@
 //   LINEAGE-001 session.created data.parentID（probe-lineage 观测）→ 根解析/
 //     子会话遍历/activePrimarySessions 根过滤/根终态通知的子 token 聚合
 //   LINEAGE-002 client.session.get 结果的 parentID → primarySession 消费
+//   OWNERSHIP-001（t12）非宿主 root 的 monitor 完整忽略其它项目的会话事件
+//     （无投影/sessionInfo/通知/记录清理），宿主照常处理无 location 的生命周期
+//   OWNERSHIP-002（t12）同 root 重复激活由进程级共享去重集合收敛为恰一次处理
+//   OWNERSHIP-003（t12）无 location 且无法归属的事件被忽略 + 每类型一次诊断
 //
 // question/form 事件映射与回写属 ticket 04（§2.6/§3.1），本文件不接线、不断言。
 //
@@ -30,10 +34,10 @@
 //
 // 绝不使用真实 botToken/chatId；运行必须隔离 HOME 以避免写真实 ~/.otg。
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -76,10 +80,15 @@ async function main() {
 
   const { TelegramSessionMonitor } = await import(srcMonitorURL.href);
   const registryModule = await import(srcRegistryURL.href);
-  const { ProjectRegistryStore, registerProject, setProjectEnabled } =
-    registryModule;
+  const {
+    ProjectRegistryStore,
+    appendSessionRecord,
+    registerProject,
+    setProjectEnabled,
+  } = registryModule;
   const srcFormatURL = new URL("../src/format/format.ts", import.meta.url);
   const { aggregateTokens, childSessions } = await import(srcFormatURL.href);
+  const { homedir } = await import("node:os");
 
   // 契约 §7.1 冻结 fake v2 client：方法返回直接对象（非 {data} 包装）。
   function makeFakeClient() {
@@ -135,13 +144,19 @@ async function main() {
   };
 
   let eventSeq = 0;
-  // 原始 v2 envelope（§2.0）：accept() 原样收，parseRuntimeEvent 取 data。
-  function envelope(type, data, id) {
+  // t12：真实 v2 envelope 的 location 由发布方决定（实测 session.created /
+  // step.* / form.* / permission.asked 带、session.execution.* /
+  // usage.updated / permission.replied 不带）。默认按当前用例的 root 附带
+  // location（等价于宿主实例收到自己的会话事件）；需要模拟无 location 事件时
+  // 显式传 null。
+  let eventLocation = { directory: "/tmp" };
+  function envelope(type, data, id, location = eventLocation) {
     eventSeq += 1;
     return {
       id: id ?? `evt-behavior-${eventSeq}`,
       created: Date.now(),
       type,
+      location,
       data,
     };
   }
@@ -155,6 +170,7 @@ async function main() {
   async function makeEnv() {
     const baseDir = await mkdtemp(join(tmpdir(), "otg-behavior-test-"));
     const root = join(baseDir, "project");
+    eventLocation = { directory: root };
     const registry = new ProjectRegistryStore(join(baseDir, "projects.json"));
     // 模拟 monitor 自注册（周期 reassertRegistration 等价物）：root 条目必须存在，
     // 否则写入端按「未注册项目」跳过写盘；enabled=true 让终态通知路径可达。
@@ -206,6 +222,77 @@ async function main() {
         await rm(env.baseDir, { recursive: true, force: true });
       }
     }
+  }
+
+  // OWNERSHIP 用例：一个共享 registry（模拟 ~/.otg/projects.json 单文件 +
+  // 多个 root 条目），每个 root 一个 monitor（模拟同一进程/多进程的多次激活）。
+  async function makeSharedEnv(roots) {
+    const baseDir = await mkdtemp(join(tmpdir(), "otg-ownership-test-"));
+    const registry = new ProjectRegistryStore(join(baseDir, "projects.json"));
+    const rootPaths = roots.map((root) => join(baseDir, root));
+    for (const root of rootPaths) {
+      await registry.mutate((reg) => registerProject(reg, root));
+      await registry.mutate((reg) => setProjectEnabled(reg, root, true));
+    }
+    const monitors = rootPaths.map((root) => {
+      const fakeClient = makeFakeClient();
+      const sent = [];
+      const monitor = new TelegramSessionMonitor(
+        fakeClient,
+        fakeConfig,
+        root,
+        registry,
+      );
+      monitor.enqueueMessage = (text) => {
+        sent.push(text);
+      };
+      monitor.enqueueMessageWithKeyboard = async () => {};
+      monitor.runTelegram = async () => {};
+      monitor.scheduleRegistration = () => {};
+      monitor.scheduleSelfUpdate = () => {};
+      monitor.initialize();
+      return { root, monitor, sent, fakeClient };
+    });
+    return { baseDir, registry, monitors };
+  }
+
+  async function runSharedCase(name, roots, fn) {
+    total += 1;
+    let env;
+    try {
+      env = await makeSharedEnv(roots);
+      await fn(env);
+      console.log(`ok   ${name}`);
+    } catch (error) {
+      failures += 1;
+      console.error(`FAIL ${name}: ${error.message}`);
+    } finally {
+      if (env) {
+        for (const { monitor } of env.monitors) {
+          await monitor.dispose().catch(() => undefined);
+        }
+        await rm(env.baseDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  function makeRecord({ requestID, sessionID, type = "permission" }) {
+    return {
+      session_id: sessionID,
+      session_name: sessionID,
+      type,
+      message: JSON.stringify({ id: requestID, sessionID, action: "read" }),
+      send: false,
+      resolved: false,
+      request_id: requestID,
+      created_at: new Date().toISOString(),
+    };
+  }
+
+  async function readEntryRecords(registry, root) {
+    const reg = await registry.read();
+    const entry = reg.projects.find((e) => e.path === root);
+    return entry?.sessions ?? [];
   }
 
   // API-001: auto-approve（permission.asked 随即 permission.replied）→ 0 条记录。
@@ -972,6 +1059,161 @@ async function main() {
       assert(
         primary.sessionID === "s-lin-get-root",
         `primarySession must resolve via session.get parentID, got ${primary.sessionID}`,
+      );
+    },
+  );
+
+  // OWNERSHIP-001（t12）：v2 事件流每进程全局，非宿主 root 的 monitor 必须
+  // 完整忽略其它项目的会话事件（无投影/无 sessionInfo/无通知/无记录清理），
+  // 宿主侧照常处理无 location 的 execution.*/usage.updated 并完成终态通知。
+  await runSharedCase(
+    "OWNERSHIP-001 foreign-root monitor stays inert while the owner completes",
+    ["proj-a", "proj-b"],
+    async ({ baseDir, registry, monitors }) => {
+      const [a, b] = monitors;
+      const own = "s-own";
+      const foreign = "s-foreign";
+      // 记录种子：B 自己会话的记录（宿主应清理）；A 条目上一条外来记录
+      // （A 必须不清理——removeSessionRecordsForSession 是全局删除）。
+      await registry.mutate((reg) =>
+        appendSessionRecord(reg, b.root, makeRecord({ requestID: "perm-own", sessionID: own })),
+      );
+      await registry.mutate((reg) =>
+        appendSessionRecord(reg, a.root, makeRecord({ requestID: "perm-foreign", sessionID: foreign })),
+      );
+
+      // 会话 own 位于 B：同一批事件投递给 A、B 两侧。
+      const feedBoth = (event) => {
+        a.monitor.accept(event);
+        b.monitor.accept(event);
+      };
+      feedBoth(envelope("session.created", { sessionID: own, title: "owned by B", location: { directory: b.root } }, "evt-own-1", { directory: b.root }));
+      feedBoth(envelope("session.execution.started", { sessionID: own }, "evt-own-2", null));
+      feedBoth(envelope("session.step.started", { sessionID: own, assistantMessageID: "msg-own", agent: "build" }, "evt-own-3", { directory: b.root }));
+      feedBoth(envelope("session.usage.updated", { sessionID: own, cost: 0.01, tokens: { input: 10, output: 2 } }, "evt-own-4", null));
+      feedBoth(envelope("session.execution.succeeded", { sessionID: own }, "evt-own-5", null));
+
+      // 会话 foreign 位于 B，但只投递给 A：A 不得清理其记录。
+      a.monitor.accept(envelope("session.created", { sessionID: foreign, title: "owned by B", location: { directory: b.root } }, "evt-foreign-1", { directory: b.root }));
+      a.monitor.accept(envelope("session.deleted", { sessionID: foreign }, "evt-foreign-2", null));
+      await flush();
+
+      assert(
+        a.monitor.sessions.get(own) === undefined,
+        `foreign monitor A must not project B's session: ${JSON.stringify(a.monitor.sessions.get(own))}`,
+      );
+      assert(
+        a.monitor.sessionInfo.get(own) === undefined,
+        "foreign monitor A must not cache B's sessionInfo",
+      );
+      assert(a.sent.length === 0, `foreign monitor A must not notify, got ${a.sent.length}`);
+      const aRecords = await readEntryRecords(registry, a.root);
+      assert(
+        aRecords.some((r) => r.session_id === foreign),
+        `A must not clean foreign session records: ${JSON.stringify(aRecords)}`,
+      );
+
+      const projection = b.monitor.sessions.get(own);
+      assert(
+        projection !== undefined && b.monitor.sessionInfo.get(own)?.id === own,
+        "owner monitor B must project its own session",
+      );
+      await b.monitor.finalizeIdle(own, projection.turn);
+      assert(
+        projection.outcome === "completed",
+        `owner outcome must be completed, got ${projection.outcome}`,
+      );
+      assert(
+        b.sent.length === 1,
+        `owner must send exactly 1 notification, got ${b.sent.length}`,
+      );
+      assert(
+        b.sent[0].includes(basename(b.root)),
+        `owner notification must carry B's label: ${b.sent[0]}`,
+      );
+      assert(
+        !a.sent.some((text) => text.includes(basename(a.root))),
+        "foreign monitor must never emit a notification",
+      );
+
+      // 宿主清理：B 自己会话的记录在 session.deleted 后删除。
+      b.monitor.accept(envelope("session.deleted", { sessionID: own }, "evt-own-6", null));
+      await flush();
+      await sleep(200);
+      const bRecords = await readEntryRecords(registry, b.root);
+      assert(
+        !bRecords.some((r) => r.session_id === own),
+        `owner must clean its own session records: ${JSON.stringify(bRecords)}`,
+      );
+      void baseDir;
+    },
+  );
+
+  // OWNERSHIP-002（t12）：同一 root 的重复激活（进程内双订阅）由共享去重集合
+  // 收敛——同一批事件投给两个同 root monitor，最终只产生 1 条通知，且只有
+  // 第一个处理者建立投影。
+  await runSharedCase(
+    "OWNERSHIP-002 same-root duplicate deliveries collapse to exactly one handling",
+    ["proj-same", "proj-same"],
+    async ({ monitors }) => {
+      const [first, second] = monitors;
+      const id = "s-same";
+      const feedBoth = (event) => {
+        first.monitor.accept(event);
+        second.monitor.accept(event);
+      };
+      feedBoth(envelope("session.created", { sessionID: id, title: "same root", location: { directory: first.root } }, "evt-same-1", { directory: first.root }));
+      feedBoth(envelope("session.execution.started", { sessionID: id }, "evt-same-2", null));
+      feedBoth(envelope("session.step.started", { sessionID: id, assistantMessageID: "msg-same", agent: "build" }, "evt-same-3", { directory: first.root }));
+      feedBoth(envelope("session.execution.succeeded", { sessionID: id }, "evt-same-4", null));
+      await flush();
+
+      const owners = monitors.filter(({ monitor }) => monitor.sessions.has(id));
+      assert(
+        owners.length === 1,
+        `exactly one same-root monitor may handle the events, got ${owners.length}`,
+      );
+      const projection = owners[0].monitor.sessions.get(id);
+      await owners[0].monitor.finalizeIdle(id, projection.turn);
+      const totalSent = first.sent.length + second.sent.length;
+      assert(
+        totalSent === 1,
+        `same-root duplicate deliveries must collapse to 1 notification, got ${totalSent}`,
+      );
+      assert(
+        owners[0].sent[0].includes(basename(first.root)),
+        `notification must carry the shared root label: ${owners[0].sent[0]}`,
+      );
+    },
+  );
+
+  // OWNERSHIP-003（t12）：无 location 且无法归属的事件（未知 session / 无
+  // sessionID）被忽略且不崩溃；诊断每事件类型只记一次。
+  await runCase(
+    "OWNERSHIP-003 location-less unattributed events are ignored with one diagnostic per type",
+    async ({ monitor, sent }) => {
+      const diagPath = join(homedir(), ".otg", "tgdiag.log");
+      const marker =
+        "event skipped: no location and session not attributed type=session.execution.succeeded";
+      const countMarker = () => {
+        if (!existsSync(diagPath)) return 0;
+        const text = readFileSync(diagPath, "utf8");
+        return text.split(marker).length - 1;
+      };
+      const before = countMarker();
+      monitor.accept(envelope("session.execution.succeeded", { sessionID: "s-unknown-1" }, "evt-unknown-1", null));
+      monitor.accept(envelope("session.execution.succeeded", { sessionID: "s-unknown-2" }, "evt-unknown-2", null));
+      await flush();
+      assert(
+        monitor.sessions.get("s-unknown-1") === undefined &&
+          monitor.sessions.get("s-unknown-2") === undefined,
+        "unattributed location-less events must not create projections",
+      );
+      assert(sent.length === 0, `unattributed events must not notify, got ${sent.length}`);
+      const after = countMarker();
+      assert(
+        after - before === 1,
+        `diagnostic must be written once per event type (before=${before}, after=${after})`,
       );
     },
   );

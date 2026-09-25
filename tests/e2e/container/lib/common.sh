@@ -67,16 +67,18 @@ cleanup_containers() {
   names=$(docker ps -a --filter "name=^/t05" --format '{{.Names}}' 2>/dev/null || true)
   names="${names} $(docker ps -a --filter "name=^/t09-" --format '{{.Names}}' 2>/dev/null || true)"
   names="${names} $(docker ps -a --filter "name=^/t10-" --format '{{.Names}}' 2>/dev/null || true)"
+  names="${names} $(docker ps -a --filter "name=^/t12-" --format '{{.Names}}' 2>/dev/null || true)"
   names="$(echo "$names" | tr '\n' ' ' | tr -s ' ' | sed 's/^ //;s/ $//')"
   if [ -n "$names" ]; then
-    log "removing leftover t05*/t09-*/t10-* containers: $names"
+    log "removing leftover t05*/t09-*/t10-*/t12-* containers: $names"
     # shellcheck disable=SC2086
     docker rm -f $names >/dev/null 2>&1 || true
   fi
   local nets
   nets=$(docker network ls --filter "name=^t09-dupe-net" --format '{{.Name}}' 2>/dev/null || true)
+  nets="${nets} $(docker network ls --filter "name=^t12-ownership-net" --format '{{.Name}}' 2>/dev/null || true)"
   if [ -n "$nets" ]; then
-    log "removing leftover t09-dupe-net* networks: $(echo "$nets" | tr '\n' ' ')"
+    log "removing leftover t09-dupe-net*/t12-ownership-net* networks: $(echo "$nets" | tr '\n' ' ')"
     # shellcheck disable=SC2086
     docker network rm $nets >/dev/null 2>&1 || true
   fi

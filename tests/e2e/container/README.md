@@ -14,7 +14,8 @@ is installed on the host and no local opencode directory is touched.
 | `harness/fake-telegram.mjs` | fake Telegram Bot API endpoint for the duplicate-record scenario (CONNECT + TLS, request log) |
 | `harness/dupe-scenario.sh` | t09 duplicate-record / message_id regression scenario |
 | `harness/t10-cross-scenario.sh` | t10 cross-process ownership gate + state `service.json` discovery scenario |
-| `assert/` | node assertion suites over the collected evidence (`assert/dupe.mjs` = t09 regression, `assert/t10-cross.mjs` = t10 gate/discovery) |
+| `harness/t12-ownership-scenario.sh` | t12 multi-root event ownership in one serve process (field: N notifications, N labels) |
+| `assert/` | node assertion suites over the collected evidence (`assert/dupe.mjs` = t09 regression, `assert/t10-cross.mjs` = t10 gate/discovery, `assert/t12-ownership.mjs` = t12 ownership) |
 | `evidence/` | recorded outputs of the green runs in this round |
 
 Requirements: docker with `hipc/opencode2:latest` (opencode v2.0.15) and
@@ -235,8 +236,44 @@ and deleted the record while A was frozen; A never emitted `form.replied`.
 Evidence: `evidence/t10-cross/` (positive) and `evidence/t10-cross-prefix/`
 (negative control).
 
-### Bundle build
+## 2d. Multi-root event ownership (t12)
 
+```sh
+tests/e2e/container/run.sh t12-ownership                 # ~2.5 min, container-only
+tests/e2e/container/run.sh assert-t12-ownership          # 8 assertions (positive)
+T12_OWNERSHIP_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t12-ownership-prefix \
+T05_PLUGIN_SRC=<base-worktree> tests/e2e/container/run.sh t12-ownership
+T12_OWNERSHIP_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t12-ownership-prefix \
+  tests/e2e/container/run.sh assert-t12-ownership --negative-control
+```
+
+Reproduces the field incident "one completed session → several notifications
+with different project labels": ONE `opencode serve` process activates the
+plugin once per location/root (field log: ~7 roots), and every monitor
+subscribes to the same global v2 event stream. The scenario activates two roots
+in one process (A via `opencode api plugin.list` from `/tmp/projA`, B via
+`GET /api/plugin?location[directory]=/tmp/projB`), then completes a session in
+A deterministically (bogus model → `session.execution.failed`) with the fake
+Telegram endpoint recording every send.
+
+Assertions (positive): both roots activated on the same pid; exactly ONE
+`sendRichMessage`, carrying A's project label and the session row; no
+B-labelled send; the B monitor logged
+`event skipped: location not owned by this instance directory=/tmp/projA`.
+The negative control runs the same topology against the pre-fix bundle and
+asserts the field signature: ≥2 notifications for the SAME session, one
+labelled `projA` and one `projB`, and no ownership-skip diagnostic.
+
+Same-root reachability investigated in the container (see the ticket report):
+repeated location requests for one directory load the location once (one
+`setup`); the same plugin file in both `plugin/` and `plugins/` logs two
+"loading plugin" lines but still one `setup`; `location.reload` does produce
+same-root re-activation (`event stream ended` → new `setup`, same pid), so the
+process-wide seen-event set is the defense for that swap window.
+Evidence: `evidence/t12-ownership/` (positive) and
+`evidence/t12-ownership-prefix/` (negative control).
+
+### Bundle build
 ```sh
 tests/e2e/container/run.sh build   # copies the worktree into otg-toolchain and runs node scripts/build.mjs
 ```

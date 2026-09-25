@@ -93,6 +93,12 @@ export type RuntimeEvent = {
   id?: string;
   type: string;
   properties: Record<string, unknown>;
+  // v2 envelope location (§2.0). Optional and publisher-dependent: the container
+  // evidence (probe-a1/probe-lineage/harness SSE captures, opencode v2.0.15)
+  // shows session.created/step.*/tool.*/form.*/permission.asked carry it while
+  // session.execution.* / session.usage.updated / permission.replied do not.
+  // t12 consumes it for the per-instance ownership gate.
+  location?: { directory?: string };
 };
 
 // Local shape of the question wizard payload stored in a SessionRecord message

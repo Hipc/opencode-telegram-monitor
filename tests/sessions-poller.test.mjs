@@ -331,12 +331,15 @@ async function main() {
   }
 
   let eventSeq = 0;
+  // t12：真实 v2 envelope 带 location（发布方决定）；permission.asked/form.*
+  // 实测均带宿主 root 的 location，这里按当前 root 附带（归属门输入）。
   function envelope(type, data, id) {
     eventSeq += 1;
     return {
       id: id ?? `evt-poller-${eventSeq}`,
       created: Date.now(),
       type,
+      location: { directory: root },
       data,
     };
   }

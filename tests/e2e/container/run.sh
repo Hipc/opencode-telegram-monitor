@@ -12,6 +12,7 @@
 #   tests/e2e/container/run.sh probe-lineage            # §9 subagent lineage probe
 #   tests/e2e/container/run.sh build                    # bundle src/ via otg-toolchain
 #   tests/e2e/container/run.sh t10-cross [--plugin F]   # cross-process ownership gate + service.json discovery
+#   tests/e2e/container/run.sh t12-ownership [--plugin F]  # multi-root event ownership in one serve process
 #   tests/e2e/container/run.sh real-tg-recipe --check   # read-only ~/.otg mechanism check
 #   tests/e2e/container/run.sh real-tg-recipe --run     # full real-TG smoke (serve-based send path)
 #   tests/e2e/container/run.sh assert-probe-a1          # assertions over existing evidence
@@ -19,6 +20,8 @@
 #   tests/e2e/container/run.sh assert-dupe              # duplicate-record regression assertions
 #   tests/e2e/container/run.sh assert-t10-cross         # cross-process gate/discovery assertions
 #   tests/e2e/container/run.sh assert-t10-cross --negative-control  # pre-fix bundle signature
+#   tests/e2e/container/run.sh assert-t12-ownership     # multi-root ownership assertions
+#   tests/e2e/container/run.sh assert-t12-ownership --negative-control  # pre-fix bundle signature
 #   tests/e2e/container/run.sh assert-probe-lineage     # lineage evidence summary
 #   tests/e2e/container/run.sh clean                    # remove leftover t05/t09/t10 containers
 #
@@ -343,6 +346,110 @@ assert_t10_cross() {
   node "$ASSERT_DIR/t10-cross.mjs" "$out" "$@"
 }
 
+# ---- t12 event ownership (multi-root in one serve process) ------------------
+# One serve process activates the plugin twice (roots A and B); a session in A
+# completes (deterministic failing execution). Post-fix: exactly one terminal
+# notification, labelled A, delivered to the fake Telegram endpoint; the B
+# monitor skips A's events via the ownership gate. --plugin runs a provided
+# bundle (used for the pre-fix negative control); the negative-control
+# assertions expect the field signature instead (>=2 sends, different labels).
+scenario_t12_ownership() {
+  require_image "$OPENCODE_IMAGE"
+  require_image "$TOOLCHAIN_IMAGE"
+  local plugin_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --plugin) plugin_file="$2"; shift 2 ;;
+      *) fail "t12-ownership: unknown argument: $1" ;;
+    esac
+  done
+  if [ -n "$plugin_file" ] && [ "${plugin_file#/}" = "$plugin_file" ]; then
+    plugin_file="$PWD/$plugin_file"
+  fi
+  local out="${T12_OWNERSHIP_EVIDENCE_DIR:-$EVIDENCE_ROOT/t12-ownership}"
+  rm -rf "$out"; mkdir -p "$out"
+  if [ -z "$plugin_file" ]; then
+    plugin_file="$(build_plugin_bundle "$out")"
+    log "t12-ownership: built plugin bundle at $plugin_file"
+  elif [ ! -f "$plugin_file" ]; then
+    fail "t12-ownership: --plugin file not found: $plugin_file"
+  fi
+  local port pw name net fake cert_dir
+  port="$(free_port)"
+  pw="$(synthetic_password)"
+  name="t12-ownership-$$"
+  net="t12-ownership-net-$$"
+  fake="t12-ownership-fake-tg-$$"
+  cert_dir="$(mktemp -d /tmp/t12-ownership-tls.XXXXXX)"
+  log "t12-ownership: port=$port password=<len ${#pw}> evidence=$out"
+
+  cleanup_t12() {
+    docker rm -f "$fake" >/dev/null 2>&1 || true
+    docker network rm "$net" >/dev/null 2>&1 || true
+    rm -rf "$cert_dir"
+  }
+  trap cleanup_t12 EXIT
+
+  # Test certificate for api.telegram.org (opencode2 ships openssl).
+  docker run --rm --name "t12-ownership-cert-$$" \
+    -v "$cert_dir:/tls" --entrypoint sh "$OPENCODE_IMAGE" -c '
+      set -e
+      openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout /tls/key.pem -out /tls/cert.pem \
+        -subj "/CN=api.telegram.org" -days 2 \
+        -addext "subjectAltName=DNS:api.telegram.org" >/dev/null 2>&1
+      echo "cert ok: test certificate generated (not evidence)"
+    ' >> "$out/commands.txt" 2>&1 || fail "t12-ownership: test certificate generation failed"
+
+  docker network create "$net" >/dev/null
+  docker run --rm -d --name "$fake" --network "$net" --network-alias fake-tg \
+    -v "$HARNESS_DIR:/harness:ro" \
+    -v "$out:/evidence" \
+    -v "$cert_dir:/tls:ro" \
+    -e T09_FAKE_TG_PORT=8443 \
+    -e T09_FAKE_TG_CERT=/tls/cert.pem \
+    -e T09_FAKE_TG_KEY=/tls/key.pem \
+    -e T09_FAKE_TG_LOG=/evidence/fake-telegram.jsonl \
+    "$TOOLCHAIN_IMAGE" node /harness/fake-telegram.mjs > /dev/null
+  for i in $(seq 1 30); do
+    grep -q '"event":"listening"' "$out/fake-telegram.jsonl" 2>/dev/null && break
+    sleep 0.5
+  done
+
+  {
+    echo "=== scenario: t12-ownership (multi-root event ownership in one serve process) ==="
+    echo "=== exact command ==="
+    echo "docker run --rm --name $name --network $net \\"
+    echo "  -v <plugin-dir>:/plugin:ro -v $HARNESS_DIR:/harness:ro -v $out:/evidence \\"
+    echo "  -e T12_PLUGIN=/plugin/$(basename "$plugin_file") -e T12_PORT=$port -e T12_PASSWORD=<redacted> \\"
+    echo "  -e NODE_TLS_REJECT_UNAUTHORIZED=0 (fake endpoint test cert; container-local) \\"
+    echo "  --entrypoint sh $OPENCODE_IMAGE -c 'sh /harness/t12-ownership-scenario.sh'"
+    echo "=== output follows ==="
+  } >> "$out/commands.txt"
+  timeout 700 docker run --rm --name "$name" --network "$net" \
+    -v "$(dirname "$plugin_file"):/plugin:ro" \
+    -v "$HARNESS_DIR:/harness:ro" \
+    -v "$out:/evidence" \
+    -e T12_PLUGIN="/plugin/$(basename "$plugin_file")" \
+    -e T12_PORT="$port" \
+    -e T12_PASSWORD="$pw" \
+    -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
+    -e T12_OBSERVE_SECONDS="${T12_OBSERVE_SECONDS:-12}" \
+    --entrypoint sh "$OPENCODE_IMAGE" -c 'sh /harness/t12-ownership-scenario.sh' \
+    >> "$out/commands.txt" 2>&1 || log "t12-ownership scenario container exited non-zero (evidence preserved)"
+
+  cleanup_t12
+  trap - EXIT
+  fix_ownership "$out"
+  log "t12-ownership: evidence written to $out"
+}
+
+assert_t12_ownership() {
+  local out="${T12_OWNERSHIP_EVIDENCE_DIR:-$EVIDENCE_ROOT/t12-ownership}"
+  [ -d "$out" ] || fail "no t12-ownership evidence at $out; run: run.sh t12-ownership"
+  node "$ASSERT_DIR/t12-ownership.mjs" "$out" "$@"
+}
+
 assert_harness() {
   local out="${T05_HARNESS_OUT:-$EVIDENCE_ROOT/harness}"
   [ -d "$out" ] || fail "no harness evidence at $out; run: run.sh harness"
@@ -521,12 +628,14 @@ case "${1:-}" in
   harness) shift; scenario_harness "$@" ;;
   dupe) shift; scenario_dupe "$@" ;;
   t10-cross) shift; scenario_t10_cross "$@" ;;
+  t12-ownership) shift; scenario_t12_ownership "$@" ;;
   probe-lineage) shift; scenario_lineage "$@" ;;
   build) shift; scenario_build "$@" ;;
   assert-probe-a1) shift; assert_probe_a1 "$@" ;;
   assert-harness) shift; assert_harness "$@" ;;
   assert-dupe) shift; assert_dupe "$@" ;;
   assert-t10-cross) shift; assert_t10_cross "$@" ;;
+  assert-t12-ownership) shift; assert_t12_ownership "$@" ;;
   assert-probe-lineage) shift; assert_lineage "$@" ;;
   real-tg-recipe) shift; scenario_real_tg_recipe "$@" ;;
   clean) cleanup_containers ;;

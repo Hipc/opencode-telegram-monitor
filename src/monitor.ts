@@ -16,6 +16,7 @@ import {
   ICON_SESSIONS,
   ICON_STATUS,
   IDLE_DEBOUNCE_MS,
+  MAX_EVENT_IDS,
   OTG_DIR,
   PLANNED_COMMANDS,
   POLLER_ACQUIRE_INTERVAL_MS,
@@ -130,12 +131,42 @@ type FormEndpoint =
   | { ok: true; url: string; password: string }
   | { ok: false; reason: string };
 
+/**
+ * 进程级共享事件去重集合（t12）。冻结契约 §1.3 的「禁止模块级可变状态」在此
+ * 有一个显式例外：同一进程内同一 root 的重复激活（reload 换挡窗口、双订阅）
+ * 会各自收到同一 envelope，仅靠实例字段无法去重，必须由进程级集合兜底
+ * （dev-lead t12 指令：same-root duplicate deliveries collapse to exactly one）。
+ * key 用 Symbol.for，跨 bundle 重载（模块重新 import）仍指向同一集合；集合
+ * 容量沿用 MAX_EVENT_IDS，仅在归属门通过后标记（非宿主事件不占 id）。
+ */
+const SEEN_EVENTS_SYMBOL = Symbol.for("opencode-telegram-monitor/seen-events");
+
+function sharedSeenEventIDs(): Set<string> {
+  const store = globalThis as unknown as Record<
+    symbol,
+    Set<string> | undefined
+  >;
+  const existing = store[SEEN_EVENTS_SYMBOL];
+  if (existing) return existing;
+  const created = new Set<string>();
+  store[SEEN_EVENTS_SYMBOL] = created;
+  return created;
+}
+
 export class TelegramSessionMonitor {
   private readonly root: string;
   private readonly projectLabel: string;
   private readonly sessions = new Map<string, SessionProjection>();
   private readonly sessionInfo = new Map<string, V2SessionInfo>();
-  private readonly seenEventIDs = new Set<string>();
+  // 归属门（t12）：sessionID → 已观测的 resolve(directory)。v2 部分事件
+  // （session.execution.* / session.usage.updated / permission.replied 实测）
+  // 不带 envelope location，只能用此前带 location 的事件（session.created /
+  // session.step.started / permission.asked …）建立归属；未知 session 的事件
+  // 一律忽略，绝不落到其它项目的投影/通知/记录清理上。
+  private readonly sessionDirectories = new Map<string, string>();
+  // 归属门诊断去重：同一目录/同一事件类型只记一次，避免每秒刷屏。
+  private readonly skippedDirectoryDiagnostics = new Set<string>();
+  private readonly skippedUnattributedDiagnostics = new Set<string>();
   private readonly seenWaitingRequestIDs = new Set<string>();
   // 归属门跳过日志去重（t10）：非宿主实例每个 request_id 只记一次
   // 「apply skipped」，避免 1s 扫描的每秒刷屏。
@@ -508,7 +539,12 @@ export class TelegramSessionMonitor {
 
   private async handleEvent(value: unknown) {
     const event = this.parseRuntimeEvent(value);
-    if (!event || !this.rememberEvent(event.id)) return;
+    if (!event) return;
+    // 归属门（t12）：v2 事件流是每进程全局的（一次 serve 可激活多个
+    // location/root），非宿主事件必须在任何状态变更之前完整忽略——
+    // 不建投影、不写 sessionInfo、不落盘、不去抖、不通知、不清理记录。
+    if (!this.isOwnedEvent(event)) return;
+    if (!this.rememberEvent(event.id)) return;
 
     const properties = event.properties;
     const sessionID = string(properties.sessionID);
@@ -3868,19 +3904,114 @@ export class TelegramSessionMonitor {
    * §2.0/§7.3：accept() 收原始 v2 envelope；此处把 `envelope.data` 归一化为
    * 内部 `properties`（`envelope.id` 继续作为去重键）。data 缺失/非对象 →
    * 丢弃该事件（同 v1 parse 失败返回 undefined 语义）。
+   * t12：同时保留 envelope.location.directory（归属门输入，见 isOwnedEvent）。
    */
   private parseRuntimeEvent(value: unknown): RuntimeEvent | undefined {
     const event = record(value);
     const type = string(event?.type);
     const properties = record(event?.data);
     if (!event || !type || !properties) return undefined;
-    return { id: string(event.id), type, properties };
+    const directory = string(record(event.location)?.directory);
+    return {
+      id: string(event.id),
+      type,
+      properties,
+      ...(directory ? { location: { directory } } : {}),
+    };
   }
 
+  /**
+   * 归属门（t12，契约 §2.0 事件归属）。判定规则，全部基于实测 envelope：
+   * 1. envelope 带 location.directory → resolve 后与 this.root 严格相等；
+   *    同时把 sessionID → directory 记入索引（带 location 的事件即使非宿主
+   *    也记录，使后续无 location 事件能对称判定）。
+   * 2. envelope 无 location.directory（session.execution.* /
+   *    session.usage.updated / permission.replied 实测均无）→ 用事件
+   *    sessionID 查本实例索引；索引命中且等于 this.root → 宿主；
+   *    索引命中但属于其它目录 / 索引未知 → 忽略（后者一次性 dline）。
+   * 3. 既无 location 又无 sessionID（server.connected 等非会话事件）→ 忽略
+   *    （一次性 dline）。
+   * 未知 session 一律按非宿主处理：宁可漏掉本实例从未观测过的会话的
+   * 无 location 事件，也不把其它项目的会话事件落到本实例的投影/通知上。
+   */
+  private isOwnedEvent(event: RuntimeEvent): boolean {
+    const directory = string(event.location?.directory);
+    const sessionID = this.eventSessionID(event);
+    if (directory) {
+      const resolved = resolve(directory);
+      if (sessionID) this.rememberSessionDirectory(sessionID, resolved);
+      if (resolved !== this.root) {
+        this.dlineSkippedDirectory(resolved, event.type);
+        return false;
+      }
+      return true;
+    }
+    if (!sessionID) {
+      this.dlineSkippedUnattributed(event.type, "no location, not session-scoped");
+      return false;
+    }
+    const known = this.sessionDirectories.get(sessionID);
+    if (!known) {
+      this.dlineSkippedUnattributed(
+        event.type,
+        "no location and session not attributed",
+      );
+      return false;
+    }
+    if (known !== this.root) {
+      this.dlineSkippedDirectory(known, event.type);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * 归属门用 sessionID：绝大多数事件在 data.sessionID；form.created（§2.6）
+   * 的 sessionID 在 data.form.sessionID（契约字段，非猜测字段名）。
+   */
+  private eventSessionID(event: RuntimeEvent): string | undefined {
+    const direct = string(event.properties.sessionID);
+    if (direct) return direct;
+    return string(record(event.properties.form)?.sessionID);
+  }
+
+  /** sessionID → directory 索引（上限 MAX_EVENT_IDS，超出淘汰最旧条目）。 */
+  private rememberSessionDirectory(sessionID: string, directory: string) {
+    if (this.sessionDirectories.get(sessionID) === directory) return;
+    this.sessionDirectories.delete(sessionID);
+    this.sessionDirectories.set(sessionID, directory);
+    if (this.sessionDirectories.size <= MAX_EVENT_IDS) return;
+    const oldest = this.sessionDirectories.keys().next().value;
+    if (oldest) this.sessionDirectories.delete(oldest);
+  }
+
+  /** 非宿主目录跳过：每目录一次（诊断可 grep，不刷屏）。 */
+  private dlineSkippedDirectory(directory: string, eventType: string) {
+    if (this.skippedDirectoryDiagnostics.has(directory)) return;
+    this.skippedDirectoryDiagnostics.add(directory);
+    dline(
+      `event skipped: location not owned by this instance directory=${directory} type=${eventType}`,
+    );
+  }
+
+  /** 无 location 且无法归属：每（原因,事件类型）一次。 */
+  private dlineSkippedUnattributed(eventType: string, reason: string) {
+    const key = `${reason}:${eventType}`;
+    if (this.skippedUnattributedDiagnostics.has(key)) return;
+    this.skippedUnattributedDiagnostics.add(key);
+    dline(`event skipped: ${reason} type=${eventType}`);
+  }
+
+  /**
+   * 事件去重（t12 supersede 契约 §2.0 的实例集合）：去重集合改为**进程级
+   * 共享**——同一进程内同一 root 的重复激活会各自收到同一 envelope，共享
+   * 集合保证只被处理一次；仅在归属门通过后标记，非宿主事件不占用 id。
+   */
   private rememberEvent(eventID?: string) {
     if (!eventID) return true;
-    if (this.seenEventIDs.has(eventID)) return false;
-    rememberBounded(this.seenEventIDs, eventID);
+    const seen = sharedSeenEventIDs();
+    if (seen.has(eventID)) return false;
+    rememberBounded(seen, eventID);
     return true;
   }
 

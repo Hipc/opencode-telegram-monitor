@@ -1,0 +1,138 @@
+cert ok: test certificate generated (not evidence)
+=== scenario: t12-ownership (multi-root event ownership in one serve process) ===
+=== exact command ===
+docker run --rm --name t12-ownership-1199707 --network t12-ownership-net-1199707 \
+  -v <plugin-dir>:/plugin:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t12/tests/e2e/container/harness:/harness:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t12/tests/e2e/container/evidence/t12-ownership:/evidence \
+  -e T12_PLUGIN=/plugin/plugin-under-test.ts -e T12_PORT=25683 -e T12_PASSWORD=<redacted> \
+  -e NODE_TLS_REJECT_UNAUTHORIZED=0 (fake endpoint test cert; container-local) \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /harness/t12-ownership-scenario.sh'
+=== output follows ===
++ export HOME=/tmp/home
++ ROOT_A=/tmp/projA
++ ROOT_B=/tmp/projB
++ mkdir -p /tmp/home/.config/opencode/plugin /tmp/home/.otg /tmp/projA /tmp/projB
++ PLUGIN_SRC=/plugin/plugin-under-test.ts
++ cp /plugin/plugin-under-test.ts /tmp/home/.config/opencode/plugin/telegram-session-monitor.ts
++ FAKE_HOST=fake-tg
++ FAKE_PORT=8443
++ cat
++ date -u +%Y-%m-%dT%H:%M:%S.000Z
++ NOW=2026-09-25T16:16:40.000Z
++ cat
++ PORT=25683
++ set +x
++ export NODE_TLS_REJECT_UNAUTHORIZED=0
++ DIAG=/tmp/home/.otg/tgdiag.log
++ SERVER_LOG=/tmp/home/.local/share/opencode/log/opencode.log
++ API=opencode api --server http://127.0.0.1:25683
++ cd /tmp/projA
++ SPID=13
++ setsid opencode serve --hostname 127.0.0.1 --port 25683 --print-logs
++ seq 1 60
++ opencode api --server http://127.0.0.1:25683 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:25683 plugin.list
++ break
++ seq 1 60
++ grep -q setup() pid=13 root=/tmp/projA /tmp/home/.otg/tgdiag.log
++ sleep 0.5
++ grep -q setup() pid=13 root=/tmp/projA /tmp/home/.otg/tgdiag.log
++ break
++ grep -q setup() pid=13 root=/tmp/projA /tmp/home/.otg/tgdiag.log
+t12: activation A root=/tmp/projA
++ echo t12: activation A root=/tmp/projA
++ printf %s /tmp/projB
++ sed s|/|%2F|g
++ B_ENC=%2Ftmp%2FprojB
++ curl -s -u opencode:c9bzzT8fc5JC_1BLl91VX_DfH6okoRUn http://127.0.0.1:25683/api/plugin?location%5Bdirectory%5D=%2Ftmp%2FprojB
++ seq 1 60
++ grep -q setup() pid=13 root=/tmp/projB /tmp/home/.otg/tgdiag.log
++ sleep 0.5
++ grep -q setup() pid=13 root=/tmp/projB /tmp/home/.otg/tgdiag.log
++ break
++ grep -q setup() pid=13 root=/tmp/projB /tmp/home/.otg/tgdiag.log
+t12: activation B root=/tmp/projB (same pid 13)
++ echo t12: activation B root=/tmp/projB (same pid 13)
++ grep setup() pid=13 /tmp/home/.otg/tgdiag.log
++ curl -s -u opencode:c9bzzT8fc5JC_1BLl91VX_DfH6okoRUn http://127.0.0.1:25683/api/debug/location
++ set +x
++ sleep 1
++ opencode api --server http://127.0.0.1:25683 session.create -d {"title":"t12-ownership"}
++ SESSION_OUT={"data":{"id":"ses_f26a5300bffey1BO4KDPY7CqCZ","projectID":"affbf5d3af4840c3f258c9a0e6e0cc2b5a2e1a66","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790353002487,"updated":1790353002487},"title":"t12-ownership","location":{"directory":"/tmp/projA"}}}
++ echo {"data":{"id":"ses_f26a5300bffey1BO4KDPY7CqCZ","projectID":"affbf5d3af4840c3f258c9a0e6e0cc2b5a2e1a66","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790353002487,"updated":1790353002487},"title":"t12-ownership","location":{"directory":"/tmp/projA"}}}
++ printf %s {"data":{"id":"ses_f26a5300bffey1BO4KDPY7CqCZ","projectID":"affbf5d3af4840c3f258c9a0e6e0cc2b5a2e1a66","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790353002487,"updated":1790353002487},"title":"t12-ownership","location":{"directory":"/tmp/projA"}}}
++ sed -n s/.*"id":"\(ses_[^"]*\)".*/\1/p
++ head -1
++ SID=ses_f26a5300bffey1BO4KDPY7CqCZ
++ [ -n ses_f26a5300bffey1BO4KDPY7CqCZ ]
++ echo t12: session ses_f26a5300bffey1BO4KDPY7CqCZ created in A
+t12: session ses_f26a5300bffey1BO4KDPY7CqCZ created in A
++ seq 1 40
++ grep -q ses_f26a5300bffey1BO4KDPY7CqCZ /evidence/sse-raw.txt
++ break
++ opencode api --server http://127.0.0.1:25683 session.switchModel --param sessionID=ses_f26a5300bffey1BO4KDPY7CqCZ -d {"model":{"id":"definitely-not-a-model","providerID":"opencode"}}
++ timeout 90 opencode api --server http://127.0.0.1:25683 session.prompt --param sessionID=ses_f26a5300bffey1BO4KDPY7CqCZ -d {"text":"hello"}
++ seq 1 90
++ grep -q "method":"sendRichMessage" /evidence/fake-telegram.jsonl
++ sleep 1
++ grep -q "method":"sendRichMessage" /evidence/fake-telegram.jsonl
++ sleep 1
++ grep -q "method":"sendRichMessage" /evidence/fake-telegram.jsonl
++ sleep 1
++ grep -q "method":"sendRichMessage" /evidence/fake-telegram.jsonl
++ sleep 1
++ grep -q "method":"sendRichMessage" /evidence/fake-telegram.jsonl
++ sleep 1
++ grep -q "method":"sendRichMessage" /evidence/fake-telegram.jsonl
++ sleep 1
++ grep -q "method":"sendRichMessage" /evidence/fake-telegram.jsonl
++ break
++ sleep 12
++ cp /tmp/home/.otg/tgdiag.log /evidence/tgdiag-final.txt
++ cp /tmp/home/.otg/projects.json /evidence/projects-final.json
++ cp /tmp/home/.local/share/opencode/log/opencode.log /evidence/server-log.txt
++ grep -v server password /tmp/t12-serve.log
++ printf {"pid":%s,"sessionID":"%s","rootA":"%s","rootB":"%s"}\n 13 ses_f26a5300bffey1BO4KDPY7CqCZ /tmp/projA /tmp/projB
++ echo --- setup / skip / send lines ---
++ grep -E setup\(\)|event skipped|terminal notification /tmp/home/.otg/tgdiag.log
+--- setup / skip / send lines ---
+2026-09-25T16:16:41.712Z [13] setup() pid=13 root=/tmp/projA
+2026-09-25T16:16:42.079Z [13] event skipped: location not owned by this instance directory=/tmp/projB type=project.updated
+2026-09-25T16:16:42.137Z [13] setup() pid=13 root=/tmp/projB
+2026-09-25T16:16:41.709Z [13] event skipped: location not owned by this instance directory=/tmp/projA type=integration.updated
++ kill -TERM 73
++ kill -TERM -13
++ seq 1 60
++ alive=
++ [ -r /proc/1/cmdline ]
++ tr \0  
++ cmd=sh -c sh /harness/t12-ownership-scenario.sh 
++ [ -r /proc/13/cmdline ]
++ tr \0  
++ cmd=opencode serve --hostname 127.0.0.1 --port 25683 --print-logs 
++ sed -n s/^State:[[:space:]]*\([A-Z]\).*/\1/p /proc/13/status
++ state=R
++ [ R = Z ]
++ alive= 13
++ [ -r /proc/7/cmdline ]
++ tr \0  
++ cmd=sh /harness/t12-ownership-scenario.sh 
++ [ -z  13 ]
++ sleep 0.5
++ alive=
++ [ -r /proc/1/cmdline ]
++ tr \0  
++ cmd=sh -c sh /harness/t12-ownership-scenario.sh 
++ [ -r /proc/7/cmdline ]
++ tr \0  
++ cmd=sh /harness/t12-ownership-scenario.sh 
++ [ -z  ]
++ break
++ wait 13
++ true
++ [ -n  ]
++ [ -n  ]
++ echo ok: serve stopped, port 25683 released, no leftover opencode serve process
++ echo RESULT: ok t12-ownership scenario completed
+ok: serve stopped, port 25683 released, no leftover opencode serve process
+RESULT: ok t12-ownership scenario completed
