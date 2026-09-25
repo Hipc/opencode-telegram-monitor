@@ -317,7 +317,10 @@ fork 不是 parentID 子链：forked 会话 `parentID=null` 且带 `fork:{sessio
 
 权限通知去抖（`WAITING_NOTIFY_DEBOUNCE_MS`）机制、三按钮回调、消费端 apply、
 404 终态、Round 6 删除语义：**全部保持**（relay 契约 §13/§14/§16），仅换 v2 事件名与
-reply API（§3、§7）。
+reply API（§3、§7）。**（t13）** permission 记录同样落 `host_pid` 印章（§2.6 同款）——
+`permission.asked` → `addWaiting` 写 `host_pid: process.pid`（创建进程 = 宿主）；apply 前按
+`host_pid` 判定归属（`waitingRecordOwnedByThisInstance`，§3.3），缺失旧记录过渡期走
+`client.session.get`（共享存储 fail open，P4）。
 
 ### 2.6 等待记录：question = form.*（替代 question.asked）
 
@@ -344,6 +347,11 @@ reply API（§3、§7）。
 - **form 回复的「应用」通道已定案**（§9/A.1）：客户端 surface 无 form 命名空间（05 实测
   `client.rpc` 仅 `["register"]`、`client.session` 无 form/inbox 方法），唯一通道是
   **进程内 HTTP Basic 回写**（§3.2 + 附录 A.1）；仍**禁止** v1 `_client.post` 私货。
+- **归属印章（t13，relay §14.10）**：`form.created` → `addWaiting` 写 `requestID=form.id`
+  并随记录落 `host_pid: process.pid`（创建进程 = 宿主该 session）；form 回写 apply 前按
+  `host_pid` 判定归属（`waitingRecordOwnedByThisInstance`），缺失旧记录过渡期走
+  `client.session.get`（共享存储下 fail open，P4）。共享多 server 拓扑下，非宿主**绝不会**
+  应用/删除该 form 的回写记录（t13-shared-cross 正控 17/17）。
 
 ### 2.7 等待记录与状态：inbox（不产生 waiting 记录，仅 busy 守卫）
 
@@ -415,18 +423,29 @@ reply API（§3、§7）。
   **不新增**任何超时/重试包装（避免新增降级路径，issue 03 铁律）——04 的 waiting/回写
   代码同样不得引入新的守卫包装。
 - **幂等**：`permission.reply` 对已决请求 404（`[observed]` `evidence/tool-permission/commands.txt`）→
-  保持 relay §14.8.2 的 404 终态语义（删除记录、不重试）。reply 重试由扫描 ticker 驱动
+  保持 relay §14.8.2 的终态语义（删除记录、不重试）。reply 重试由扫描 ticker 驱动
   （每次重试都重新 `permission.reply`，opencode 侧幂等——已决即 404 终态）。
-  同理，form 回写遇 `409 FormAlreadySettledError`（VERDICT.md）即已定案 → 删除记录、不重试。
-  以上 404/409 终态删除**仅对归属门通过的宿主实例生效**（见下条）。
-- **apply 归属门（r4，冻结）**：`scanReplyQueue` 在 `applySessionReply` /
-  `applyQuestionReply` / `applyQuestionReject` 之前，先 `await client.session.get({sessionID})`
-  确认本实例宿主该 session；**任何失败 → 本轮跳过该记录**（不 apply、不删除、不置终态，
-  下轮重试），并按 `request_id` 每实例只记一次 dline（info 级）：
-  `reply scan: apply skipped: session not hosted by this instance request=<id> session=<id> error=<category>`。
+  同理，form 回写遇 `409 FormAlreadySettledError`（t13-probe P2）即已定案 → 删除记录、不重试。
+  **（t13 修订，supersede 上两句的「404 终态」表述）**：form reply/cancel 的 **HTTP 404
+  不再视为终态**——t13-probe P2 实测非宿主对 pending form 与宿主对已决 form 的
+  get/reply/cancel **全部 404**（`FormNotFoundError`），404 无法区分「非本实例持有」与
+  「form 不存在」；**仅 409 `FormAlreadySettledError` 是确认已决终态** → 删除记录、不重试，
+  404 一律保留记录下轮重试（绝不删除共享记录）。permission 侧 `PermissionNotFoundError` 仅对
+  **归属已确认**（`host_pid` 匹配的门先于调用运行）的宿主实例上是终态。以上终态删除**仅对
+  归属门（`waitingRecordOwnedByThisInstance`，host_pid 匹配）通过的宿主实例生效**（见下条）。
+- **apply 归属门（t13 修订 supersede r4 的 `session.get` 门，冻结）**：`scanReplyQueue` 在
+  `applySessionReply` / `applyQuestionReply` / `applyQuestionReject` 之前，先
+  `await this.waitingRecordOwnedByThisInstance(record)` 按记录 **`host_pid` 印章**确认归属
+  （`host_pid === process.pid` 才 apply）；**非本实例 → 本轮跳过该记录**（不 apply、不删除、
+  不置终态，下轮重试），并按 `request_id` 每实例只记一次 dline（info 级）：
+  `reply scan: apply skipped: waiting record owned by another instance request=<id> session=<id> host_pid=<pid> pid=<pid>`。
+  `host_pid` 缺失（旧版本记录）→ 过渡期沿用 r4 的 `client.session.get` 门
+  （`sessionHostedByThisInstance`）——**共享存储拓扑下该门 fail open**（t13-probe P4：
+  两进程 `session.get` 载荷逐字节相同），属已知过渡限制，待旧记录自然清空。
   目的：共享注册表（多个 server 指向同一 registry 根）下，非宿主 server 不得把回写打到
-  自身并以自身 404 误删记录；404/409 终态（上条）只属于真正的宿主实例。绝不用异常结果
-  猜测归属。
+  自身并以自身 404 误删记录；终态（上条）只属于真正的宿主实例。**宿主印章 = 创建记录时收到
+  asked 事件的进程 pid**（t13-probe P1：非宿主收到 0 个 session/form/permission 事件）。
+  绝不用异常结果猜测归属；绝不按 pid 之外的条件删除记录。
 - **resolved-reply 分类（r2，冻结）**：v2 client 对**已决**请求再 `permission.reply`
   抛的是**普通 `Error`** —— `name="Error"`、`message="Permission request not found:
   per_<id>"`、无 `status`/`statusCode`/`_tag`、无自有属性（实测
@@ -436,16 +455,25 @@ reply API（§3、§7）。
   **精确文本** `^Permission request not found: per_` 归类终态 → 删除记录、不重试
   （relay §14.8.2 语义保持）；其它 Error 一律走可重试路径并记录原因日志——**不得**
   用宽泛子串放大终态面。status/statusCode===404 与 error name 含 404/NotFound 的
-  既有分支继续有效。
+  既有分支继续有效。**（t13 限定）**：上述 404 终态判定**仅对归属门（`host_pid` 匹配，
+   §3.3）已确认的宿主实例生效**——非宿主对 pending permission 也会返回
+   `PermissionNotFoundError`（t13-probe P3，与宿主已决形态不可区分），但门先于调用运行，
+   非宿主根本不会走到 `permission.reply`，故不会误删。
 - **事务**：落盘仍走 `registry.mutate`（SharedFileStore 短临界区读写，既有契约不动；
   projects-registry.md §3/§4 零改动）。
 - **超时/重试**：**不新增** client 超时包装（见上实现修订）；`permission.reply` 与 form
-  回写的重试由扫描 ticker 自然驱动（幂等语义见上）；Telegram 侧 `telegramWithRetry` 不变。
+  回写的重试由扫描 ticker 自然驱动（幂等语义见上）；Telegram 侧 `telegramWithRetry` 不变
+  **（t13：`telegramWithRetry` 永久 HTTP 400 不再重试——`answerCallbackQuery` 的
+  "query is too old" 类重试必然同样失败；401 亦立即抛出；429/5xx/网络继续重试，见 relay
+  §14.10.4）**。
 - **事件顺序**：v2 envelope 按 emit 顺序到达插件流（SSE/总线保序，B1）；plugin 内
   `handleEvent` 逐条 `await`（现有 `track` 包装保留）。durable `seq` 仅供诊断，**不**做
   投影重放。
-- **兼容迁移**：v1 的 `~/.otg/projects.json` 记录无需迁移（record 结构不变）；仅事件名/
-  调用面换，`SessionRecord` 结构与 parse 白名单零改动。
+- **兼容迁移**：v1 的 `~/.otg/projects.json` 记录无需迁移（旧记录结构照常解析）；仅事件名/
+  调用面换。**（t13 例外）**：`SessionRecord` 追加可选 `host_pid?: number`（strict parse：
+  缺失 → 不含键、正整数 → 保留、其它 → 丢弃整条记录），因而 parse 白名单有一处**向后兼容**
+  增项——旧记录（无 `host_pid`）解析为「缺印章」形态，消费端走 t10 `session.get` 过渡门
+  （§3.3），不迁移、不重打印章，待旧记录 7 天 TTL 自然清空（relay §14.10.2/§14.10.5）。
 
 ---
 
@@ -719,6 +747,28 @@ token 聚合；无「永不填充」降级面。形状入 §2.1/§3.1。仍开�
   非宿主 → 归属门 `client.session.get` `Session.NotFoundError` → skip（无删除，dline
   `apply skipped` 见 `tgdiag-after-b-skip.txt`）；负控 `evidence/t10-cross-prefix/**`
   复现修复前「非宿主 404 删记录、owner 无 `form.replied`」。
+- **t13 共享多 server 拓扑（commit `2c95891c`，`tests/e2e/container/t13-probe/VERDICT.md`）**：
+  `session.get` **fail-open 证据（P4）**：同一共享 DB 下 A/B 两进程 `GET /api/session/<sid>`
+  载荷**逐字节相同**（`evidence/t13-probe/p4-session-get-a.json` vs `-b.json`；`p4-*.status`），
+  故 t10 的 `session.get` 归属门在该拓扑 fail open；**宿主判定改走创建期 `host_pid` 印章**
+  （relay §14.10 / §3.3），非宿主不删除、不 apply（t13-shared-cross 正控）。**路由语义表（P2/P3）**：
+
+  | 调用 | owner pending | non-owner pending | owner settled | non-owner settled |
+  |---|---|---|---|---|
+  | `session.form.get`（`GET …/form/<fid>`） | **200** `state=pending` | **404** `FormNotFoundError` | 200 `state=answered` | **404** |
+  | `session.form.reply`（`POST …/reply`） | **204** | **404** `FormNotFoundError` | **409** `FormAlreadySettledError` | **404** |
+  | `session.form.cancel`（`DELETE …/<fid>`） | **204** | **404** `FormNotFoundError` | **409** `FormAlreadySettledError` | **404** |
+  | `session.permission.get` | **200** | **404** `PermissionNotFoundError` | — | — |
+  | `session.permission.reply` | **204** | **404** `PermissionNotFoundError` | 404 `PermissionNotFoundError` | 404 |
+
+  → **409 是唯一确认已决终态**（owner-settled 的 reply/cancel 均 409）；**404 对 form 不可判终态**
+  （non-owner pending 与 non-owner settled SAME shape，与 owner settled 的 409 区分）；permission
+  的 `PermissionNotFoundError`（owner-settled 与 non-owner 均 404）**无 owner 侧判别**——`session.permission.get`
+  是唯一 owner/non-owner 可区分的 permission 判别 API（owner 200 / non-owner 404，§A.1 补充 API），
+  但本插件以 `host_pid` 门（先于调用运行）替代，无需该补充调用。P3 结论：非宿主**无法 settle**
+  permission；宿主判定必须在 reply 调用**之前**完成（门先于调用）。证据
+  `evidence/t13-probe/p2-*.status/p2-*.json`、`p3-*.json/status`；P5 `type:"multiselect"`
+  round-trips（`p5-*.json`）验证 wizard `multiple = field.type === "multiselect"` 映射无 Bug。
 - **harness 接口（05 e2e 契约，04 必须匹配）**：TG 向导最终提交 = 记录字段
   `q_answers: Array<Array<string>>`（relay §14 冻结字段；每题 = label/文本数组，按
   fields[] 顺序）。harness 以完全相同的外部写入注入：`inject_json_field "$FRMID"
@@ -753,6 +803,21 @@ token 聚合；无「永不填充」降级面。形状入 §2.1/§3.1。仍开�
 
 ## 变更记录
 
+- 2026-09-26 修订 6（contract revision r6，t13 field-fix 回写）：实机事故「TUI
+  question/wizard/permission 对话框永不 resolved，宿主永不 apply」——两台 opencode server 共享
+  `~/.otg/projects.json` 与 storage（`serve --service` 宿主 + 另一台 `serve`），NON-HOST 把 TG
+  回写打到自身端点 → HTTP 404 → 旧代码判「已 settle」删共享记录 → 宿主永不 apply；t10
+  `session.get` 归属门该拓扑 fail open（t13-probe P4：`p4-session-get-a/b.json` 逐字节相同）。
+  修复（commit `2c95891c`）：① §3.3 归属门 supersede——记录落 `host_pid` 印章（创建进程 = 宿主，
+  §2.6），apply 按 `waitingRecordOwnedByThisInstance`（`host_pid===pid`）判定；缺失旧记录过渡期
+  走 t10 `session.get` 门；② §3.3 幂等/§A.1 终态分类——form reply/cancel **404 不再终态**
+  （t13-probe P2 路由语义表：non-owner pending 与 settled 均 404、无 409），**唯 409
+  `FormAlreadySettledError` 终态删记录**；permission `PermissionNotFoundError` 仅宿主（门先于
+  调用）终态；§A.1 记录 t13 路由语义表 + P4/P2/P3 证据；③ §3.3 传输语义——`telegramWithRetry`
+  永久 HTTP 400 不重试、401 立即、429/5xx/网络重试；callback catch 分支 400 不二次
+  `answerCallbackQuery`（relay §14.10.4）。证据：`tests/e2e/container/assert/t13-probe.mjs` +
+  `evidence/t13-probe/**`（P1–P5）、`assert/t13-shared-cross.mjs` + `evidence/t13-shared-cross/**`
+  （正控 17/17）+ `evidence/t13-shared-cross-prefix/**`（负控 10/10 复现修复前误删）。
 - 2026-09-26 修订 5（contract revision r5，t12 实机事故修复回写）：实机事故「一次 agent
   完成推送数条不同项目名的 Telegram 通知（同表内容），仅会话所属项目一条正确」——
   根因：v2 事件流每进程全局 + 插件按 location 多激活，`handleEvent` 无归属过滤。修复

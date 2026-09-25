@@ -56,6 +56,7 @@ export type SessionRecord = {
   resolved: boolean;    // 初始 false；replied/rejected 置 true；终态（决策 #5/#6）
   request_id: string;   // 内部匹配键：asked 事件 properties.id；replied 匹配键见 §5.3
   created_at: string;   // ISO 8601 字符串（new Date().toISOString()），本轮仅预留不消费（决策 #13）
+  host_pid?: number;    // t13 归属印章：创建该记录（=宿主该 session）的进程 pid；旧版本记录缺失（§14.4/§13.6）
 };
 ```
 
@@ -400,6 +401,8 @@ export function markSessionSent(
 | 本文件 §6.2/§6.3 扫描语义 | 每轮逐条处理筛选命中的记录（同 request_id 重复副本各发一次） | **t09-dupe-fix 追加**：轮内按 `request_id` 去重，重复副本一轮只处理一次（快照过期保护）；发送失败仍不置位、下轮重试（§6.2/§6.3 行内注） |
 | 本文件 §14.8.3 message_id 解析 | 三形态防御解析（`result?.message_id ?? result?.message?.message_id ?? result?.messageId`）+ 旧键名诊断 | **t09-dupe-fix supersede**：`telegramRequest/telegramWithRetry` 返回已解包 `envelope.result`，正确解析 = 顶层 `response?.message_id`；旧三形态与旧诊断作废，新诊断 `typeof=… keys=…`（§14.8.3 行内注） |
 | 本文件 §13.6/§14.4.1 消费端 apply | 筛选命中即调 apply；失败/404 判定后删除记录（无归属校验） | **t10-field-fix 追加**：apply 前置**归属门**（`client.session.get`）——非宿主实例跳过（不 apply、不删除、不置终态），`apply skipped` dline 每 request_id 每实例一次；404/409 终态删除仅宿主实例（§13.6/§14.4.1/§14.8.2/§16.4 行内注） |
+| 本文件 §13.6/§14.4.1 归属门（t10） | `client.session.get` 成功即归本实例（共享存储下 fail open，t13-probe P4） | **t13-field-fix supersede**：归属门改 `waitingRecordOwnedByThisInstance`——按记录 `host_pid` 印章（`=== process.pid` 才 apply）；缺失旧记录过渡期沿用 t10 `session.get` 门（§14.10.2/§13.6/§14.4.1） |
+| 本文件 §14.8.2 404 终态 / §16.4 终态删除 | 404/409（FormNotFound/SessionNotFound/FormAlreadySettled）均为终态 → 删除记录 | **t13-field-fix supersede**：form reply/cancel **404 不再视为终态**（非宿主 pending 与宿主已决均 404，无法区分）；**仅 409 `FormAlreadySettled` 终态删记录**；permission `PermissionNotFound` 仅宿主（门先于调用）终态（§14.10.3/§14.8.2/§16.4） |
 | docs/modules/opencode-v2-contract.md §A.1 端口发现（限制） | `<port>` 仅从 `process.argv` 解析；`run --standalone`（`--port 0`）不可发现 → 显式失败 | **t10-field-fix supersede**：端点发现改优先级 argv `--port N`/`--port=N`（env 密码；有端口无密码显式失败不回落）→ state `service.json`（`$XDG_STATE_HOME\|~/.local/state`，pid 匹配优先，url 必须 loopback http）→ legacy `~/.config/opencode/service.json`（`{port, password}`）；每次尝试重新读文件（v2 契约 §A.1 修订，commit `5453956`） |
 
 ## 12. 变更记录
@@ -510,6 +513,22 @@ export function markSessionSent(
   commit `5453956`；容器证据 t10-cross（正控：服务守护进程经 service.json pid 匹配发现端点
   apply 一次、非宿主 skip 无删除、无记录丢失）+ 负控 t10-cross-prefix（复现修复前误删）。
   supersede 记录见 §11。
+- 2026-09-26 修订（t13 field-fix / v2 适配实机修复轮，见 §2/§13.6/§14.4.1/§14.8.2/§16.4/§14.10）：
+  实机事故「TUI question/wizard/permission 对话框永不 resolved，宿主永不 apply」——两台
+  opencode server 共享 `~/.otg/projects.json` 与 storage：NON-HOST 实例把 TG 回写打到自身端点
+  → HTTP 404 → 旧代码判「已 settle」删共享记录 → 宿主永不 apply。t10 `session.get` 归属门在该
+  拓扑 fail open（P4 载荷逐字节相同）。修复（commit `2c95891c`）：① 记录新增 `host_pid?: number`
+  归属印章（创建进程 = 宿主，`persistWaitingRecord` 写 `process.pid`，strict parse 正整数；
+  缺失旧记录过渡期走 `session.get` 门）；归属门改
+  `waitingRecordOwnedByThisInstance`（`host_pid === process.pid` 才 apply；非宿主跳过不删除，
+  host_pid 缺失走 t10 过渡门）；② 404 分类修订——form reply/cancel **404 不再视为终态**
+  （P2：非宿主 pending 与已决均 404、与宿主已决 409 不同，404 无法区分），**唯 409
+  `FormAlreadySettled` 终态删记录**；permission `PermissionNotFound` 仅宿主（门先于调用）
+  终态；③ 传输——`telegramWithRetry` 永久 400 不重试（401 同）、429/5xx/网络继续重试、
+  stale-callback 400 不二次 `answerCallbackQuery`。已知容忍：宿主重启 → 已印章记录滞留至 TTL；
+  旧未印章记录过渡期 fail open（§14.10.5）。证据 `tests/e2e/container/evidence/t13-probe/**`
+  （P1–P5）+ `t13-shared-cross/**`（正控 17/17、非宿主 skip）+ `t13-shared-cross-prefix/**`
+  （修复前负控 10/10 复现 404 误删）。supersede 记录见 §11。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
 
@@ -665,20 +684,28 @@ export function buildSessionPermissionKeyboard(entryID: string): TelegramInlineK
 - 头部 `if (this.disposed) return 0;`
 - `registry.read()`（不加锁，最终一致）→ `findRegistryEntry(reg, this.root)`：**只扫自己条目**；条目缺失 → 返回 0 无操作。
 - 筛选（决策 #5，冻结）：`record.type === "permission" && record.reply != null && record.resolved === false`。
-- **归属门（t10 实机修复，permission/question 两分支共用，冻结）**：apply 前先
-  `await this.client.session.get({ sessionID: record.session_id })`；成功 → 继续；任何失败 →
-  **本轮跳过该记录**（不 apply、不删除、不置终态；下轮重试），并按 `request_id` 每实例只记
-  一次 dline（info 级）：
-  `reply scan: apply skipped: session not hosted by this instance request=… session=… error=…`
-  （实测留痕见 `tests/e2e/container/evidence/t10-cross/tgdiag-after-b-skip.txt`）。绝不用
-  异常结果猜测归属。404/409 终态删除（§14.8.2/§16.4）**仅宿主实例可触发**。
+- **归属门（t13 实机修复 supersede t10 的 `session.get` 门，permission/question 两分支共用，
+  冻结）**：apply 前先 `await this.waitingRecordOwnedByThisInstance(record)`（见下）——看记录
+  `host_pid` 印章：
+  - `record.host_pid === process.pid` → 归本实例，apply；
+  - `record.host_pid !== process.pid` → **本轮跳过该记录**（不 apply、不删除、不置终态；下轮
+    重试），并按 `request_id` 每实例只记一次 dline（info 级）：
+    `reply scan: apply skipped: waiting record owned by another instance request=… session=… host_pid=… pid=…`
+    （实测留痕见 `tests/e2e/container/evidence/t13-shared-cross/tgdiag-*.txt`；t10 的旧形态留痕
+    `evidence/t10-cross/tgdiag-after-b-skip.txt` 仍有效）；
+  - `host_pid` 缺失（旧版本记录）→ 过渡期沿用 t10 `session.get` 归属门
+    （`sessionHostedByThisInstance`，方法保留仅作旧记录过渡；**共享存储拓扑下该门
+    fail open**——t13-probe P4 `session.get` 两进程载荷逐字节相同，见
+    `tests/e2e/container/t13-probe/VERDICT.md`，待旧记录自然清空后失效）。
+  绝不用异常结果猜测归属；**绝不按 pid 之外的条件删除记录**。404/409 终态删除
+  （§14.8.2/§16.4）**仅宿主实例（`host_pid` 匹配）可触发**。
 - 逐条**串行**调 `applySessionReply`；单条抛错不得中断整轮（try/catch → logWarn 继续）。返回本轮成功应用条数。
 - ticker 回调：仿 startSessionsScan（in-flight 守卫 + track(async()=>{ try { await scanReplyQueue() } finally { inFlight=false } })）。
 
 **`applySessionReply(record: SessionRecord)`（私有，异步）**：
 
-- **归属门前置（t10）**：仅由已通过归属门的调用方（`scanReplyQueue`，见上）进入；非宿主
-  实例不会调用本方法，本方法不重复探测。
+- **归属门前置（t10 / t13）**：仅由已通过归属门的调用方（`scanReplyQueue` 的
+  `waitingRecordOwnedByThisInstance`，见上）进入；非宿主实例不会调用本方法，本方法不重复探测。
 - **透传语义（决策 #1，冻结）**：`response = record.reply` 原样（"once"|"always"|"reject"），不映射、不校验（parse 已保证合法）。
 - 调用参数：`sessionID = record.session_id`、`permissionID = record.request_id`（SDK 签名见 §13.8）。
 - **成功**（API resolve）→ `await this.registry.mutate((reg) => markSessionResolved(reg, record.request_id))`；mutate 返回 undefined（抢锁超时/记录消失）→ logWarn，下轮重试（resolved 未置位属安全重试态）。
@@ -1201,18 +1228,27 @@ export function buildQuestionKeyboard(
   - `record.type === "question"`：`record.resolved || (record.q_answers == null && record.q_reject !== true)` → continue；否则：
     - `record.q_answers != null` → `applyQuestionReply(record)`；
     - `record.q_answers == null && record.q_reject === true` → `applyQuestionReject(record)`。
-- **归属门（t10 实机修复，与 permission 分支共用）**：筛选命中后、`applyQuestionReply` /
-  `applyQuestionReject` 之前，先 `await client.session.get({ sessionID: record.session_id })`；
-  任何失败 → **本轮跳过**（不 apply、不删除、不置终态；下轮重试），每 `request_id` 每实例
-  只记一次 dline `reply scan: apply skipped: session not hosted by this instance`（§13.6
-  同款）。§14.8.2/§16.4 的 404 终态删除**仅宿主实例可触发**；非宿主 server 不得因自身
-  404 误删共享注册表记录。
+- **归属门（t13 实机修复 supersede t10 的 `session.get` 门，与 permission 分支共用）**：筛选命中后、
+  `applyQuestionReply` / `applyQuestionReject` 之前，先 `await this.waitingRecordOwnedByThisInstance(record)`
+  ——看记录 `host_pid` 印章（§13.6 同款判定）：`host_pid === process.pid` → apply；
+  `host_pid !== process.pid` → **本轮跳过**（不 apply、不删除、不置终态；下轮重试），每
+  `request_id` 每实例只记一次 dline
+  `reply scan: apply skipped: waiting record owned by another instance …`（§13.6 同款）；
+  `host_pid` 缺失（旧版本记录）→ 过渡期沿用 t10 `client.session.get` 门
+  （`sessionHostedByThisInstance`，共享存储下 fail open，t13-probe P4，待旧记录自然清空）。
+  §14.8.2/§16.4 的终态删除（404 期间态见 §14.8.2 t13 修订——**仅 409 终态**）**仅宿主实例
+  （`host_pid` 匹配）可触发**；非宿主 server 不得因自身 404 误删共享注册表记录。
 - 逐条**串行**、单条抛错不中断整轮（既有 try/catch 保持）；返回成功应用条数（语义不变）。
 
 #### 14.4.2 applyQuestionReply / applyQuestionReject（1.4 新增，放 applySessionReply 之后）
 
 - 与 `applySessionReply`（1633-1669）**同构**：调用 → 成功 `registry.mutate(markSessionResolved)`（undefined → logWarn，下轮重试）；失败/抛错 → logWarn（token 脱敏）**不置位**，下轮 ticker 重试；不引入认领机制。
-  **（Round 2 修订：§14.8.2 supersede 失败语义**——错误判定「不存在」（404/QuestionNotFound/SessionNotFound）→ 置 resolved 终态 + log info + 不 rethrow，不再重试；非 404 维持 logWarn + rethrow 下轮重试）**
+  **（Round 2 修订：§14.8.2 supersede 失败语义**——错误判定「不存在」（404/QuestionNotFound/SessionNotFound）→ 置 resolved 终态 + log info + 不 rethrow，不再重试；非 404 维持 logWarn + rethrow 下轮重试）
+  **（t13 再次修订：§14.4.2 失败语义再 supersede**——form reply/cancel 的 **404 不再视为终态**
+   （t13-probe P2：非宿主 pending 与宿主已决的 get/reply/cancel 均 404，无法区分；唯
+   宿主已决 get 为 200 state=answered），**只有 409 `FormAlreadySettled` 才是确认已决终态**
+   → 删除记录、不重试；404 一律原因日志 + throw（记录保留，下轮重试，绝不删除共享记录）。
+   该 409/404 分类在 `postFormRequest` 统一处理（§14.8.2/§16.4），本方法仅描述透传语义）**
 - **透传语义（冻结）**：`answers = record.q_answers` 原样（不映射、不校验——parse 已保证 `Array<Array<string>>`）；`sessionID = record.session_id`、`requestID = record.request_id`。
 - **双路径说明（冻结）**：question.replied/rejected 事件路径（§5.3）保留**先到先得**——筛选已排除 resolved；若 read→apply 窗口内事件/其它实例先置位，本实例 API 调用以「已决」失败被捕获 → logWarn → 下轮读到 resolved=true 即跳过（§13.6 竞态收敛同款）。
 
@@ -1389,21 +1425,31 @@ private questionApplyChannel?: 1 | 2 | 3 | undefined; // 实例级缓存：某�
   取自记录；**成功路径** `mutate(markSessionResolved)`（undefined → logWarn 下轮重试，
   既有形态不变）。
 
-#### 14.8.2 404 终态（修订 §14.4.2 失败重试，Phase 2.1 冻结）
+#### 14.8.2 404 终态（修订 §14.4.2 失败重试，Phase 2.1 冻结；**t13 再修订**）
 
-- **判定「不存在」**：applyQuestionReply/Reject 捕获错误后判定错误可识别为对象不存在——
-  `errorCategory(error, ctx)` 字符串含 `404`、`QuestionNotFound`、`SessionNotFound`，
-  或 `error` 的 `status`/`statusCode` 字段 === 404（SDK APIError 形态两者取一即可）。
-- **终态行为（冻结）**：`mutate(markSessionResolved)` + `log("info", "question no longer exists; marking resolved", { requestId, sessionId })` +
-  **不 rethrow**——本轮视为已处理，下轮 ticker 读到 resolved=true 自然跳过
-  （与双路径先到先得 §14.4.2 竞态收敛一致；事件路径或其它实例先置位时同理跳过）。
-- **非 404 错误**：维持既有行为（logWarn token 脱敏 + rethrow，scanReplyQueue 捕获不中断整轮，
-  下轮重试）。
-- **归属门前置（t10 实机修复，冻结）**：本节「不存在」终态删除**仅在归属门通过后**适用——
-  apply 前先 `client.session.get` 确认本实例宿主该 session（§14.4.1/§13.6）；门失败即跳过，
+> **t13 再修订（2026-09-26，commit `2c95891c`，t13-probe P2）**：**404 不再视为终态**。
+> 共享存储拓扑下非宿主 pending 与宿主已决的 `form.get`/`reply`/`cancel` **全部返回 404**
+> （`FormNotFoundError`），与宿主已决的 409 不同；404 **无法区分**「非本实例持有」与
+> 「form 不存在」，故一律**保留记录、下轮重试**（绝不删除共享记录）。**唯 409
+> `FormAlreadySettledError` 是确认已决终态** → 删除记录、不重试。permission 侧
+> `PermissionNotFound`（opencode-v2-contract §3.3）仅对**归属已确认**（`host_pid` 匹配，§13.6）
+> 的实例上终态。t13 下的终态判断整体由 `postFormRequest` 按 HTTP 状态执行（409 → 终态删记录；
+> 404 与其它非 2xx → 原因日志 + throw，记录保留），本节原「404/QuestionNotFound/SessionNotFound
+> 判定终态」表述作废。下方保留历史 t10/Phase 2.1 描述供追溯，实际以本 t13 修订为准。
+
+- **判定「已决」**：applyQuestionReply/Reject 捕获错误后判定**仅 HTTP 409
+  `FormAlreadySettledError`**（SDK APIError `status`/`statusCode === 409`，或分类字符串含
+  `FormAlreadySettled`）→ 终态；**404 一律不判终态**（t13 再修订，见上）。
+- **终态行为（冻结）**：`mutate(removeSessionRecord)`（§16.4）+ info 日志 + **不 rethrow**——
+  本轮视为已处理，下轮 ticker 读到已删自然跳过（双路径先到先得 §14.4.2 竞态收敛一致）。
+- **非 409 错误**：维持既有行为（logWarn token 脱敏 + rethrow，scanReplyQueue 捕获不中断整轮，
+  下轮重试）——**含 404**（t13）。
+- **归属门前置（t13 supersede t10，冻结）**：本节终态删除**仅在归属门通过后**适用——apply 前
+  先 `waitingRecordOwnedByThisInstance` 确认 `host_pid` 匹配（§14.4.1/§13.6；`host_pid` 缺失
+  旧记录过渡期走 `session.get` 门，共享存储下 fail open，t13-probe P4）；门失败即跳过，
   **不判定终态、不删除**。非宿主实例的 404 不得删除共享注册表记录（实机事故根因：ad-hoc
-  server 对自身 404 误判终态删记录，真宿主永不 apply）。终态动作以 §16.4 为准
-  （`markQuestionResolved` 内部 `removeSessionRecord`）。
+  server 对自身 404 误判终态删记录，真宿主永不 apply；t13 前 t10 `session.get` 门在该拓扑
+  fail open）。终态动作以 §16.4 为准（`markQuestionResolved` 内部 `removeSessionRecord`）。
 
 #### 14.8.3 sendRichMessage message_id 防御解析（修订 §14.2.2 sendMessageWithKeyboard 扩展，Phase 2.1 冻结）
 
@@ -1767,6 +1813,85 @@ q_answers/q_reject 未闭环记录；API-208 各用例 A/B 未到终态的在 fi
 - 不动 permission 链路（§13 全部）、不动消费端（§14.4）、不动发送端（§14.2.2）。
 - 不做多实例取消竞态治理：mutate 幂等 + undefined 防御已覆盖（§14.7 同款）。
 
+### 14.10 t13 实机修复：`host_pid` 归属印章 + 404 分类修订 + 传输语义（冻结 2026-09-26，commit `2c95891c`）
+
+> 计划/依据：field incident 4（共享存储两 server 拓扑）+ t13-probe（P1–P5）/ t13-shared-cross。
+> 本章**唯一的 field 事实来源**（probe 实测），supersede 前述 t10 归属门叙述并作为其修订基线；
+> 记录结构/parse 同步更新 §2 / §14.1.1 / §14.1.2。
+
+#### 14.10.1 `host_pid` 记录字段（supersede §2/§14.1.1 类型定义，冻结）
+
+- **语义**：`host_pid?: number` = **创建该等待记录的进程 pid**。创建方是收到 `asked` 事件
+  （`permission.asked`/`form.created`）的进程，即宿主该 session 的进程（t13-probe P1：非宿主
+  server 收到 **0** 个 session/form/permission 事件，只有宿主收到）→ 创建者 == 宿主是可靠信号。
+- **写入**：`persistWaitingRecord`（src/monitor.ts ~1048-1053）在构造记录时写
+  `host_pid: process.pid`，permission 与 question 两会话分支统一。
+- **parse（strict，非常量）**：`parseSessionRecord`（src/registry/index.ts）对 `host_pid`：
+  - 键**缺失** → 构造记录**不含该键**（旧版本记录 = 过渡期走 `session.get` 归属门）；
+  - `typeof === "number"` 且 `Number.isInteger` 且 `> 0` → 原样保留；
+  - 其它任何值 → **丢弃整条记录**（严格白名单，同 §3.2/§14.1.2，不抛错）。
+- 消费方：`scanReplyQueue` 的归属门（permission §13.6 / question §14.4.1 统一走
+  `waitingRecordOwnedByThisInstance`）。
+
+#### 14.10.2 归属门（supersede t10 `session.get` 门，permission/question 共用，冻结）
+
+`waitingRecordOwnedByThisInstance(record)`（src/monitor.ts ~1722）判定：
+
+| 情形 | 判定 | 动作 |
+|---|---|---|
+| `record.host_pid === process.pid` | 归本实例（创建者即宿主） | apply |
+| `record.host_pid !== process.pid` | 非宿主 | **跳过**：不 apply、不删除、不置终态；下轮重试；每 `request_id` 每实例一次 dline `reply scan: apply skipped: waiting record owned by another instance request=… session=… host_pid=… pid=…` |
+| `record.host_pid` 缺失（旧版本记录） | 过渡期 | 沿用 t10 `sessionHostedByThisInstance`（`client.session.get`）——**共享存储拓扑下 fail open**（t13-probe P4：两进程 `session.get` 载荷逐字节相同），属已知过渡限制，待旧记录自然清空后失效 |
+
+- **绝不用异常结果猜测归属；绝不按 pid 之外的条件删除记录。**
+- t10 的依赖：`sessionHostedByThisInstance` 方法保留但语义降级为「仅旧记录过渡」；新记录一律
+  走 `host_pid` 门（写盘必含印章）。
+
+#### 14.10.3 404 分类修订（supersede §14.8.2/§16.4 终态判定，冻结）
+
+- **form reply/cancel**（`postFormRequest`，src/monitor.ts ~1891）：
+  - **HTTP 409 `FormAlreadySettled`** = 唯一确认已决 → **终态删除记录、不重试**；
+  - **HTTP 404（`FormNotFound`/`SessionNotFound`）不再视为终态**——t13-probe P2 实测非宿主对
+    pending form 的 get/reply/cancel 全部返回 404（与宿主已决的 `get 200 state=answered`
+    形态不同；两者 SAME shape 仅对非宿主的 pending 与 settled），404 **无法区分**「非本实例
+    持有」与「form 不存在」→ 一律原因日志 + throw，**记录保留，下轮重试，绝不删除共享记录**；
+  - 其它非 2xx → 原因日志 + throw（记录保留，下轮重试）。
+- **permission `PermissionNotFoundError`**（§3.3）：仅对**归属已确认**（`host_pid` 匹配，
+  §14.10.2 门先于调用运行）的宿主实例上是终态 → 删除记录；非宿主对该 pending 的
+  404 属不可区分形态，但**不会走到调用**（门已过滤），故不会误删。
+- 终态动作统一 `removeSessionRecord`（§16.4）。
+
+#### 14.10.4 传输语义（supersede `telegramWithRetry` 重试分类，冻结）
+
+- `telegramWithRetry`（src/telegram/client.ts）：
+  - **永久错误**（立即抛出、不重试）：**HTTP 400**（Bad Request，如 `answerCallbackQuery` 的
+    "query is too old"——重试必然同样失败）**与 HTTP 401**（认证失败）；避免把单次点击放大成
+    多次 API 调用；
+  - **可重试**（按背压与 `TELEGRAM_SEND_ATTEMPTS` 上限）：429（按 `retry_after`）、5xx、网络错误。
+- **callback catch 分支**（perm/question，「操作失败，请重试」alert 补发之前，src/monitor.ts
+  ~3063/3092）：`isStaleCallbackQueryError(error)`（`TelegramApiError.errorCode === 400`）→
+  **跳过第二次 `answerCallbackQuery`**（单次点击 = 1 次 call，替代旧 6–18 次放大）。非 400
+  错误维持原补发 + `log("error", "Callback handling failed", …)`。
+
+#### 14.10.5 已知容忍（accepted known limitations，冻结）
+
+- **(a) 宿主进程重启**：宿主重启后已打 `host_pid` 印章的记录仍指向旧 pid，`host_pid !==
+  process.pid` → 其它实例（及重启后的新宿主）都不会 apply；记录**滞留直到 TTL 7 天回收**
+  （§16.6 path ③）。**不做运行时归属回填/fallback**，属设计取舍（by design）——认证态可能
+  已失效、重打印章无法确认真实宿主，宁留过期记录不冒险误删/误 apply。
+- **(b) 旧版本未打印章记录**：共享存储拓扑下沿用 t10 `session.get` 过渡门（fail open，
+  §14.10.2），是已知过渡限制——**不做升级迁移/批量重打印章**，待旧记录 7 天 TTL 自然清空。
+
+#### 14.10.6 测试与证据（t13）
+
+- `tests/e2e/container/assert/t13-probe.mjs`（P1–P5）+ `tests/e2e/container/t13-probe/VERDICT.md`
+  + `tests/e2e/container/evidence/t13-probe/**`（P1 event-delivery；P2 form 路由语义表；
+  P3 permission 路由；P4 `session.get` 逐字节相同；P5 multiselect round-trip）。
+- `tests/e2e/container/assert/t13-shared-cross.mjs` + `tests/e2e/container/evidence/t13-shared-cross/**`
+  （正控：非宿主 skip 全部记录、宿主恰一次 apply、记录删除）+ `evidence/t13-shared-cross-prefix/**`
+  （修复前负控：404 误删、宿主无 apply）。
+- 传输/404 语义单元：commit `2c95891c` 携带的 stamp/404/`telegramWithRetry` 单测。
+
 ## 15. Round 5 扩展：Telegram 富文本消息编辑统一（probe gate 驱动的富文本 edit 契约）（冻结 2026-09-03）
 
 > 计划: docs/todos/telegram-rich-message-edit.md（其 Round 1；本模块契约序列 Round 5）。
@@ -2029,15 +2154,16 @@ export function removeExpiredSessionRecords(
 |---|---|---|
 | `resolveWaitingRecord(requestID)`（1049-1060） | `permission.replied` / `permission.v2.replied`（含 permissionID 变体）、`question.replied/rejected` / `question.v2.replied/rejected`（§5.3 全变体） | `mutate(removeSessionRecord(reg, requestID))`（原 `markSessionResolved`） |
 | `applySessionReply(record)`（1725-1761） | permission 按钮 apply 成功（§13.6，API resolve） | 成功路径 `mutate(removeSessionRecord(reg, record.request_id))` |
-| `markQuestionResolved(record)`（1942-1953） | question apply 成功与 404 终态共用（§14.4.2/§14.8.2） | 成功路径与 404 终态均 `mutate(removeSessionRecord(reg, record.request_id))` |
+| `markQuestionResolved(record)`（1942-1953） | question apply 成功与 **409 终态**共用（§14.4.2/§14.8.2） | 成功路径与 409 终态均 `mutate(removeSessionRecord(reg, record.request_id))`（**t13：404 不再终态**，见 §14.10.3） |
 
 - **mutate 返回 `undefined`（抢锁超时或无匹配）一律 logWarn 静默容忍**：既有容忍路径不变
   （§5.3 同款），不重试、不抛错。双路径竞态（事件路径与消费端同时删除同一记录）多一条
   no-match warn 属**已知容忍**——记录已被另一方删除即无事可做。
-- **归属门前置（t10 实机修复）**：上表消费端 apply 路径的删除（apply 成功与 404/409 终态）
-  **仅在归属门通过后执行**——`scanReplyQueue` 先 `client.session.get` 确认本实例宿主该
-  session，失败即跳过（不 apply、不删除、不置终态），每 request_id 每实例一次 dline；
-  事件侧回写（`resolveWaitingRecord`）不受影响（§13.6/§14.4.1）。
+- **归属门前置（t13 supersede t10）**：上表消费端 apply 路径的删除（apply 成功与 409 终态）
+  **仅在归属门通过后执行**——`scanReplyQueue` 先 `waitingRecordOwnedByThisInstance`
+  （`host_pid` 匹配判定；§13.6/§14.4.1/§14.10.2），非宿主即跳过（不 apply、不删除、不置
+  终态），每 request_id 每实例一次 dline；`host_pid` 缺失旧记录过渡期走 `client.session.get`
+  （共享存储下 fail open，t13-probe P4）。事件侧回写（`resolveWaitingRecord`）不受影响。
 - 已 resolved 历史记录由筛选侧兼容跳过（`scanSessionQueue` 筛选与 `scanReplyQueue` 筛选保留
   `resolved` 判断，兼容旧数据；新写记录不再产生 resolved=true 终态）。
 - 删除后，`resolved` 字段仅**历史数据/解析兼容**用途（parse 校验保留该字段，§2/§3.2 不变）。
