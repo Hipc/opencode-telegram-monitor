@@ -50,7 +50,7 @@ The plugin is published as [`opencode-telegram-monitor`](https://www.npmjs.com/p
 
 ### From source (local file)
 
-opencode v2 auto-discovers plugins in `<configDir>/plugin/` **and** `<configDir>/plugins/`: every `.ts`/`.js` file and every subdirectory there is loaded as a plugin, no config entry needed. Copy the single-file bundle in:
+opencode v2 auto-discovers plugins in `<configDir>/plugin/` **and** `<configDir>/plugins/`: every `.ts`/`.js` file and every subdirectory there is loaded as a plugin, no config entry needed. Both directories are scanned — **pick one and keep the plugin there only** (the example below uses `plugin/`); don't keep copies in both, to avoid duplicate-loading confusion. Copy the single-file bundle in:
 
 1. Build the plugin into the single-file `monitor.ts` bundle, then copy that artifact into your opencode plugin directory:
 

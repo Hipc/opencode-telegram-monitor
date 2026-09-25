@@ -1,13 +1,13 @@
 # 任务状态 — opencode-v2-adaptation
 
 > 最后更新: 2026-09-25（UTC）· 任务分支 `feat/opencode-v2-adaptation` · 目标 opencode v2.0.15（镜像 `hipc/opencode2:latest`）
-> 阶段: **开发完成（全部批次已合入）**；最终 full 门禁重跑中（含真实 TG 冒烟；代理替换已获用户批准）→ 交付（等待合并指令）
+> 阶段: **开发完成（全部批次 + T09 实机修复已合入）**；文档回写已合入（contract r3 + relay supersede，commit `3eb41244`）；full 门禁重跑待于当前 HEAD 执行（含真实 TG 冒烟与 dupe 场景；代理替换已获用户批准）→ 交付（等待合并指令）
 
 ## 资源清单
 
 - 任务 worktree: `/home/hipc/work/git-clone/opencode-telegram-monitor-v2`（`feat/opencode-v2-adaptation`）
 - 原始 worktree: `/home/hipc/work/git-clone/opencode-telegram-monitor`（`main` @ `76130078fc9354d4569c2681df559b1ff8357182`，只读，全程未触碰）
-- 子 worktree: 无在途（t01/t03/t04/t05/t05b/t06/t07 均已合入并清理）
+- 子 worktree: 无在途（t01/t03/t04/t05/t05b/t06/t07/t08/t09 均已合入并清理）
 - 工具链镜像: `otg-toolchain:latest`（node 22.23.2 + bun 1.4.2）；测试镜像 `hipc/opencode2:latest`（opencode v2.0.15）
 - 合回授权: **未授权**（交付后等待指令）；push 未授权
 
@@ -25,15 +25,17 @@
 | 修复轮 F1–F3 | 已合入 | `401e7c19` | parentID 恢复；resolved-reply 终态分类；help 文案 |
 | 文档 r2 回写 | 已合入 | `c3136a95` | lineage 关闭 / 错误形状 / harness README 校正 |
 | T08 冒烟配方修复 | 已合入 | `73499e0a` | serve 长驻 + 发送断言（合成 401 机制验证 + 负控）；代理替换经用户批准 |
+| T09 重复推送修复 | 已合入 | `8c807377` | 实机事故：同一 question 连续重复推送——`request_id` 全局幂等（append 去重 / mark 全副本 / 轮内去重）+ message_id 解包修正；负控（修复前 16 次重复发送）；容器 dupe 场景 |
 
 ## 关键决策
 
 - 2026-09-24（用户）：v2-only；全量功能对齐；仅本仓库插件；容器 e2e + 真实 TG 冒烟（`~/.otg` 只读挂载、容器内拷贝）；版本 1.0.0；交付后等待合并指令。
 - 2026-09-25（用户）：**移除 todo 代码**（v2.0.15 四路验证不可观测）。
+- 2026-09-25（实机事故 + 本机加载发现）：触发一个 question 后连续重复 TG 推送 → 根因 = 多实例重复记录（append 无去重）+ `markSessionSent` 只标第一条 + `response.result.*` 解析错误致 q_msg_id 缺失；T09 修复（`8c807377`，负控：修复前 16 次重复发送）。本机 v2 实测从 `~/.config/opencode/plugins/`（**复数**）自动加载成功（同进程 `loading plugin` 反复 ~6 次）；探针已证单数 `plugin/` 亦自动发现——两目录均被扫描，建议只放一处。
 
 ## 契约要点（最终，权威版见 docs/modules/opencode-v2-contract.md）
 
-1. 本地加载：`<configDir>/plugin/*.ts` 自动发现 或 目录包（package.json→index.ts）；配置数组拒绝绝对文件路径。
+1. 本地加载：`<configDir>/plugin/*.ts` **与** `<configDir>/plugins/*.ts` 均自动发现（本机实测复数、探针实测单数）或 目录包（package.json→index.ts）；配置数组拒绝绝对文件路径。
 2. 事件：`session.execution.*` / `session.step|text|tool.*` / `session.usage.updated` / `permission.*` / `form.*` / `inbox.*`；v1-compat 事件（`message.*`/`session.idle`/`session.error`）不存在。
 3. question 通道 = `form.*`（`form.created` + options/custom）；form 回写 = 进程内 `POST /api/session/<sid>/form/<fid>/reply`（Basic auth；端口 `serve --port N` argv + 双 env 密码；standalone 显式失败、无兜底）。
 4. permission 回写 = `client.permission.reply({sessionID, requestID, decision})`；已决请求的错误（普通 `Error`，文本精确匹配）→ 终态删除、不重试。
@@ -43,7 +45,8 @@
 ## 最终验证
 
 - 首次 full（`4c2da740`）：15/16 PASS（build + 124 用例 + 4 套容器 e2e）；真实 TG 冒烟 ENV_BLOCKED（配置代理 `100.113.198.63:7890` 不可达）→ 用户批准以可用代理 `10.0.10.100:17892` 替换容器侧副本；重试暴露配方覆盖缺口（`run --standalone` 退出过快，5s idle 去抖被 dispose 清除，发送从未发生）→ T08 修复（serve 长驻 + 发送断言）。
-- 当前门禁：在 `73499e0a` 上重跑容器内 full（build + 10 个 host 套件 + harness/probe-a1/harness-resolved/lineage + 真实 TG 冒烟，代理替换副本）；结果见交付报告。
+- 门禁重跑（T08 后）：在 `73499e0a` 上重跑容器内 full（build + 10 个 host 套件 + harness/probe-a1/harness-resolved/lineage + 真实 TG 冒烟，代理替换副本）；结果见交付报告。
+- 当前门禁：T09（`8c807377`）在 `73499e0a` 之后合入，新增 REG-404/405、API-601~603 与容器 dupe 场景（假 TG 端点 + 负控）→ **full 门禁重跑以含本轮文档提交的当前 HEAD 为 tested_sha**（命令配置同上 + dupe 场景）；结果见交付报告。
 - 复用条件：仅当 tested_sha 与命令配置不变时复用既有证据。
 
 ## 耗时记录（UTC；来源：各执行者报告 / git 提交时间；未插桩项记 unknown）
@@ -58,6 +61,7 @@
 | 06 发布元数据 | unknown | commit | ≈3s | 版本 1.0.0 |
 | 修复轮 F1–F3 | ~18:41 | 18:56 | ≈310s | 124 用例 + harness 22/22 |
 | T08 冒烟配方修复 | 19:26 | 19:40 | ≈60s | serve 长驻 + 发送断言；合成 401 机制验证 + 负控 |
+| T09 重复推送修复 | 12:50 | 13:15 | ≈380s | request_id 幂等 + mark 全副本 + message_id 解包；负控（修复前 16 次重复发送） |
 | 集成包 ×7 | 15:14 | 18:57 | <1s/包 | 全部 ff/rebase，线性历史 |
 
 - 口径：排队时长（ready→dispatch）与调用耗时（dispatch→返回）未插桩，记 unknown；环境耗时 ≈0（镜像已存在、零依赖）；不把 worker 时长之和冒充总耗时。
