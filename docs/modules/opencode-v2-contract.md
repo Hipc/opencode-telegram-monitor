@@ -36,6 +36,15 @@
 > 非宿主实例跳过且**不删除**记录，404/409 终态删除仅宿主实例生效（§3.3）。落地 commit
 > `5453956`；容器证据 `tests/e2e/container/assert/t10-cross.mjs` + `evidence/t10-cross/**`
 > （正控）与 `evidence/t10-cross-prefix/**`（修复前负控）。契约以本修订 commit 定版。
+>
+> **修订 5（2026-09-26，r5）**：实机事故修复（t12）——「一次 agent 完成推送数条不同项目
+> 名的通知（同表内容），仅会话所属项目一条正确」。根因：v2 事件流每进程全局、插件按
+> location 多激活，`handleEvent` 无归属过滤。修复 commit `ca5ad92`：① 冻结**事件归属门**
+> （§2.0：带 `location.directory` 严格 resolve-equal；无 location 走 sessionID→directory
+> 索引；不可归属即忽略 + 有界 dline）；② §1.3 进程级共享去重集合显式例外（同 root 重复
+> 激活折叠）。容器证据 `tests/e2e/container/assert/t12-ownership.mjs` +
+> `evidence/t12-ownership/**`（正控 8/8）与 `evidence/t12-ownership-prefix/**`
+> （修复前负控 6/6，实机签名）。契约以本修订 commit 定版。
 
 ---
 
@@ -124,6 +133,20 @@ export default {
 （常驻心跳用实例字段管理，dispose 清理）。v1 `monitor.dispose()` 已覆盖 timers/intervals/
 锁/在途任务，平移即可；新增的 `event.subscribe` 迭代器也要在 dispose 中止（AbortController）。
 
+**显式例外（r5/t12 冻结）：进程级共享事件去重集合。** 唯一被允许的跨激活/跨实例可变
+状态是 `rememberEvent` 使用的**进程级 seen-event 集合**：
+
+- 目的：v2 事件流每进程全局（归属门见 §2.0）；同一进程内同一 root 的重复激活（reload
+  换挡窗口、双订阅）会各自收到同一 envelope，实例字段无法跨激活去重，共享集合保证
+  同一事件**只被处理一次**。
+- 载体/key：`globalThis[Symbol.for("opencode-telegram-monitor/seen-events")]`
+  （`src/monitor.ts` `SEEN_EVENTS_SYMBOL`）；`Symbol.for` 使模块重新 import（reload）后
+  仍指向同一集合。
+- 容量：`MAX_EVENT_IDS`（`2_000`，`rememberBounded` 淘汰最旧），与 v1 去重集合同界。
+- 标记时机：**只在事件归属门通过后**标记——非宿主/不可归属事件不占用 id。
+- 归属索引（`sessionDirectories`）与其它所有状态仍是**实例字段**（每实例自建、不跨实例
+  共享）；本例外不改变 dispose 语义。
+
 ### 1.4 dispose / reload 语义（v1 `dispose` 的等价物）
 
 - `[observed]` `setup` 返回 `() => { clearInterval(heartbeat); record("probe.dispose", ...) }`；
@@ -180,8 +203,47 @@ v2 client 无 `session.list/status`，原 v1 的 bootstrap/reconcile 对账已�
 - **冻结：`accept(envelope)` 原样收；`parseRuntimeEvent` 改为从 `envelope.data` 取
   `properties`，`envelope.id` 继续作为去重键（`rememberEvent` 语义不动）。**
   `data` 缺失/非对象 → 该事件丢弃（同 v1 parse 失败返回 undefined 语义）。
-- 事件去重集合（`seenEventIDs`/`seenWaitingRequestIDs`/`terminalMessageIDs`，`MAX_EVENT_IDS`）
-  机制保持；v2 envelope `id` 全局唯一（`evt_` 前缀），按原逻辑去重即可。
+
+**事件归属门（r5/t12，冻结）**
+
+- **背景**（实机事故）：v2 事件流是**每进程全局**的——一个 `opencode serve --service`
+  进程按 location/root 多次激活同一插件，每个 monitor 都订阅同一条全局事件流。
+  `handleEvent` 若无归属过滤，同一会话会被每个实例各自终态化并各发一条以自身 `root`
+  basename 标注的通知（实机：一次完成推了数条不同项目名的消息，仅一条正确）。
+- **冻结规则**（`isOwnedEvent`，在**任何状态变更之前**执行：不建投影、不写 sessionInfo、
+  不落盘、不去抖、不通知、不清理记录）。判定是**通用规则**（不按事件类型白名单）：
+  1. envelope 带 `location.directory` → `resolve(directory)` 与本实例 `this.root`
+     （构造时 `resolve(root)`）**严格相等**才放行；带 location 的事件同时把
+     `sessionID → resolve(directory)` 记入**实例**索引（非宿主也记录，供无 location
+     事件对称判定）。
+  2. envelope 无 `location.directory` → 用事件 `sessionID` 查该索引（`form.created`
+     的 sessionID 在 `data.form.sessionID`，§2.6）；索引命中且等于 `this.root` 才放行。
+  3. 既无 location 且 sessionID 缺失/未知/属于其它目录 → **忽略**（含 `server.connected`
+     等非会话事件）。
+  4. 跳过诊断（dline，每实例有界、不刷屏）：非宿主目录 → **每目录一次**
+     `event skipped: location not owned by this instance directory=<dir> type=<type>`；
+     无 location 不可归属 → **每（原因,事件类型）一次**
+     `event skipped: <reason> type=<type>`（reason = `no location, not session-scoped` /
+     `no location and session not attributed`）。
+- **位置形态实测表**（扫描全部容器证据 `tests/e2e/container/evidence/**` 的
+  `sse-raw.txt`/`*.jsonl`：probe-a1 / probe-lineage / harness / t12-ownership；
+  opencode v2.0.15；仅列消费面事件族，其它带 location 的忽略面事件同规则处理）：
+
+| envelope location | 事件类型（实测） |
+|---|---|
+| 带 `location.directory` | `session.created`、`session.step.*`、`session.text.*`、`session.reasoning.*`、`session.tool.*`、`session.inbox.*`、`form.*`（`form.created`/`form.replied` 实测）、`permission.asked` |
+| 无 `location` | `session.execution.started/succeeded/failed`、`session.usage.updated`、`permission.replied`、`server.connected` |
+
+- **已知行为（有意设计，无兜底）**：晚激活实例（在该会话全部带 location 事件之后才
+  激活）没有该会话的索引条目 → 该会话的无 location 事件（execution.* / usage.updated /
+  permission.replied）被跳过；**宁可漏、不可错挂**，不新增回填/兜底通道。
+- 索引上限 `MAX_EVENT_IDS`（超出淘汰最旧条目）。
+- 事件去重（r5 修订，supersede 原「`seenEventIDs` 机制保持」）：`seenEventIDs` 由实例
+  集合改为**进程级共享**集合（§1.3 显式例外；
+  `Symbol.for("opencode-telegram-monitor/seen-events")`，上限 `MAX_EVENT_IDS`），且
+  **只在归属门通过后标记**——同 root 重复激活折叠为一次处理，非宿主事件不占 id；
+  `seenWaitingRequestIDs`/`terminalMessageIDs` 仍为实例集合不变。v2 envelope `id`
+  全局唯一（`evt_` 前缀）。
 
 ### 2.1 会话投影（session.created / deleted / execution.*）
 
@@ -691,6 +753,19 @@ token 聚合；无「永不填充」降级面。形状入 §2.1/§3.1。仍开�
 
 ## 变更记录
 
+- 2026-09-26 修订 5（contract revision r5，t12 实机事故修复回写）：实机事故「一次 agent
+  完成推送数条不同项目名的 Telegram 通知（同表内容），仅会话所属项目一条正确」——
+  根因：v2 事件流每进程全局 + 插件按 location 多激活，`handleEvent` 无归属过滤。修复
+  （commit `ca5ad92`）：① §2.0 冻结事件归属门（带 `location.directory` 严格
+  resolve-equal；无 location 走 sessionID→directory 索引，`form.created` 取
+  `data.form.sessionID`；不可归属即忽略 + 每目录/每（原因,类型）一次 dline；晚激活
+  设计行为入契约）；② §1.3 进程级共享去重集合显式例外
+  （`Symbol.for("opencode-telegram-monitor/seen-events")`、`MAX_EVENT_IDS`、归属门
+  通过后才标记 → 同 root 重复激活折叠为一次）；§2.0 去重条目同步 supersede。证据：
+  `tests/e2e/container/assert/t12-ownership.mjs` + `evidence/t12-ownership/**`
+  （正控 8/8：同进程两 root → 恰一条 A 标注通知、B 记录 skip 诊断）+
+  `evidence/t12-ownership-prefix/**`（负控 6/6：修复前同会话 2 条、A/B 两种标注
+  ——实机签名）；行为断言 OWNERSHIP-001/002/003（`tests/behavior.test.mjs`）。
 - 2026-09-25 修订 4（contract revision r4，t10 实机事故修复回写）：实机事故「TG 已显示
   ✅ Submitted，opencode TUI 提问仍 pending」——用户环境为 v2 `serve --service` 守护进程
   （argv 无 `--port`、env 无密码，旧 argv-only 发现不可用）+ 非宿主 ad-hoc server（同
