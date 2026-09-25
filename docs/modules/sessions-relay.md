@@ -399,6 +399,8 @@ export function markSessionSent(
 | 本文件 §4.2 `markSessionSent` 契约 | 跨条目全局匹配**第一条**；已置位 → 原引用 | **t09-dupe-fix supersede**：一次置位**全部同 request_id 副本**（已 true 副本原引用保留），单轮自愈历史重复副本；三态（无匹配 undefined / 全已 true 原引用 / 变更新引用）不变（§4.2 行内注） |
 | 本文件 §6.2/§6.3 扫描语义 | 每轮逐条处理筛选命中的记录（同 request_id 重复副本各发一次） | **t09-dupe-fix 追加**：轮内按 `request_id` 去重，重复副本一轮只处理一次（快照过期保护）；发送失败仍不置位、下轮重试（§6.2/§6.3 行内注） |
 | 本文件 §14.8.3 message_id 解析 | 三形态防御解析（`result?.message_id ?? result?.message?.message_id ?? result?.messageId`）+ 旧键名诊断 | **t09-dupe-fix supersede**：`telegramRequest/telegramWithRetry` 返回已解包 `envelope.result`，正确解析 = 顶层 `response?.message_id`；旧三形态与旧诊断作废，新诊断 `typeof=… keys=…`（§14.8.3 行内注） |
+| 本文件 §13.6/§14.4.1 消费端 apply | 筛选命中即调 apply；失败/404 判定后删除记录（无归属校验） | **t10-field-fix 追加**：apply 前置**归属门**（`client.session.get`）——非宿主实例跳过（不 apply、不删除、不置终态），`apply skipped` dline 每 request_id 每实例一次；404/409 终态删除仅宿主实例（§13.6/§14.4.1/§14.8.2/§16.4 行内注） |
+| docs/modules/opencode-v2-contract.md §A.1 端口发现（限制） | `<port>` 仅从 `process.argv` 解析；`run --standalone`（`--port 0`）不可发现 → 显式失败 | **t10-field-fix supersede**：端点发现改优先级 argv `--port N`/`--port=N`（env 密码；有端口无密码显式失败不回落）→ state `service.json`（`$XDG_STATE_HOME\|~/.local/state`，pid 匹配优先，url 必须 loopback http）→ legacy `~/.config/opencode/service.json`（`{port, password}`）；每次尝试重新读文件（v2 契约 §A.1 修订，commit `5453956`） |
 
 ## 12. 变更记录
 
@@ -492,6 +494,22 @@ export function markSessionSent(
   **已解包响应顶层** `response?.message_id`（旧三形态防御解析与旧键名诊断作废，新诊断 typeof +
   顶层键名）。commit `8c807377`；测试 REG-404/405、API-601/602/603；容器 dupe 场景（假 TG 端点 +
   负控：修复前同一请求 16 次重复发送、副本 `[true,false]`、无 q_msg_id 持久化）。supersede 记录见 §11。
+- 2026-09-25 修订（t10-field-fix / v2 适配实机修复轮，见 §13.6/§14.4.1/§14.8.2/§16.4 行内注）：
+  实机事故「用户已在 TG 选中并看到 ✅ Submitted，opencode TUI 的 question 仍 pending」——
+  ① 端点发现：用户真实环境为 v2 `serve --service` 守护进程（argv 无 `--port`、env 无密码），
+  旧 argv-only 发现不可用 → 新增优先级 argv `--port N`/`--port=N`（env `OPENCODE_SERVER_PASSWORD`/
+  `OPENCODE_PASSWORD`；有端口但 env 密码缺失 → **显式失败、不回落 service.json**；`--port 0`/
+  非法 → 显式失败）→ state `service.json`（`$XDG_STATE_HOME|~/.local/state/opencode/service.json`，
+  `{id, version, url, pid, password}`，多个 `service*.json` 优先 `pid === process.pid`，否则默认
+  `service.json`；url 必须 loopback + http，否则拒绝）→ legacy `~/.config/opencode/service.json`
+  `{port, password}` → 均不完整显式失败并列出全部来源；每次尝试重新读文件，密码永不入日志；
+  `~` 解析优先运行时 `$HOME`（bun `homedir()` 进程内缓存）。② 归属门：ad-hoc server（不同进程、
+  同 registry 根）先 apply → 自身 HTTP 404（form not found）→ 误判终态删除记录，真宿主永不 apply；
+  现 permission/question 两路径 apply 前先 `client.session.get`，失败 → 跳过（不 apply、不删除、
+  不置终态），每 request_id 每实例一次 `apply skipped` dline；404/409 终态删除仅宿主实例。
+  commit `5453956`；容器证据 t10-cross（正控：服务守护进程经 service.json pid 匹配发现端点
+  apply 一次、非宿主 skip 无删除、无记录丢失）+ 负控 t10-cross-prefix（复现修复前误删）。
+  supersede 记录见 §11。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
 
@@ -647,11 +665,20 @@ export function buildSessionPermissionKeyboard(entryID: string): TelegramInlineK
 - 头部 `if (this.disposed) return 0;`
 - `registry.read()`（不加锁，最终一致）→ `findRegistryEntry(reg, this.root)`：**只扫自己条目**；条目缺失 → 返回 0 无操作。
 - 筛选（决策 #5，冻结）：`record.type === "permission" && record.reply != null && record.resolved === false`。
+- **归属门（t10 实机修复，permission/question 两分支共用，冻结）**：apply 前先
+  `await this.client.session.get({ sessionID: record.session_id })`；成功 → 继续；任何失败 →
+  **本轮跳过该记录**（不 apply、不删除、不置终态；下轮重试），并按 `request_id` 每实例只记
+  一次 dline（info 级）：
+  `reply scan: apply skipped: session not hosted by this instance request=… session=… error=…`
+  （实测留痕见 `tests/e2e/container/evidence/t10-cross/tgdiag-after-b-skip.txt`）。绝不用
+  异常结果猜测归属。404/409 终态删除（§14.8.2/§16.4）**仅宿主实例可触发**。
 - 逐条**串行**调 `applySessionReply`；单条抛错不得中断整轮（try/catch → logWarn 继续）。返回本轮成功应用条数。
 - ticker 回调：仿 startSessionsScan（in-flight 守卫 + track(async()=>{ try { await scanReplyQueue() } finally { inFlight=false } })）。
 
 **`applySessionReply(record: SessionRecord)`（私有，异步）**：
 
+- **归属门前置（t10）**：仅由已通过归属门的调用方（`scanReplyQueue`，见上）进入；非宿主
+  实例不会调用本方法，本方法不重复探测。
 - **透传语义（决策 #1，冻结）**：`response = record.reply` 原样（"once"|"always"|"reject"），不映射、不校验（parse 已保证合法）。
 - 调用参数：`sessionID = record.session_id`、`permissionID = record.request_id`（SDK 签名见 §13.8）。
 - **成功**（API resolve）→ `await this.registry.mutate((reg) => markSessionResolved(reg, record.request_id))`；mutate 返回 undefined（抢锁超时/记录消失）→ logWarn，下轮重试（resolved 未置位属安全重试态）。
@@ -1169,11 +1196,17 @@ export function buildQuestionKeyboard(
 
 #### 14.4.1 scanReplyQueue 筛选扩展（1.4 地盘 1588-1619）
 
-- 现 `if (record.type !== "permission") continue;` → 改为双分支（permission 分支 §13.6 **零改动**）：
+- 现 `if (record.type !== "permission") continue;` → 改为双分支（permission 分支筛选逻辑 §13.6 不变；**t10 归属门对两分支统一前置**，见下）：
   - `record.type === "permission"`：`record.reply == null || record.resolved` → continue（原样）；
   - `record.type === "question"`：`record.resolved || (record.q_answers == null && record.q_reject !== true)` → continue；否则：
     - `record.q_answers != null` → `applyQuestionReply(record)`；
     - `record.q_answers == null && record.q_reject === true` → `applyQuestionReject(record)`。
+- **归属门（t10 实机修复，与 permission 分支共用）**：筛选命中后、`applyQuestionReply` /
+  `applyQuestionReject` 之前，先 `await client.session.get({ sessionID: record.session_id })`；
+  任何失败 → **本轮跳过**（不 apply、不删除、不置终态；下轮重试），每 `request_id` 每实例
+  只记一次 dline `reply scan: apply skipped: session not hosted by this instance`（§13.6
+  同款）。§14.8.2/§16.4 的 404 终态删除**仅宿主实例可触发**；非宿主 server 不得因自身
+  404 误删共享注册表记录。
 - 逐条**串行**、单条抛错不中断整轮（既有 try/catch 保持）；返回成功应用条数（语义不变）。
 
 #### 14.4.2 applyQuestionReply / applyQuestionReject（1.4 新增，放 applySessionReply 之后）
@@ -1366,6 +1399,11 @@ private questionApplyChannel?: 1 | 2 | 3 | undefined; // 实例级缓存：某�
   （与双路径先到先得 §14.4.2 竞态收敛一致；事件路径或其它实例先置位时同理跳过）。
 - **非 404 错误**：维持既有行为（logWarn token 脱敏 + rethrow，scanReplyQueue 捕获不中断整轮，
   下轮重试）。
+- **归属门前置（t10 实机修复，冻结）**：本节「不存在」终态删除**仅在归属门通过后**适用——
+  apply 前先 `client.session.get` 确认本实例宿主该 session（§14.4.1/§13.6）；门失败即跳过，
+  **不判定终态、不删除**。非宿主实例的 404 不得删除共享注册表记录（实机事故根因：ad-hoc
+  server 对自身 404 误判终态删记录，真宿主永不 apply）。终态动作以 §16.4 为准
+  （`markQuestionResolved` 内部 `removeSessionRecord`）。
 
 #### 14.8.3 sendRichMessage message_id 防御解析（修订 §14.2.2 sendMessageWithKeyboard 扩展，Phase 2.1 冻结）
 
@@ -1996,6 +2034,10 @@ export function removeExpiredSessionRecords(
 - **mutate 返回 `undefined`（抢锁超时或无匹配）一律 logWarn 静默容忍**：既有容忍路径不变
   （§5.3 同款），不重试、不抛错。双路径竞态（事件路径与消费端同时删除同一记录）多一条
   no-match warn 属**已知容忍**——记录已被另一方删除即无事可做。
+- **归属门前置（t10 实机修复）**：上表消费端 apply 路径的删除（apply 成功与 404/409 终态）
+  **仅在归属门通过后执行**——`scanReplyQueue` 先 `client.session.get` 确认本实例宿主该
+  session，失败即跳过（不 apply、不删除、不置终态），每 request_id 每实例一次 dline；
+  事件侧回写（`resolveWaitingRecord`）不受影响（§13.6/§14.4.1）。
 - 已 resolved 历史记录由筛选侧兼容跳过（`scanSessionQueue` 筛选与 `scanReplyQueue` 筛选保留
   `resolved` 判断，兼容旧数据；新写记录不再产生 resolved=true 终态）。
 - 删除后，`resolved` 字段仅**历史数据/解析兼容**用途（parse 校验保留该字段，§2/§3.2 不变）。

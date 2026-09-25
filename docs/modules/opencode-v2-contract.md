@@ -27,6 +27,15 @@
 > `message_id`（relay `sessions-relay.md` §4.1/§4.2/§6.2/§14.8.3 行内 supersede）；
 > §1.3 补多激活语义与 `setup()` pid/root 诊断行；§5.1 补双目录加载字段证据
 > （本地 v2 实测 `~/.config/opencode/plugins/` 复数路径）。契约以本修订 commit 定版。
+>
+> **修订 4（2026-09-25，r4）**：实机事故修复（t10）——「TG 已显示 ✅ Submitted，opencode
+> TUI 提问仍 pending」：① form 端点发现由 argv-only 扩展为优先级 argv `--port`/`--port=N`
+> → state `service.json` → legacy `~/.config/opencode/service.json`（§A.1 原「端口发现（限制）」
+> 段落作废；v2 `serve --service` 守护进程 argv 无 `--port`、env 无密码，旧路径不可发现）；
+> ② 新增 apply 归属门——permission/question 两条回写路径在 apply 前先 `client.session.get`，
+> 非宿主实例跳过且**不删除**记录，404/409 终态删除仅宿主实例生效（§3.3）。落地 commit
+> `5453956`；容器证据 `tests/e2e/container/assert/t10-cross.mjs` + `evidence/t10-cross/**`
+> （正控）与 `evidence/t10-cross-prefix/**`（修复前负控）。契约以本修订 commit 定版。
 
 ---
 
@@ -334,7 +343,7 @@ reply API（§3、§7）。
 | `client.session.list` / `session.messages` / `session.todo` | **不存在**（C3） | bootstrap/reconcile 相应移除（§3.3 实现修订）；HTTP API 有等价物（`GET /api/session`、`/api/session/:id/message`），第三方测试可用，插件内**不**引入 fetch 通道（唯一例外：form 回复通道，见下两行）。 |
 | `client.tui` | **不存在** | v1 亦仅 v1 TUI 用。 |
 | `(client as any)._client.post` 及任何扁平 question/reply 私货 | **禁止**（issue 04） | v1 实机修复轮的私货通道；v2 契约面明确（permission.reply），form 应用通道已定案为 HTTP 回写（附录 A.1）。 |
-| HTTP `fetch` 到自身 server | **仅限 form 回复通道**（05 定案，附录 A.1）；其它场景一律**不使用** | `POST /api/session/:id/form/:id/reply`（Basic auth，见 A.1）；端口不可发现或请求失败时**显式失败**（记录原因日志），**不做任何兜底**（VERDICT.md 限制）；不参与事件消费/轮询竞态。 |
+| HTTP `fetch` 到自身 server | **仅限 form 回复通道**（05 定案，附录 A.1）；其它场景一律**不使用** | `POST /api/session/:id/form/:id/reply`（Basic auth，见 A.1）；端点发现按 A.1 修订优先级（argv → state service.json → legacy），不可发现/请求失败时**显式失败**（记录原因日志），**不做任何兜底**（VERDICT.md 的 argv-only 端口发现限制已被 r4 §A.1 supersede）；不参与事件消费/轮询竞态。 |
 
 ### 3.3 幂等/事务/超时/事件顺序语义（适用项冻结，不适用项注明）
 
@@ -347,6 +356,15 @@ reply API（§3、§7）。
   保持 relay §14.8.2 的 404 终态语义（删除记录、不重试）。reply 重试由扫描 ticker 驱动
   （每次重试都重新 `permission.reply`，opencode 侧幂等——已决即 404 终态）。
   同理，form 回写遇 `409 FormAlreadySettledError`（VERDICT.md）即已定案 → 删除记录、不重试。
+  以上 404/409 终态删除**仅对归属门通过的宿主实例生效**（见下条）。
+- **apply 归属门（r4，冻结）**：`scanReplyQueue` 在 `applySessionReply` /
+  `applyQuestionReply` / `applyQuestionReject` 之前，先 `await client.session.get({sessionID})`
+  确认本实例宿主该 session；**任何失败 → 本轮跳过该记录**（不 apply、不删除、不置终态，
+  下轮重试），并按 `request_id` 每实例只记一次 dline（info 级）：
+  `reply scan: apply skipped: session not hosted by this instance request=<id> session=<id> error=<category>`。
+  目的：共享注册表（多个 server 指向同一 registry 根）下，非宿主 server 不得把回写打到
+  自身并以自身 404 误删记录；404/409 终态（上条）只属于真正的宿主实例。绝不用异常结果
+  猜测归属。
 - **resolved-reply 分类（r2，冻结）**：v2 client 对**已决**请求再 `permission.reply`
   抛的是**普通 `Error`** —— `name="Error"`、`message="Permission request not found:
   per_<id>"`、无 `status`/`statusCode`/`_tag`、无自有属性（实测
@@ -606,15 +624,39 @@ token 聚合；无「永不填充」降级面。形状入 §2.1/§3.1。仍开�
 - **补充 API**：`GET /openapi.json`（需认证，完整 OpenAPI 3.1，250037 字节）；
   `session.form.cancel` = `DELETE /api/session/<sid>/form/<fid>`；全局列表 `GET /api/form`
   —— 插件主流程只用 `reply`；`cancel`/列表留给诊断/向导可选，不强制。
-- **端口发现（限制，冻结）**：`<port>` 从 `process.argv` 解析（serve 形态
-  `["bun","/$bunfs/root/opencode","serve","--port","<N>",...]`）；`opencode run
-  --standalone` 实际是 `serve --stdio --port 0`（临时端口不在 argv）→ **不可发现**。
-  **04 必须显式失败**（记录原因日志，`q_answers` 保持未应用），**不得发明兜底**；
-  `permission.reply` 的 client 通道不受影响。
+- **端点发现（r4 修订，supersede 原「端口发现（限制，冻结）：`<port>` 仅从 `process.argv`
+  解析；`opencode run --standalone`（`serve --stdio --port 0`）不可发现」段落）**：
+  `resolveFormEndpoint()` 按下列优先级解析**本进程自身 server** 的回写端点；任一环节
+  不完整即**显式失败**（记录原因日志；`q_answers`/`q_reject` 保持未应用，下轮 ticker 重试），
+  **不得发明兜底**；`permission.reply` 的 client 通道不受影响：
+  - **(a) argv `--port N` 或 `--port=N`**：端口 = N，密码取 `OPENCODE_SERVER_PASSWORD` /
+    `OPENCODE_PASSWORD`。**argv 端口存在但 env 密码缺失 → 显式失败，不回落 service.json**
+    （那多半属于另一个 server）；`--port 0`/非法值 → 显式失败（`run --standalone` 的
+    随机端口不可发现）。
+  - **(b) argv 无 `--port` 标志 → state `service.json`**：`$XDG_STATE_HOME` |
+    `~/.local/state` + `/opencode/service.json`（v2 `serve --service` 注册
+    `{id, version, url, pid, password}`，0600；legacy 形态 `{port, password}` 不在此路径）；
+    多个 `service*.json` → 优先 `pid === process.pid` 的条目，否则默认 `service.json`；
+    port 从 `url` 解析、password 取 `password` 字段；**`url` 必须为 loopback + http**
+    （127.0.0.1 / localhost / [::1]，无凭据、无路径/查询串），否则拒绝——绝不把密码发往
+    非本机地址。
+  - **(c) legacy `~/.config/opencode/service.json`**：`{port, password}` 端口 + 密码对
+    （port 必须正整数、password 非空；url 由插件固定按 `127.0.0.1` 构造）。
+  - **(d) 均不完整 → 显式失败**，原因列出全部尝试过的来源。
+  - 文件**每次尝试重新读**（不缓存；mtime 缓存可接受）；任何路径都绝不把密码写进日志。
+  - `~` 解析优先运行时 `$HOME`、缺失才回落 `os.homedir()`（bun 的 `homedir()` 进程内缓存，
+    不随 env 变化；不构成端点发现降级）。
 - **证据**：`tests/e2e/container/probe-a1/VERDICT.md`（裁定 + 证据矩阵）；
   `tests/e2e/container/evidence/probe-a1/probe-a1.jsonl`（`probe.reply.http.attempt` 三次
   auth 尝试、`form.replied`）、`sse-raw.txt`；`probe.setup.*` 显示 `client.rpc` 仅
   `["register"]`、`client.session` 无 form/inbox 方法。
+- **r4 证据（t10 实机修复，commit `5453956`）**：容器场景 `tests/e2e/container/assert/t10-cross.mjs`
+  + `evidence/t10-cross/**`——A = `opencode serve --service`（argv 无 `--port`、env 无
+  `OPENCODE_SERVER_PASSWORD`）经 state `service.json` pid 匹配发现自身端点并 apply 一次
+  （204 → `form.replied` → 记录删除）；B = `serve --port 20000` + env 密码、共享注册表但
+  非宿主 → 归属门 `client.session.get` `Session.NotFoundError` → skip（无删除，dline
+  `apply skipped` 见 `tgdiag-after-b-skip.txt`）；负控 `evidence/t10-cross-prefix/**`
+  复现修复前「非宿主 404 删记录、owner 无 `form.replied`」。
 - **harness 接口（05 e2e 契约，04 必须匹配）**：TG 向导最终提交 = 记录字段
   `q_answers: Array<Array<string>>`（relay §14 冻结字段；每题 = label/文本数组，按
   fields[] 顺序）。harness 以完全相同的外部写入注入：`inject_json_field "$FRMID"
@@ -649,6 +691,19 @@ token 聚合；无「永不填充」降级面。形状入 §2.1/§3.1。仍开�
 
 ## 变更记录
 
+- 2026-09-25 修订 4（contract revision r4，t10 实机事故修复回写）：实机事故「TG 已显示
+  ✅ Submitted，opencode TUI 提问仍 pending」——用户环境为 v2 `serve --service` 守护进程
+  （argv 无 `--port`、env 无密码，旧 argv-only 发现不可用）+ 非宿主 ad-hoc server（同
+  registry 根、不同进程）先 apply → HTTP 404 误判终态删记录、真宿主永不 apply。修复
+  （commit `5453956`）：① §A.1 端点发现优先级（argv `--port N`/`--port=N` + env 密码，
+  有端口无密码显式失败不回落 → state `service.json`（`$XDG_STATE_HOME|~/.local/state`，
+  pid 匹配优先，url 必须 loopback http，0600 `{id, version, url, pid, password}` 实测形态）
+  → legacy `~/.config/opencode/service.json` `{port, password}`；每次尝试重新读文件，
+  密码永不入日志）；② §3.3 apply 归属门（`client.session.get` 失败 → 跳过不删除，
+  `apply skipped` dline 每 request_id 每实例一次；404/409 终态删除仅宿主实例）；
+  §3.2 同步指针。证据：`tests/e2e/container/assert/t10-cross.mjs` + `evidence/t10-cross/**`
+  （正控：服务守护进程 apply 一次、非宿主 skip 无删除）+ `evidence/t10-cross-prefix/**`
+  （修复前负控）。
 - 2026-09-25 修订 3（contract revision r3，t09 实机事故修复回写）：§1.3 补多激活语义
   （同进程多次加载/激活）与 `setup() pid/root` 诊断行；§5.1 补双目录（`plugin/`/`plugins/`）
   加载字段证据；等待记录 `request_id` 幂等与 message_id 解包修正指向 relay
