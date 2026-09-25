@@ -1,0 +1,2 @@
+2026-09-25T18:59:38.143Z [13] setup() pid=13 root=/tmp/projA
+2026-09-25T18:59:38.569Z [13] setup() pid=13 root=/tmp/projB

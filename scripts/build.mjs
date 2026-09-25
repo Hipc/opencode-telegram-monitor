@@ -26,24 +26,21 @@ function fail(message) {
 
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 
-// 1) Bundle src/index.ts -> root monitor.ts (no minify; the opencode runtime
-//    packages stay external — they are provided by the plugin host). Uses
-//    paths relative to the repo root, matching the historical `bun build`
-//    invocations of this project. `__PLUGIN_VERSION__` is replaced at build
-//    time with the package.json "version" string literal (see
+// 1) Bundle src/index.ts -> root monitor.ts (no minify). All v2 types are local
+//    (src/v2/types.ts) and no runtime `@opencode-ai/*` import remains, so there
+//    are no host-provided externals any more (contract §4.2). Uses paths
+//    relative to the repo root, matching the historical `bun build` invocations
+//    of this project. `__PLUGIN_VERSION__` is replaced at build time with the
+//    package.json "version" string literal (see
 //    docs/modules/version-injection.md §2.1); JSON.stringify yields the
-//    double-quoted literal bun needs for the define, letting the typeof
-//    guard in src/version.ts constant-fold.
+//    double-quoted literal bun needs for the define, letting the typeof guard in
+//    src/version.ts constant-fold.
 const build = spawnSync(
   "bun",
   [
     "build",
     "--target",
     "node",
-    "--external",
-    "@opencode-ai/plugin",
-    "--external",
-    "@opencode-ai/sdk",
     "--define",
     `__PLUGIN_VERSION__:${JSON.stringify(pkg.version)}`,
     "src/index.ts",

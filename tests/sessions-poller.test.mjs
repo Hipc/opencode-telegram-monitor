@@ -15,9 +15,10 @@
 //
 // 绝不使用真实 botToken/chatId；运行必须隔离 HOME 以避免写真实 ~/.otg。
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,54 +41,53 @@ async function main() {
   const { appendSessionRecord, removeSessionRecord, registerProject } =
     registryModule;
 
-  // 假 client 最小面：scanSessionQueue 只经 sendMessage（被 stub）与
-  // this.log（client.app.log）交互；bootstrap 不会被调用（不调 initialize()）。
-  // Phase 1.3（API-103/104）：追加 permission reply API stub —— 测试经
-  // replyCalls 断言透传、replyError 控制成功/失败（方法名/参数形状以本机 SDK
-  // 核验为准：client.postSessionIdPermissionsPermissionId({ path: { id,
-  // permissionID }, body: { response } })，契约 §13.8）。
-  // Phase 2.1（API-205 改判 / API-206）：运行时实证扁平客户端无任何 question
-  // 方法（契约 §14.8.1），删除 Phase 1.4 的两个扁平 question stub 与
-  // questionReplyCalls/questionRejectCalls/questionReplyError/
-  // questionRejectError 成员；改为 _client.post stub —— postCalls 记录
-  // { url, path, query, body, headers, throwOnError }、postError 控制
-  // 成功/失败（可传含 status/statusCode 的 Error 对象模拟 404）。
+  // 假 client（契约 §7.1 冻结 v2 形状）：方法返回直接对象（非 {data} 包装）；
+  // permission.reply 是 TG 三按钮回写的唯一通道（§3.1）；v1 扁平
+  // postSessionIdPermissionsPermissionId 与 (client as any)._client.post 私货
+  // 一律删除（§3.2 禁止依赖）。
   const fakeClient = {
-    app: { log: async () => {} },
-    session: {
-      list: async () => ({ data: [] }),
-      status: async () => ({ data: {} }),
-      get: async ({ path }) => ({ data: { id: path.id, title: "Test session" } }),
+    app: { name: "cli", version: "2.0.15", channel: "latest" },
+    location: {
+      directory: "/tmp",
+      workspaceID: undefined,
+      project: { id: "proj-test", directory: "/tmp", canonical: "/tmp" },
     },
-    postSessionIdPermissionsPermissionId: async (options) => {
-      fakeClient.replyCalls.push({
-        id: options?.path?.id,
-        permissionID: options?.path?.permissionID,
-        response: options?.body?.response,
-      });
-      if (fakeClient.replyError) throw fakeClient.replyError;
-      return { data: true };
-    },
-    // 分层通道 ②③ 的 transport stub（§14.8.1）：(client as any)._client.post
-    // 与 v2 gen 生成方法共用同一 transport，自动继承 baseUrl/auth。
-    _client: {
-      post: async (options) => {
-        fakeClient.postCalls.push({
-          url: options?.url,
-          path: options?.path,
-          query: options?.query,
-          body: options?.body,
-          headers: options?.headers,
-          throwOnError: options?.throwOnError,
-        });
-        if (fakeClient.postError) throw fakeClient.postError;
-        return { data: true };
+    event: { subscribe: async () => [] },
+    permission: {
+      reply: async ({ sessionID, requestID, decision, message }) => {
+        fakeClient.replyCalls.push({ sessionID, requestID, decision, message });
+        if (fakeClient.replyError) throw fakeClient.replyError;
       },
+      list: async () => [],
+      get: async ({ sessionID, requestID }) => ({
+        id: requestID,
+        sessionID,
+        action: "shell",
+        resources: [],
+      }),
+    },
+    session: {
+      get: async ({ sessionID }) => {
+        fakeClient.sessionGetCalls.push({ sessionID });
+        if (fakeClient.sessionGetError) throw fakeClient.sessionGetError;
+        return {
+          id: sessionID,
+          projectID: "proj-test",
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          time: { created: 0, updated: 0 },
+          title: "Test session",
+          location: { directory: "/tmp" },
+        };
+      },
+      create: async ({ title }) => ({ id: "ses-test", title }),
+      context: async () => [],
     },
     replyCalls: [],
     replyError: undefined,
-    postCalls: [],
-    postError: undefined,
+    // t10 归属门：session.get 调用记录与可注入失败（默认成功，保持既有用例语义）。
+    sessionGetCalls: [],
+    sessionGetError: undefined,
   };
 
   // 假配置（字面值）；绝不真发。
@@ -155,6 +155,196 @@ async function main() {
     }
     return undefined;
   }
+
+  // t09-dupe-fix 回归辅助：列出全部同 request_id 副本。
+  async function findAllRecords(requestID) {
+    const reg = await registry.read();
+    const found = [];
+    for (const entry of reg.projects) {
+      for (const session of entry.sessions ?? []) {
+        if (session.request_id === requestID) found.push(session);
+      }
+    }
+    return found;
+  }
+
+  // t09-dupe-fix 回归辅助：绕过 appendSessionRecord 的 request_id 幂等（修复
+  // 目标本身），直接向注册表根条目注入重复副本——精确复现多实例重复 append
+  // 遗留的历史状态（同 request_id、send=false 多份）。
+  async function seedDuplicateRecord(record) {
+    await registry.mutate((reg) => ({
+      projects: reg.projects.map((entry) =>
+        entry.path === root
+          ? { ...entry, sessions: [...(entry.sessions ?? []), record] }
+          : entry,
+      ),
+    }));
+  }
+
+  // ---- ticket 04 helpers：v2 form 回写通道（契约 §A.1）----
+
+  // 本地 mock HTTP server（127.0.0.1，动态端口）：捕获精确请求
+  // method/url/headers/body，按 respond(entry) 返回状态码。绝不出真实网络。
+  async function startFormServer(respond) {
+    const requests = [];
+    const server = createServer((req, res) => {
+      const chunks = [];
+      req.on("data", (chunk) => chunks.push(chunk));
+      req.on("end", () => {
+        const entry = {
+          method: req.method,
+          url: req.url,
+          headers: req.headers,
+          body: Buffer.concat(chunks).toString("utf8"),
+        };
+        requests.push(entry);
+        res.statusCode = typeof respond === "function" ? respond(entry) : respond;
+        res.end();
+      });
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return {
+      port: server.address().port,
+      requests,
+      close: () => new Promise((resolve) => server.close(resolve)),
+    };
+  }
+
+  const realArgv = [...process.argv];
+  const realServerPassword = process.env.OPENCODE_SERVER_PASSWORD;
+  const realPassword = process.env.OPENCODE_PASSWORD;
+  const realNoProxy = process.env.NO_PROXY;
+  const realNoProxyLower = process.env.no_proxy;
+  const realHome = process.env.HOME;
+  const realXdgStateHome = process.env.XDG_STATE_HOME;
+  // dline 诊断文件在模块加载时固定到真实 HOME（OTG_DIR/DIAG_PATH 常量），
+  // 用例读它时必须用这个原始路径（process.env.HOME 会被下面的发现测试改写）。
+  const diagPath = join(realHome ?? homedir(), ".otg", "tgdiag.log");
+
+  // t10 端点发现测试隔离：HOME / XDG_STATE_HOME 指向测试专属目录，避免误读
+  // 真实 ~/.config/opencode/service.json 或 ~/.local/state/opencode/*。
+  const discoveryHome = join(baseDir, "discovery-home");
+  const discoveryStateHome = join(baseDir, "discovery-state");
+  const stateServiceDir = join(discoveryStateHome, "opencode");
+  const stateServicePath = join(stateServiceDir, "service.json");
+  const legacyServiceDir = join(discoveryHome, ".config", "opencode");
+  const legacyServicePath = join(legacyServiceDir, "service.json");
+
+  function writeJsonFileSync(path, value) {
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, JSON.stringify(value, null, 2));
+  }
+
+  function clearDiscoveryFiles() {
+    rmSync(stateServiceDir, { recursive: true, force: true });
+    rmSync(legacyServiceDir, { recursive: true, force: true });
+  }
+
+  // 注入 form 端点通道（§A.1 修订）。argv: "space"（默认，--port N）|
+  // "equals"（--port=N）| "none"（无 --port）。password === null → 显式不设
+  // 任何密码 env（模拟缺失）。state/legacy: service.json 对象；null = 确保
+  // 不存在（默认两者都清空，保证用例互不串扰）。文件与 env 的隔离都在本
+  // 助手内完成。
+  // 同时把 127.0.0.1 加入 NO_PROXY：本机 loopback 回写绝不能被环境代理
+  // 拦截（otg-toolchain 镜像内置 HTTP_PROXY；生产 opencode2 镜像的
+  // NO_PROXY 已含 127.0.0.1，此处仅为测试环境隔离）。
+  function setFormChannel(port, password, options = {}) {
+    const { argv = "space", state = null, legacy = null } = options;
+    if (argv === "none" || port === undefined) {
+      process.argv = [...realArgv.slice(0, 2)];
+    } else if (argv === "equals") {
+      process.argv = [...realArgv.slice(0, 2), "serve", `--port=${port}`];
+    } else {
+      process.argv = [...realArgv.slice(0, 2), "serve", "--port", String(port)];
+    }
+    delete process.env.OPENCODE_PASSWORD;
+    if (password === null || password === undefined) {
+      delete process.env.OPENCODE_SERVER_PASSWORD;
+    } else {
+      process.env.OPENCODE_SERVER_PASSWORD = password;
+    }
+    process.env.NO_PROXY = "127.0.0.1,localhost";
+    process.env.no_proxy = "127.0.0.1,localhost";
+    process.env.HOME = discoveryHome;
+    process.env.XDG_STATE_HOME = discoveryStateHome;
+    clearDiscoveryFiles();
+    if (state !== null && state !== undefined) {
+      writeJsonFileSync(stateServicePath, state);
+    }
+    if (legacy !== null && legacy !== undefined) {
+      writeJsonFileSync(legacyServicePath, legacy);
+    }
+  }
+
+  function restoreFormChannel() {
+    process.argv = [...realArgv];
+    if (realServerPassword === undefined) delete process.env.OPENCODE_SERVER_PASSWORD;
+    else process.env.OPENCODE_SERVER_PASSWORD = realServerPassword;
+    if (realPassword === undefined) delete process.env.OPENCODE_PASSWORD;
+    else process.env.OPENCODE_PASSWORD = realPassword;
+    if (realNoProxy === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = realNoProxy;
+    if (realNoProxyLower === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = realNoProxyLower;
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    if (realXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = realXdgStateHome;
+  }
+
+  // console/dline 双写的 this.log 替换为内存捕获（断言显式失败原因）。
+  function captureLogs(monitor) {
+    const logs = [];
+    monitor.log = async (level, message, extra) => {
+      logs.push({ level, message, extra });
+    };
+    return logs;
+  }
+
+  // v2 form.created 的 data 形状（§2.6/A.6）：message = JSON.stringify(data)
+  // = {"form":{id, sessionID, title, metadata?, fields:[...]}}。
+  function formRecord({
+    requestID = "req-f1",
+    sessionID = "ses_testp0001",
+    title = "Test form",
+    fields = [
+      {
+        key: "q0",
+        title: "pick one",
+        type: "string",
+        options: [
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ],
+      },
+    ],
+    ...overrides
+  } = {}) {
+    return makeRecord({
+      request_id: requestID,
+      type: "question",
+      message: JSON.stringify({
+        form: { id: requestID, sessionID, title, fields },
+      }),
+      ...overrides,
+    });
+  }
+
+  let eventSeq = 0;
+  // t12：真实 v2 envelope 带 location（发布方决定）；permission.asked/form.*
+  // 实测均带宿主 root 的 location，这里按当前 root 附带（归属门输入）。
+  function envelope(type, data, id) {
+    eventSeq += 1;
+    return {
+      id: id ?? `evt-poller-${eventSeq}`,
+      created: Date.now(),
+      type,
+      location: { directory: root },
+      data,
+    };
+  }
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 30));
 
   // API-000-1：共享 fieldTable 助手全局输出原生 Telegram 富文本表格
   // `<table bordered compact>`（feat/bordered-rich-tables）——question、permission、
@@ -268,14 +458,16 @@ async function main() {
     },
   );
 
-  // ---- API-103/104: reply apply loop (phase 1.3) ----
-  // 契约 docs/modules/sessions-relay.md §13.6/§13.9 + §16（Round 6 改判：apply
-  // 成功 = 删除记录，不再是置 resolved=true）：消费端扫描器直接驱动
-  // scanReplyQueue()（不真实起轮询），stub reply API 断言透传与删除。
-  // API-103：reply 记录被应用（sessionID/requestID/response 透传正确）→
-  // 记录被删除；reply=null 或已 resolved 的记录不触发调用。
+  // ---- ticket 04: 等待/审批 v2 适配（契约 §2.5/§2.6/§2.7/§3.1/§3.3/§A.1）----
+  // 覆盖：permission 事件映射（去抖取消 / 窗口后删除 / summary 取自 action）、
+  // form 事件映射与向导渲染（§2.6）、form 回写 HTTP 通道（精确请求形状 +
+  // q_answers label→option.value 映射 + 显式失败路径，§A.1）、reply scan
+  // 幂等终态（404/409 删除不重试）、inbox steer 守卫（§2.7）。
+
+  // API-103：permission reply（v2 client.permission.reply 参数精确透传）→
+  // 记录删除；reply=null / resolved=true 的记录不触发调用。
   await runCase(
-    "API-103 reply apply passes sessionID/requestID/response, deletes record, skips reply=null and already-resolved",
+    "API-103 permission reply apply passes v2 {sessionID,requestID,decision}, deletes record, skips reply=null/resolved",
     async () => {
       fakeClient.replyCalls = [];
       fakeClient.replyError = undefined;
@@ -286,7 +478,6 @@ async function main() {
           makeRecord({ request_id: "req-r1", reply: "once" }),
         ),
       );
-      // reply=null（显式未回复）与已 resolved 的记录：均不触发调用。
       await registry.mutate((reg) =>
         appendSessionRecord(
           reg,
@@ -302,60 +493,57 @@ async function main() {
         ),
       );
       const monitor = makeMonitor(async () => {});
+      captureLogs(monitor);
       const applied = await monitor.scanReplyQueue();
       if (applied !== 1) {
         throw new Error(`expected 1 applied, got ${applied}`);
       }
       if (fakeClient.replyCalls.length !== 1) {
         throw new Error(
-          `expected exactly 1 reply API call, got ${fakeClient.replyCalls.length}`,
+          `expected exactly 1 permission.reply call, got ${fakeClient.replyCalls.length}`,
         );
       }
       const call = fakeClient.replyCalls[0];
-      if (call.id !== "ses_testp0001") {
-        throw new Error(`sessionID mismatch: ${call.id}`);
+      if (call.sessionID !== "ses_testp0001") {
+        throw new Error(`sessionID mismatch: ${call.sessionID}`);
       }
-      if (call.permissionID !== "req-r1") {
-        throw new Error(`requestID mismatch: ${call.permissionID}`);
+      if (call.requestID !== "req-r1") {
+        throw new Error(`requestID mismatch: ${call.requestID}`);
       }
-      if (call.response !== "once") {
-        throw new Error(`response mismatch: ${call.response}`);
+      if (call.decision !== "once") {
+        throw new Error(`decision mismatch: ${call.decision}`);
       }
       // Round 6 改判：apply 成功 = 记录删除（终态），不再是 resolved=true。
-      const persisted = await findRecord("req-r1");
-      if (persisted !== undefined) {
-        throw new Error(
-          `record must be deleted after successful apply: ${JSON.stringify(persisted)}`,
-        );
+      if ((await findRecord("req-r1")) !== undefined) {
+        throw new Error("record must be deleted after successful apply");
       }
       const r2 = await findRecord("req-r2");
       if (!r2 || r2.resolved !== false) {
-        throw new Error(
-          `reply=null record must stay unresolved: ${JSON.stringify(r2)}`,
-        );
+        throw new Error(`reply=null record must stay unresolved: ${JSON.stringify(r2)}`);
       }
       const r3 = await findRecord("req-r3");
       if (!r3 || r3.resolved !== true) {
-        throw new Error(
-          `already-resolved record state must not change: ${JSON.stringify(r3)}`,
-        );
+        throw new Error(`already-resolved record must not change: ${JSON.stringify(r3)}`);
       }
-      // 用例终态（契约 §13.9 + §16）：req-r2 是 reply=null 且未 resolved 的
-      // 记录，不能被扫描器消费；需显式删除，避免遗留 send=false &&
-      // resolved=false 的记录污染后续 scanSessionQueue 用例计数。
+      // 用例终态：不可消费的记录显式删除，避免污染后续 scanSessionQueue 计数。
       await registry.mutate((reg) => removeSessionRecord(reg, "req-r2"));
+      await registry.mutate((reg) => removeSessionRecord(reg, "req-r3"));
       await monitor.dispose();
     },
   );
 
-// API-104：① apply 失败 → 记录保留（resolved 保持 false），下轮 ticker 重试
-  // 成功 → 记录删除；② 记录先被 replied 事件路径（Round 6 = removeSessionRecord）
-  // 删除 → 扫描器跳过不调 API（双路径，决策 #6）。
+  // API-104：① 非终态失败（无 404 特征）→ 记录保留 + 下轮重试成功删除；
+  // ② 404（已决请求，relay §14.8.2/契约 §3.3）→ 幂等终态删除、不再调用；
+  // ②b 已观测 v2 形状（evidence/harness-resolved-reply/reply-error-shape.json）：
+  // 普通 Error、message="Permission request not found: per_<id>"、无 status/_tag
+  // → 同样幂等终态删除、不再调用；
+  // ③ 事件路径已删除 → 扫描器跳过不调 API（双路径，决策 #6）。
   await runCase(
-    "API-104 apply failure keeps record, retries to success and deletes; event-path-deleted record is skipped",
+    "API-104 permission apply failure keeps+retries; 404 and observed NotFound-shape terminal delete without retry; event-path-deleted skipped",
     async () => {
       fakeClient.replyCalls = [];
-      // ① 首轮 apply 失败（stub 抛错，如 permission 已被 TUI 处理）→ 不删除。
+      fakeClient.replyError = undefined;
+      // ① 首轮网络失败 → 不删除。
       await registry.mutate((reg) =>
         appendSessionRecord(
           reg,
@@ -363,39 +551,84 @@ async function main() {
           makeRecord({ request_id: "req-r4", reply: "reject" }),
         ),
       );
-      fakeClient.replyError = new Error("permission already decided (404)");
+      fakeClient.replyError = new Error("network unreachable");
       const monitor = makeMonitor(async () => {});
+      captureLogs(monitor);
       const first = await monitor.scanReplyQueue();
       if (first !== 0) {
         throw new Error(`expected 0 applied on failure, got ${first}`);
       }
-      let persisted = await findRecord("req-r4");
-      if (!persisted || persisted.resolved !== false) {
-        throw new Error(
-          `record must stay unresolved after failed apply: ${JSON.stringify(persisted)}`,
-        );
+      const kept = await findRecord("req-r4");
+      if (!kept || kept.resolved !== false) {
+        throw new Error(`record must stay unresolved after failed apply: ${JSON.stringify(kept)}`);
       }
-      // 下轮重试：stub 恢复成功 → 记录删除（终态）。
+      // 下轮重试成功 → 删除（终态）。
       fakeClient.replyError = undefined;
       const second = await monitor.scanReplyQueue();
       if (second !== 1) {
         throw new Error(`expected 1 applied on retry, got ${second}`);
       }
-      persisted = await findRecord("req-r4");
-      if (persisted !== undefined) {
-        throw new Error(
-          `record must be deleted after retry success: ${JSON.stringify(persisted)}`,
-        );
+      if ((await findRecord("req-r4")) !== undefined) {
+        throw new Error("record must be deleted after retry success");
       }
       if (fakeClient.replyCalls.length !== 2) {
+        throw new Error(`expected 2 permission.reply calls total, got ${fakeClient.replyCalls.length}`);
+      }
+      // ② 404 → 幂等终态删除、不重试。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-r6", reply: "reject" }),
+        ),
+      );
+      fakeClient.replyError = Object.assign(new Error("permission not found"), {
+        status: 404,
+      });
+      const third = await monitor.scanReplyQueue();
+      if (third !== 1) {
+        throw new Error(`404 must count as terminal apply, got ${third}`);
+      }
+      if ((await findRecord("req-r6")) !== undefined) {
+        throw new Error("404 terminal must delete the record");
+      }
+      const callsAfter404 = fakeClient.replyCalls.length;
+      const fourth = await monitor.scanReplyQueue();
+      if (fourth !== 0 || fakeClient.replyCalls.length !== callsAfter404) {
+        throw new Error("404 terminal must not retry");
+      }
+      // ②b 已观测 v2 client 形状（无 status/_tag，仅 message 文本）→ 终态。
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-r7", reply: "reject" }),
+        ),
+      );
+      fakeClient.replyError = new Error(
+        "Permission request not found: per_0d4a9b6cd001kcg0LISxqZhnhJ",
+      );
+      const thirdB = await monitor.scanReplyQueue();
+      if (thirdB !== 1) {
         throw new Error(
-          `expected 2 reply API calls total, got ${fakeClient.replyCalls.length}`,
+          `observed NotFound shape must count as terminal apply, got ${thirdB}`,
         );
+      }
+      if ((await findRecord("req-r7")) !== undefined) {
+        throw new Error("observed NotFound shape terminal must delete the record");
+      }
+      const callsAfterObserved = fakeClient.replyCalls.length;
+      const fourthB = await monitor.scanReplyQueue();
+      if (
+        fourthB !== 0 ||
+        fakeClient.replyCalls.length !== callsAfterObserved
+      ) {
+        throw new Error("observed NotFound shape terminal must not retry");
       }
       await monitor.dispose();
 
-      // ② replied 事件路径先删除（Round 6：事件路径 = removeSessionRecord）
-      // → 扫描器跳过不调 API。
+      // ③ 事件路径先删除（Round 6：事件路径 = removeSessionRecord）→ 扫描器
+      // 跳过不调 API。
       await registry.mutate((reg) =>
         appendSessionRecord(
           reg,
@@ -406,616 +639,647 @@ async function main() {
       await registry.mutate((reg) => removeSessionRecord(reg, "req-r5"));
       const callsBefore = fakeClient.replyCalls.length;
       const monitor2 = makeMonitor(async () => {});
-      const third = await monitor2.scanReplyQueue();
-      if (third !== 0) {
-        throw new Error(
-          `expected 0 applied for event-path-deleted, got ${third}`,
-        );
+      captureLogs(monitor2);
+      const fifth = await monitor2.scanReplyQueue();
+      if (fifth !== 0) {
+        throw new Error(`expected 0 applied for event-path-deleted, got ${fifth}`);
       }
       if (fakeClient.replyCalls.length !== callsBefore) {
-        throw new Error(
-          `reply API must not be called for event-path-deleted record`,
-        );
+        throw new Error("permission.reply must not be called for event-path-deleted record");
       }
       await monitor2.dispose();
     },
   );
 
-  // ---- Phase 1.4 (API-205) ----
-  // 契约 docs/modules/sessions-relay.md §14.4/§14.5 + §16（Round 6 改判：apply
-  // 成功 = 删除记录，不再是置 resolved=true）：消费端 q_answers/q_reject
-  // 应用。question 双分支：q_answers != null → applyQuestionReply（透传
-  // sessionID/requestID/answers → 删除记录）；q_reject === true →
-  // applyQuestionReject；失败保留记录下轮重试；事件路径已删除跳过（双路径
-  // 先到先得）；permission 分支（API-103/104）不受影响。
-  // API-205-1：q_answers → reply API 透传删除；q_reject → reject API 删除；
-  // 未达终态的 question 记录不触发；permission reply 记录仍走原 API。
+  // API-401：permission.asked（v2 data）映射：summary 取 data.action、
+  // toolCallID 取 data.source.id；去抖窗口内 permission.replied 取消发送
+  // （0 落盘）；窗口后 replied 删除已落盘记录；通知文本含 action。
   await runCase(
-    "API-205 question reply/reject apply: answers passthrough, both delete the record, permission path unchanged",
+    "API-401 permission v2 mapping: action summary, debounce cancel inside window, delete after persist",
     async () => {
-      fakeClient.postCalls = [];
-      fakeClient.postError = undefined;
-      fakeClient.replyCalls = [];
-      // q_answers 已写入的 question 记录 → reply API。
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-q1",
-            type: "question",
-            message: JSON.stringify({
-              sessionID: "ses_testp0001",
-              id: "req-q1",
-              questions: [
-                { question: "pick one", header: "H", options: [{ label: "A", description: "desc" }] },
+      const sent = [];
+      const monitor = makeMonitor(async (text) => {
+        sent.push(text);
+      });
+      captureLogs(monitor);
+      const id = "s-perm";
+      // 1) 去抖窗口内 replied（auto-approve）→ 0 落盘、0 通知。
+      monitor.accept(
+        envelope("permission.asked", {
+          sessionID: id,
+          id: "req-perm-1",
+          action: "bash",
+          resources: ["echo hi"],
+          source: { type: "tool", messageID: "msg-1", id: "call-1" },
+        }),
+      );
+      monitor.accept(
+        envelope("permission.replied", {
+          sessionID: id,
+          requestID: "req-perm-1",
+          reply: "once",
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1500)); // > 1s 去抖窗口
+      if ((await findRecord("req-perm-1")) !== undefined) {
+        throw new Error("auto-approved permission must not be persisted");
+      }
+      // 2) 窗口后 replied → 删除已落盘记录。
+      monitor.accept(
+        envelope("permission.asked", {
+          sessionID: id,
+          id: "req-perm-2",
+          action: "read file",
+          source: { type: "tool", messageID: "msg-2", id: "call-2" },
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const persisted = await findRecord("req-perm-2");
+      if (!persisted || persisted.type !== "permission" || persisted.resolved !== false) {
+        throw new Error(`permission record not persisted after window: ${JSON.stringify(persisted)}`);
+      }
+      // t13 印章：permission/question 两条写盘路径都携带创建进程 pid。
+      if (persisted.host_pid !== process.pid) {
+        throw new Error(
+          `permission record must carry host_pid=${process.pid}: ${JSON.stringify(persisted)}`,
+        );
+      }
+      // 内存等待投影：summary = "<action> permission"、toolCallID = data.source.id（§2.5）。
+      const waiting = monitor.sessions
+        .get(id)
+        ?.waitingByRequestID.get("req-perm-2");
+      if (waiting?.summary !== "read file permission") {
+        throw new Error(`waiting summary must be "<action> permission": ${JSON.stringify(waiting)}`);
+      }
+      if (waiting?.toolCallID !== "call-2") {
+        throw new Error(`toolCallID must come from data.source.id: ${JSON.stringify(waiting)}`);
+      }
+      // 通知文本：结构化 Permission 行含 action（Type 行为 permission）。
+      const handled = await monitor.scanSessionQueue();
+      if (handled !== 1) throw new Error(`expected 1 handled, got ${handled}`);
+      if (!sent[0] || !sent[0].includes("read file") || !sent[0].includes("permission")) {
+        throw new Error(`permission notification must render data.action: ${sent[0]}`);
+      }
+      monitor.accept(
+        envelope("permission.replied", {
+          sessionID: id,
+          requestID: "req-perm-2",
+          reply: "reject",
+        }),
+      );
+      for (let i = 0; i < 40 && (await findRecord("req-perm-2")); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      if ((await findRecord("req-perm-2")) !== undefined) {
+        throw new Error("permission record must be deleted after replied");
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // API-402：form.created（§2.6）→ waiting 记录 + 完整 payload 落盘 + 向导
+  // 渲染（description=question、title=header、options label）；form.replied /
+  // form.cancelled → 记录删除（终态）。
+  await runCase(
+    "API-402 form.created persists verbatim payload + wizard mapping; form.replied/cancelled delete record",
+    async () => {
+      const monitor = makeMonitor(async () => {});
+      captureLogs(monitor);
+      const calls = [];
+      monitor.sendMessage = async (text) => calls.push({ kind: "plain", text });
+      monitor.sendMessageWithKeyboard = async (text, keyboard) =>
+        calls.push({ kind: "keyboard", text, keyboard });
+      const formData = {
+        form: {
+          id: "req-form-1",
+          sessionID: "ses_testp0001",
+          title: "Questions",
+          metadata: { kind: "question", tool: { messageID: "msg-1", id: "call-1" } },
+          fields: [
+            {
+              key: "q0",
+              title: "Preference",
+              description: "Which option do you prefer?",
+              type: "string",
+              options: [
+                { value: "Option A", label: "Option A", description: "Choose A" },
+                { value: "Option B", label: "Option B", description: "Choose B" },
               ],
-            }),
-            q_answers: [["A"]],
-          }),
-        ),
-      );
-      // q_reject=true 的 question 记录 → reject API。
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-q2",
-            type: "question",
-            message: JSON.stringify({
-              sessionID: "ses_testp0001",
-              id: "req-q2",
-              questions: [{ question: "pick two", options: [{ label: "B" }] }],
-            }),
-            q_reject: true,
-          }),
-        ),
-      );
-      // 未达终态（q_answers 缺失且 q_reject 未置位）→ 不触发任何 API。
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-q3",
-            type: "question",
-            message: JSON.stringify({ id: "req-q3", questions: [] }),
-          }),
-        ),
-      );
-      // permission 回归：reply 记录仍走 permission reply API（分支零改动）。
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({ request_id: "req-q4", reply: "once" }),
-        ),
-      );
-      const monitor = makeMonitor(async () => {});
-      const applied = await monitor.scanReplyQueue();
-      if (applied !== 3) {
-        throw new Error(`expected 3 applied, got ${applied}`);
-      }
-      // question reply 透传断言（分层通道②：_client.post url/path/body 顶层
-      // { answers }；§14.8.1/§14.8.7）。运行时无扁平方法 → typeof 走失败分支。
-      const replyCalls = fakeClient.postCalls.filter((call) =>
-        call.url === "/api/session/{sessionID}/question/{requestID}/reply",
-      );
-      if (replyCalls.length !== 1) {
-        throw new Error(
-          `expected exactly 1 question reply _client.post call, got ${replyCalls.length}`,
-        );
-      }
-      const rc = replyCalls[0];
-      if (rc.path?.sessionID !== "ses_testp0001") {
-        throw new Error(`question reply sessionID mismatch: ${rc.path?.sessionID}`);
-      }
-      if (rc.path?.requestID !== "req-q1") {
-        throw new Error(`question reply requestID mismatch: ${rc.path?.requestID}`);
-      }
-      if (JSON.stringify(rc.body) !== JSON.stringify({ answers: [["A"]] })) {
-        throw new Error(
-          `question reply body must be top-level { answers }, got ${JSON.stringify(rc.body)}`,
-        );
-      }
-      if (rc.body && "questionV2Reply" in rc.body) {
-        throw new Error(`question reply body must not nest questionV2Reply`);
-      }
-      if (rc.throwOnError !== true) {
-        throw new Error(`question reply call must set throwOnError: true`);
-      }
-      // question reject 透传断言（同构：url .../reject、无 body 字段）。
-      const rejectCalls = fakeClient.postCalls.filter((call) =>
-        call.url === "/api/session/{sessionID}/question/{requestID}/reject",
-      );
-      if (rejectCalls.length !== 1) {
-        throw new Error(
-          `expected exactly 1 question reject _client.post call, got ${rejectCalls.length}`,
-        );
-      }
-      const jc = rejectCalls[0];
-      if (jc.path?.sessionID !== "ses_testp0001") {
-        throw new Error(`question reject sessionID mismatch: ${jc.path?.sessionID}`);
-      }
-      if (jc.path?.requestID !== "req-q2") {
-        throw new Error(`question reject requestID mismatch: ${jc.path?.requestID}`);
-      }
-      if (jc.body !== undefined) {
-        throw new Error(`question reject call must carry no body, got ${JSON.stringify(jc.body)}`);
-      }
-      // 分层命中通道②：不得有任何 v2 全局路由（/question/...）调用。
-      if (fakeClient.postCalls.some((call) => !call.url.startsWith("/api/session/"))) {
-        throw new Error(
-          `channel 2 must be hit first; unexpected global-route call: ${JSON.stringify(fakeClient.postCalls)}`,
-        );
-      }
-      // permission 回归：permission reply API 仍被调用。
-      if (fakeClient.replyCalls.length !== 1) {
-        throw new Error(
-          `expected 1 permission reply API call (regression), got ${fakeClient.replyCalls.length}`,
-        );
-      }
-      if (fakeClient.replyCalls[0].permissionID !== "req-q4") {
-        throw new Error(
-          `permission reply requestID mismatch: ${fakeClient.replyCalls[0].permissionID}`,
-        );
-      }
-      // Round 6 改判：apply 成功 = 记录删除（终态），q3 未达终态保留。
-      const r1 = await findRecord("req-q1");
-      if (r1 !== undefined) {
-        throw new Error(
-          `q1 record must be deleted after reply apply: ${JSON.stringify(r1)}`,
-        );
-      }
-      const r2 = await findRecord("req-q2");
-      if (r2 !== undefined) {
-        throw new Error(
-          `q2 record must be deleted after reject apply: ${JSON.stringify(r2)}`,
-        );
-      }
-      const r3 = await findRecord("req-q3");
-      if (!r3 || r3.resolved !== false) {
-        throw new Error(
-          `q3 (no flag) must stay unresolved: ${JSON.stringify(r3)}`,
-        );
-      }
-      // 用例终态纪律（契约 §14.5 + §16）：req-q3 无触发标志、无法被扫描器
-      // 消费，需显式删除（终态 = 删除），避免遗留 send=false && resolved=false
-      // 的 question 记录污染后续 scanSessionQueue 用例计数。
-      await registry.mutate((reg) => removeSessionRecord(reg, "req-q3"));
-      await monitor.dispose();
-    },
-  );
-
-  // API-205-2：apply 失败 → 记录保留（resolved 保持 false）、下轮重试成功
-  // 删除（reply 与 reject 双路径各验证一次；postError 使两条记录都失败，
-  // 单条失败不中断整轮，成功计数为 0）。
-  await runCase(
-    "API-205 question apply failure keeps record and retries to deletion (reply + reject)",
-    async () => {
-      fakeClient.postCalls = [];
-      fakeClient.postError = undefined;
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-q5",
-            type: "question",
-            message: JSON.stringify({ id: "req-q5", questions: [] }),
-            q_answers: [["X"]],
-          }),
-        ),
-      );
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-q6",
-            type: "question",
-            message: JSON.stringify({ id: "req-q6", questions: [] }),
-            q_reject: true,
-          }),
-        ),
-      );
-      // ① apply 失败（postError 抛非 404 错误，如「已决」）→ 两条记录均
-      // 保留（单条失败不中断整轮，成功计数为 0）。
-      fakeClient.postError = new Error("question already decided");
-      const monitor = makeMonitor(async () => {});
-      const first = await monitor.scanReplyQueue();
-      if (first !== 0) {
-        throw new Error(`expected 0 applied while postError set, got ${first}`);
-      }
-      let r5 = await findRecord("req-q5");
-      if (!r5 || r5.resolved !== false) {
-        throw new Error(
-          `q5 must stay unresolved after failed reply apply: ${JSON.stringify(r5)}`,
-        );
-      }
-      let r6 = await findRecord("req-q6");
-      if (!r6 || r6.resolved !== false) {
-        throw new Error(
-          `q6 must stay unresolved after failed reject apply: ${JSON.stringify(r6)}`,
-        );
-      }
-      // ② 下轮重试：postError 清除 → 两路径均成功 → 记录删除。
-      fakeClient.postError = undefined;
-      const second = await monitor.scanReplyQueue();
-      if (second !== 2) {
-        throw new Error(`expected 2 applied on retry, got ${second}`);
-      }
-      r5 = await findRecord("req-q5");
-      if (r5 !== undefined) {
-        throw new Error(
-          `q5 record must be deleted after retry success: ${JSON.stringify(r5)}`,
-        );
-      }
-      r6 = await findRecord("req-q6");
-      if (r6 !== undefined) {
-        throw new Error(
-          `q6 record must be deleted after retry success: ${JSON.stringify(r6)}`,
-        );
-      }
-      // 每记录每轮：非 404 失败 → 通道② + 降级通道③ 各一次；首轮 2 记录 × 2
-      // = 4，重试轮 2 记录 × 1（② 成功） = 2，共 6。
-      if (fakeClient.postCalls.length !== 6) {
-        throw new Error(
-          `expected 6 _client.post calls total (4 failed degrade + 2 success), got ${fakeClient.postCalls.length}`,
-        );
-      }
-      await monitor.dispose();
-    },
-  );
-
-  // API-205-3：双路径先到先得——question.replied/rejected 事件路径先删除
-  // 记录（Round 6：事件路径 = removeSessionRecord）→ 扫描器跳过，不调任何
-  // question API。
-  await runCase(
-    "API-205 event-path-deleted question record is skipped (event path first)",
-    async () => {
-      fakeClient.postCalls = [];
-      fakeClient.postError = undefined;
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-q7",
-            type: "question",
-            message: JSON.stringify({ id: "req-q7", questions: [] }),
-            q_answers: [["Y"]],
-          }),
-        ),
-      );
-      await registry.mutate((reg) => removeSessionRecord(reg, "req-q7"));
-      const monitor = makeMonitor(async () => {});
-      const applied = await monitor.scanReplyQueue();
-      if (applied !== 0) {
-        throw new Error(
-          `expected 0 applied for event-path-deleted, got ${applied}`,
-        );
-      }
-      if (fakeClient.postCalls.length !== 0) {
-        throw new Error(
-          `question _client.post must not be called for event-path-deleted record`,
-        );
-      }
-      await monitor.dispose();
-    },
-  );
-
-  // ---- Phase 2.1 (API-206) ----
-  // 契约 docs/modules/sessions-relay.md §14.8.1/§14.8.2/§14.8.7：消费端通道
-  // 修复。运行时扁平客户端无 question 方法（实机实证）→ 分层通道命中 ②
-  // （(client as any)._client.post，url/path/body 顶层 { answers }）；① 扁平
-  // 方法存在时直用；404 → resolved 终态不再重试；非 404 失败仍重试（② 失败
-  // 降级 ③ 后仍失败）；reject 同构（无 body）。
-  // API-206-1：分层命中通道②——reply 与 reject 同构（url/path/body 断言、
-  // 无 v2 全局路由调用、无 questionV2Reply 嵌套）。
-  await runCase(
-    "API-206 layered channel 2 hit: _client.post url/path/body top-level {answers}, reject no body, no global route",
-    async () => {
-      fakeClient.postCalls = [];
-      fakeClient.postError = undefined;
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-a1",
-            type: "question",
-            message: JSON.stringify({ id: "req-a1", questions: [] }),
-            q_answers: [["A"]],
-          }),
-        ),
-      );
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-a2",
-            type: "question",
-            message: JSON.stringify({ id: "req-a2", questions: [] }),
-            q_reject: true,
-          }),
-        ),
-      );
-      const monitor = makeMonitor(async () => {});
-      const applied = await monitor.scanReplyQueue();
-      if (applied !== 2) {
-        throw new Error(`expected 2 applied, got ${applied}`);
-      }
-      // 恰 2 次 _client.post，均为 v2 会话级路由（通道②，无 v2 全局降级）。
-      if (fakeClient.postCalls.length !== 2) {
-        throw new Error(
-          `expected exactly 2 _client.post calls, got ${fakeClient.postCalls.length}`,
-        );
-      }
-      for (const call of fakeClient.postCalls) {
-        if (!call.url.startsWith("/api/session/")) {
-          throw new Error(`unexpected non-session route: ${call.url}`);
-        }
-      }
-      const rc = fakeClient.postCalls.find((c) => c.url.endsWith("/reply"));
-      if (!rc) throw new Error("missing reply _client.post call");
-      if (rc.path?.sessionID !== "ses_testp0001") {
-        throw new Error(`reply path.sessionID mismatch: ${rc.path?.sessionID}`);
-      }
-      if (rc.path?.requestID !== "req-a1") {
-        throw new Error(`reply path.requestID mismatch: ${rc.path?.requestID}`);
-      }
-      if (JSON.stringify(rc.body) !== JSON.stringify({ answers: [["A"]] })) {
-        throw new Error(`reply body must be top-level { answers }, got ${JSON.stringify(rc.body)}`);
-      }
-      if (rc.body && "questionV2Reply" in rc.body) {
-        throw new Error(`reply body must not nest questionV2Reply`);
-      }
-      if (rc.query !== undefined) {
-        throw new Error(`channel 2 reply must not carry query, got ${JSON.stringify(rc.query)}`);
-      }
-      const jc = fakeClient.postCalls.find((c) => c.url.endsWith("/reject"));
-      if (!jc) throw new Error("missing reject _client.post call");
-      if (jc.path?.requestID !== "req-a2") {
-        throw new Error(`reject path.requestID mismatch: ${jc.path?.requestID}`);
-      }
-      if (jc.body !== undefined) {
-        throw new Error(`reject must carry no body, got ${JSON.stringify(jc.body)}`);
-      }
-      if (jc.query !== undefined) {
-        throw new Error(`channel 2 reject must not carry query, got ${JSON.stringify(jc.query)}`);
-      }
-      // Round 6 改判：apply 成功 = 记录删除（终态），不再是 resolved=true。
-      const r1 = await findRecord("req-a1");
-      if (r1 !== undefined) {
-        throw new Error(
-          `a1 record must be deleted after reply apply: ${JSON.stringify(r1)}`,
-        );
-      }
-      const r2 = await findRecord("req-a2");
-      if (r2 !== undefined) {
-        throw new Error(
-          `a2 record must be deleted after reject apply: ${JSON.stringify(r2)}`,
-        );
-      }
-      await monitor.dispose();
-    },
-  );
-
-  // API-206-2：① 扁平方法存在时直用（用例内临时挂方法，断言命中后清理）。
-  await runCase(
-    "API-206 flat question methods are used directly when present (channel 1)",
-    async () => {
-      fakeClient.postCalls = [];
-      fakeClient.postError = undefined;
-      const flatCalls = [];
-      const flatReply = async (options) => {
-        flatCalls.push({ kind: "reply", options });
-        return { data: true };
+              custom: true,
+            },
+          ],
+        },
       };
-      const flatReject = async (options) => {
-        flatCalls.push({ kind: "reject", options });
-        return { data: true };
-      };
-      fakeClient.postApiSessionSessionIDQuestionRequestIDReply = flatReply;
-      fakeClient.postApiSessionSessionIDQuestionRequestIDReject = flatReject;
+      monitor.accept(envelope("form.created", formData));
+      for (let i = 0; i < 40 && !(await findRecord("req-form-1")); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const persisted = await findRecord("req-form-1");
+      if (!persisted || persisted.type !== "question") {
+        throw new Error(`form record not persisted: ${JSON.stringify(persisted)}`);
+      }
+      // t13 印章：落盘记录必须携带创建进程 pid（回写归属门的唯一可靠信号）。
+      if (persisted.host_pid !== process.pid) {
+        throw new Error(
+          `persisted record must carry host_pid=${process.pid}: ${JSON.stringify(persisted)}`,
+        );
+      }
+      const payload = JSON.parse(persisted.message);
+      if (
+        payload.form?.id !== "req-form-1" ||
+        payload.form?.fields?.[0]?.key !== "q0" ||
+        payload.form?.metadata?.kind !== "question"
+      ) {
+        throw new Error(`form payload must be persisted verbatim: ${persisted.message}`);
+      }
+      // scanSessionQueue → 向导渲染：Question 取 description、Header 取 title、
+      // Option 行取 label（中文/英文混合的富文本表格）。
+      const handled = await monitor.scanSessionQueue();
+      if (handled !== 1) throw new Error(`expected 1 handled, got ${handled}`);
+      const kb = calls.find((call) => call.kind === "keyboard");
+      if (!kb) throw new Error(`wizard must be sent with keyboard: ${JSON.stringify(calls)}`);
+      if (
+        !kb.text.includes("Which option do you prefer?") ||
+        !kb.text.includes("Preference") ||
+        !kb.text.includes("Option A") ||
+        !kb.text.includes("Choose A")
+      ) {
+        throw new Error(`wizard text missing form field mapping: ${kb.text}`);
+      }
+      if (kb.keyboard.inline_keyboard.length === 0) {
+        throw new Error("wizard keyboard must carry option buttons");
+      }
+      // form.replied → 删除记录。
+      monitor.accept(
+        envelope("form.replied", {
+          id: "req-form-1",
+          sessionID: "ses_testp0001",
+          answer: { q0: "Option A" },
+        }),
+      );
+      for (let i = 0; i < 40 && (await findRecord("req-form-1")); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      if ((await findRecord("req-form-1")) !== undefined) {
+        throw new Error("form record must be deleted after form.replied");
+      }
+      // form.cancelled → 同删除语义（新记录验证）。
+      monitor.accept(
+        envelope("form.created", {
+          form: {
+            id: "req-form-2",
+            sessionID: "ses_testp0001",
+            title: "Cancel me",
+            fields: [{ key: "q0", title: "Pick", type: "string" }],
+          },
+        }),
+      );
+      for (let i = 0; i < 40 && !(await findRecord("req-form-2")); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      if ((await findRecord("req-form-2")) === undefined) {
+        throw new Error("second form record not persisted");
+      }
+      monitor.accept(
+        envelope("form.cancelled", { id: "req-form-2", sessionID: "ses_testp0001" }),
+      );
+      for (let i = 0; i < 40 && (await findRecord("req-form-2")); i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      if ((await findRecord("req-form-2")) !== undefined) {
+        throw new Error("form record must be deleted after form.cancelled");
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // API-410：紧随 form.created 的 form.replied 不得因「删除先于落盘」竞态
+  // 复活记录（waitingPersists 串行化：resolveWaitingRecord 先等在途写盘）。
+  await runCase(
+    "API-410 immediate form.replied after form.created cannot resurrect a record",
+    async () => {
+      const monitor = makeMonitor(async () => {});
+      captureLogs(monitor);
+      monitor.accept(
+        envelope("form.created", {
+          form: {
+            id: "req-race-1",
+            sessionID: "ses_testp0001",
+            title: "race",
+            fields: [{ key: "q0", title: "q", type: "string" }],
+          },
+        }),
+      );
+      monitor.accept(
+        envelope("form.replied", {
+          id: "req-race-1",
+          sessionID: "ses_testp0001",
+          answer: { q0: "x" },
+        }),
+      );
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      if ((await findRecord("req-race-1")) !== undefined) {
+        throw new Error(
+          "record resurrected after immediate form.replied (persist/remove race)",
+        );
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // API-403：inbox steer 守卫（§2.7）：enqueued(steer) → awaitingInput 置位、
+  // idle 终态推迟（无 idleTimer）；delivered → 清位并恢复 idle 终态调度。
+  await runCase(
+    "API-403 inbox steer postpones idle finalization until delivered",
+    async () => {
+      const monitor = makeMonitor(async () => {});
+      captureLogs(monitor);
+      const id = "s-inbox";
+      monitor.accept(envelope("session.execution.started", { sessionID: id }));
+      monitor.accept(
+        envelope("session.step.started", {
+          sessionID: id,
+          assistantMessageID: "msg-inbox",
+          agent: "build",
+        }),
+      );
+      monitor.accept(
+        envelope("session.inbox.enqueued", {
+          sessionID: id,
+          inboxID: "inbox-1",
+          item: { type: "user", payload: { text: "steer me" }, delivery: "steer" },
+        }),
+      );
+      monitor.accept(envelope("session.execution.succeeded", { sessionID: id }));
+      await flush();
+      let projection = monitor.sessions.get(id);
+      if (!projection || projection.awaitingInput !== true) {
+        throw new Error(`awaitingInput must be set by steer enqueue: ${JSON.stringify(projection?.awaitingInput)}`);
+      }
+      if (projection.idleTimer !== undefined) {
+        throw new Error("idle finalization must be postponed while a steer item is undelivered");
+      }
+      // delivered → 清位 + 恢复调度（idleTimer 建立）。
+      monitor.accept(
+        envelope("session.inbox.delivered", { sessionID: id, inboxID: "inbox-1" }),
+      );
+      await flush();
+      projection = monitor.sessions.get(id);
+      if (!projection || projection.awaitingInput !== false) {
+        throw new Error(`awaitingInput must be cleared on delivered: ${JSON.stringify(projection?.awaitingInput)}`);
+      }
+      if (projection.idleTimer === undefined) {
+        throw new Error("idle finalization must resume after the steer set is cleared");
+      }
+      // queue 项不影响守卫；cancelled 清理同 delivered。
+      monitor.accept(
+        envelope("session.inbox.enqueued", {
+          sessionID: id,
+          inboxID: "inbox-2",
+          item: { type: "synthetic", payload: { text: "queued" }, delivery: "queue" },
+        }),
+      );
+      await flush();
+      if (monitor.sessions.get(id)?.awaitingInput !== false) {
+        throw new Error("queue delivery must not set awaitingInput");
+      }
+      monitor.accept(
+        envelope("session.inbox.cancelled", { sessionID: id, inboxID: "inbox-2" }),
+      );
+      await flush();
+      // delivery.changed：steer → queue 重算后不再推迟（新会话验证）。
+      const id2 = "s-inbox-2";
+      monitor.accept(envelope("session.execution.started", { sessionID: id2 }));
+      monitor.accept(
+        envelope("session.inbox.enqueued", {
+          sessionID: id2,
+          inboxID: "inbox-3",
+          item: { type: "user", payload: { text: "steer" }, delivery: "steer" },
+        }),
+      );
+      await flush();
+      if (monitor.sessions.get(id2)?.awaitingInput !== true) {
+        throw new Error("steer enqueue must set awaitingInput on a second session");
+      }
+      monitor.accept(
+        envelope("session.inbox.delivery.changed", {
+          sessionID: id2,
+          inboxID: "inbox-3",
+          delivery: "queue",
+        }),
+      );
+      await flush();
+      if (monitor.sessions.get(id2)?.awaitingInput !== false) {
+        throw new Error("steer->queue delivery change must clear awaitingInput");
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // API-404：form 回写精确请求形状（§A.1）+ q_answers label→option.value
+  // 映射（单选取首个、multiselect 数组、custom 自由文本原样）→ 204 删除。
+  await runCase(
+    "API-404 q_answers maps labels to option.value and POSTs exact A.1 request (204 deletes record)",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
       try {
         await registry.mutate((reg) =>
           appendSessionRecord(
             reg,
             root,
-            makeRecord({
-              request_id: "req-a3",
-              type: "question",
-              message: JSON.stringify({ id: "req-a3", questions: [] }),
-              q_answers: [["B"]],
-            }),
-          ),
-        );
-        await registry.mutate((reg) =>
-          appendSessionRecord(
-            reg,
-            root,
-            makeRecord({
-              request_id: "req-a4",
-              type: "question",
-              message: JSON.stringify({ id: "req-a4", questions: [] }),
-              q_reject: true,
+            formRecord({
+              requestID: "req-h1",
+              fields: [
+                {
+                  key: "q0",
+                  title: "single",
+                  type: "string",
+                  options: [
+                    { value: "a", label: "A" },
+                    { value: "b", label: "B" },
+                  ],
+                },
+                { key: "q1", title: "notes", type: "string" },
+                {
+                  key: "q2",
+                  title: "multi",
+                  type: "multiselect",
+                  options: [
+                    { value: "x", label: "X" },
+                    { value: "y", label: "Y" },
+                  ],
+                },
+              ],
+              q_answers: [["B"], ["free text"], ["X", "Y"]],
             }),
           ),
         );
         const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
         const applied = await monitor.scanReplyQueue();
-        if (applied !== 2) {
-          throw new Error(`expected 2 applied via flat methods, got ${applied}`);
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 HTTP request, got ${server.requests.length}`);
         }
-        // 扁平方法直用：_client.post 未被调用。
-        if (fakeClient.postCalls.length !== 0) {
-          throw new Error(
-            `_client.post must not be called when flat methods exist, got ${fakeClient.postCalls.length} calls`,
-          );
+        const request = server.requests[0];
+        if (request.method !== "POST") {
+          throw new Error(`method must be POST, got ${request.method}`);
         }
-        if (flatCalls.length !== 2) {
-          throw new Error(`expected 2 flat method calls, got ${flatCalls.length}`);
+        if (request.url !== "/api/session/ses_testp0001/form/req-h1/reply") {
+          throw new Error(`url mismatch: ${request.url}`);
         }
-        const fr = flatCalls.find((c) => c.kind === "reply");
-        if (!fr) throw new Error("flat reply method not called");
-        if (fr.options.path?.sessionID !== "ses_testp0001") {
-          throw new Error(`flat reply path.sessionID mismatch: ${fr.options.path?.sessionID}`);
+        const expectedAuth = `Basic ${Buffer.from("opencode:test-secret", "utf8").toString("base64")}`;
+        if (request.headers.authorization !== expectedAuth) {
+          throw new Error(`authorization mismatch: ${request.headers.authorization}`);
         }
-        if (fr.options.path?.requestID !== "req-a3") {
-          throw new Error(`flat reply path.requestID mismatch: ${fr.options.path?.requestID}`);
+        if (request.headers["content-type"] !== "application/json") {
+          throw new Error(`content-type mismatch: ${request.headers["content-type"]}`);
         }
-        if (JSON.stringify(fr.options.body) !== JSON.stringify({ answers: [["B"]] })) {
-          throw new Error(`flat reply body must be top-level { answers }, got ${JSON.stringify(fr.options.body)}`);
+        const body = JSON.parse(request.body);
+        const expectedBody = {
+          answer: { q0: "b", q1: "free text", q2: ["x", "y"] },
+        };
+        if (JSON.stringify(body) !== JSON.stringify(expectedBody)) {
+          throw new Error(`answer body mismatch: ${request.body}`);
         }
-        const fj = flatCalls.find((c) => c.kind === "reject");
-        if (!fj) throw new Error("flat reject method not called");
-        if (fj.options.path?.requestID !== "req-a4") {
-          throw new Error(`flat reject path.requestID mismatch: ${fj.options.path?.requestID}`);
-        }
-        if (fj.options.body !== undefined) {
-          throw new Error(`flat reject must carry no body, got ${JSON.stringify(fj.options.body)}`);
-        }
-        // Round 6 改判：扁平 apply 成功 = 记录删除（终态）。
-        const r3 = await findRecord("req-a3");
-        if (r3 !== undefined) {
-          throw new Error(
-            `a3 record must be deleted after flat reply apply: ${JSON.stringify(r3)}`,
-          );
-        }
-        const r4 = await findRecord("req-a4");
-        if (r4 !== undefined) {
-          throw new Error(
-            `a4 record must be deleted after flat reject apply: ${JSON.stringify(r4)}`,
-          );
+        if ((await findRecord("req-h1")) !== undefined) {
+          throw new Error("record must be deleted after 204");
         }
         await monitor.dispose();
       } finally {
-        delete fakeClient.postApiSessionSessionIDQuestionRequestIDReply;
-        delete fakeClient.postApiSessionSessionIDQuestionRequestIDReject;
+        restoreFormChannel();
+        await server.close();
       }
     },
   );
 
-  // API-206-3：404 → 记录删除（终态），不再重试（下一轮 scan 自然跳过）。
+  // API-405：非终态 HTTP 失败（500）→ 记录保留；下轮 204 → 删除。
   await runCase(
-    "API-206 404 deletes the question record (terminal), no retry on next scan",
+    "API-405 form reply HTTP 500 keeps record, retry with 204 deletes it",
     async () => {
-      fakeClient.postCalls = [];
-      fakeClient.postError = Object.assign(new Error("question not found"), {
-        status: 404,
-      });
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-a5",
-            type: "question",
-            message: JSON.stringify({ id: "req-a5", questions: [] }),
-            q_answers: [["C"]],
-          }),
-        ),
-      );
-      const monitor = makeMonitor(async () => {});
-      const applied = await monitor.scanReplyQueue();
-      // 404 终态：不 rethrow、应用成功计数 +1；仅 1 次通道②调用（404 立即
-      // 终态，不继续尝试后续通道）。
-      if (applied !== 1) {
-        throw new Error(`expected 1 applied (404 terminal), got ${applied}`);
-      }
-      if (fakeClient.postCalls.length !== 1) {
-        throw new Error(
-          `expected 1 _client.post call before 404 terminal, got ${fakeClient.postCalls.length}`,
+      let status = 500;
+      const server = await startFormServer(() => status);
+      setFormChannel(server.port, "test-secret");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-h2", q_answers: [["A"]] }),
+          ),
         );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        if (first !== 0) throw new Error(`expected 0 applied on 500, got ${first}`);
+        if ((await findRecord("req-h2")) === undefined) {
+          throw new Error("record must be kept on non-terminal failure");
+        }
+        if (!logs.some((entry) => entry.message.includes("HTTP 500"))) {
+          throw new Error(`failure reason must be logged: ${JSON.stringify(logs)}`);
+        }
+        status = 204;
+        const second = await monitor.scanReplyQueue();
+        if (second !== 1) throw new Error(`expected 1 applied on retry, got ${second}`);
+        if ((await findRecord("req-h2")) !== undefined) {
+          throw new Error("record must be deleted after retry 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
       }
-      // Round 6 改判：404 终态 = 记录删除。
-      const r5 = await findRecord("req-a5");
-      if (r5 !== undefined) {
-        throw new Error(
-          `a5 record must be deleted after 404: ${JSON.stringify(r5)}`,
-        );
-      }
-      // 下一轮 scan：记录已删除 → 自然跳过，不再调用 _client.post。
-      const callsAfter = fakeClient.postCalls.length;
-      const second = await monitor.scanReplyQueue();
-      if (second !== 0) {
-        throw new Error(`expected 0 applied on next scan, got ${second}`);
-      }
-      if (fakeClient.postCalls.length !== callsAfter) {
-        throw new Error(`_client.post must not be called again after 404 terminal`);
-      }
-      await monitor.dispose();
     },
   );
 
-  // API-206-4：非 404 失败仍重试——② 失败降级尝试 ③（v2 全局路由，query
-  // directory=root）后仍失败 → 记录保留；下轮 postError 清除 → 重试成功
-  // 删除。
+  // API-406（t13 修订）：409 是唯一确认已决信号 → 幂等终态（删除记录、不重试）。
+  // 404 不再视为终态（t13-probe P2：非宿主对 pending form 的 reply/cancel 也返回
+  // 404；只有已决 409 可判定），保留记录下轮重试——见 T13-404。
   await runCase(
-    "API-206 non-404 failure retries and degrades to channel 3 (global route), then deletes",
+    "API-406 form reply 409 is idempotent terminal: delete record, no retry",
     async () => {
-      fakeClient.postCalls = [];
-      fakeClient.postError = new Error("boom");
-      await registry.mutate((reg) =>
-        appendSessionRecord(
-          reg,
-          root,
-          makeRecord({
-            request_id: "req-a6",
-            type: "question",
-            message: JSON.stringify({ id: "req-a6", questions: [] }),
-            q_answers: [["D"]],
-          }),
-        ),
-      );
-      const monitor = makeMonitor(async () => {});
-      const first = await monitor.scanReplyQueue();
-      if (first !== 0) {
-        throw new Error(`expected 0 applied while postError set, got ${first}`);
-      }
-      // ② 失败 → ③ 也被尝试：两个 url 形态都在 postCalls 中（均失败）。
-      const sessionCalls = fakeClient.postCalls.filter((c) =>
-        c.url.startsWith("/api/session/"),
-      );
-      const globalCalls = fakeClient.postCalls.filter((c) =>
-        c.url.startsWith("/question/"),
-      );
-      if (sessionCalls.length !== 1) {
-        throw new Error(`expected 1 channel-2 call, got ${sessionCalls.length}`);
-      }
-      if (globalCalls.length !== 1) {
-        throw new Error(`expected 1 channel-3 call (degraded), got ${globalCalls.length}`);
-      }
-      if (globalCalls[0].path?.requestID !== "req-a6") {
-        throw new Error(`channel-3 path.requestID mismatch: ${globalCalls[0].path?.requestID}`);
-      }
-      if (globalCalls[0].query?.directory !== root) {
-        throw new Error(`channel-3 query.directory must be root, got ${JSON.stringify(globalCalls[0].query)}`);
-      }
-      if (JSON.stringify(globalCalls[0].body) !== JSON.stringify({ answers: [["D"]] })) {
-        throw new Error(`channel-3 body mismatch: ${JSON.stringify(globalCalls[0].body)}`);
-      }
-      const r6 = await findRecord("req-a6");
-      if (!r6 || r6.resolved !== false) {
-        throw new Error(`a6 must stay unresolved after non-404 failure: ${JSON.stringify(r6)}`);
-      }
-      // 下轮重试：postError 清除 → 通道②成功 → 记录删除。
-      fakeClient.postError = undefined;
-      const second = await monitor.scanReplyQueue();
-      if (second !== 1) {
-        throw new Error(`expected 1 applied on retry, got ${second}`);
-      }
-      const r6b = await findRecord("req-a6");
-      if (r6b !== undefined) {
-        throw new Error(
-          `a6 record must be deleted after retry success: ${JSON.stringify(r6b)}`,
+      const server = await startFormServer(() => 409);
+      setFormChannel(server.port, "test-secret");
+      try {
+        const requestID = "req-h3-409";
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID, q_answers: [["A"]] }),
+          ),
         );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) {
+          throw new Error(`409 must count as terminal apply, got ${applied}`);
+        }
+        if ((await findRecord(requestID)) !== undefined) {
+          throw new Error("409 terminal must delete the record");
+        }
+        const callsAfter = server.requests.length;
+        const again = await monitor.scanReplyQueue();
+        if (again !== 0 || server.requests.length !== callsAfter) {
+          throw new Error("409 terminal must not retry");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
       }
-      await monitor.dispose();
+    },
+  );
+
+  // API-407：端口不可发现（run --standalone / --port 0）与密码缺失 → 显式
+  // 失败（原因日志、无 HTTP 请求、记录保留），无任何兜底/降级。
+  await runCase(
+    "API-407 missing port/password fail explicitly with reason, no fallback, record kept",
+    async () => {
+      const server = await startFormServer(() => 204);
+      try {
+        // 1) 端口不可发现：argv 无 --port。
+        setFormChannel(undefined, "test-secret");
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-h4", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 0) throw new Error(`expected 0 applied without port, got ${applied}`);
+        if (server.requests.length !== 0) {
+          throw new Error("no HTTP request may be attempted when the port is undiscoverable");
+        }
+        if (!logs.some((entry) => entry.message.includes("server port not discoverable"))) {
+          throw new Error(`missing explicit no-port reason: ${JSON.stringify(logs)}`);
+        }
+        if ((await findRecord("req-h4")) === undefined) {
+          throw new Error("record must be kept (unapplied) without a discoverable port");
+        }
+        await monitor.dispose();
+
+        // 2) 端口可发现但无密码 env。
+        setFormChannel(server.port, null);
+        const monitor2 = makeMonitor(async () => {});
+        const logs2 = captureLogs(monitor2);
+        const second = await monitor2.scanReplyQueue();
+        if (second !== 0) throw new Error(`expected 0 applied without password, got ${second}`);
+        if (server.requests.length !== 0) {
+          throw new Error("no HTTP request may be attempted without credentials");
+        }
+        if (
+          !logs2.some((entry) =>
+            entry.message.includes("neither OPENCODE_SERVER_PASSWORD nor OPENCODE_PASSWORD"),
+          )
+        ) {
+          throw new Error(`missing explicit no-password reason: ${JSON.stringify(logs2)}`);
+        }
+        if ((await findRecord("req-h4")) === undefined) {
+          throw new Error("record must be kept (unapplied) without credentials");
+        }
+        await monitor2.dispose();
+        // 用例终态：显式失败刻意保留的未应用记录在此显式删除，避免污染后续
+        // scanReplyQueue 计数。
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-h4"));
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // API-408：q_reject（向导 ❌）→ DELETE /api/session/:sid/form/:fid（§A.1
+  // 补充 API session.form.cancel），204 删除记录。
+  await runCase(
+    "API-408 q_reject cancels the form via DELETE (no body) and deletes the record",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-h5", q_reject: true }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 HTTP request, got ${server.requests.length}`);
+        }
+        const request = server.requests[0];
+        if (request.method !== "DELETE") {
+          throw new Error(`cancel must use DELETE, got ${request.method}`);
+        }
+        if (request.url !== "/api/session/ses_testp0001/form/req-h5") {
+          throw new Error(`cancel url mismatch: ${request.url}`);
+        }
+        const expectedAuth = `Basic ${Buffer.from("opencode:test-secret", "utf8").toString("base64")}`;
+        if (request.headers.authorization !== expectedAuth) {
+          throw new Error(`cancel authorization mismatch: ${request.headers.authorization}`);
+        }
+        if (request.body !== "") {
+          throw new Error(`cancel must carry no body, got ${request.body}`);
+        }
+        if ((await findRecord("req-h5")) !== undefined) {
+          throw new Error("record must be deleted after cancel 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // API-409：事件路径先删除（form.replied）→ reply scan 跳过，不调 HTTP；
+  // 未达终态（q_answers 缺失且 q_reject 未置位）的 form 记录同样不触发。
+  await runCase(
+    "API-409 event-path-deleted / non-terminal form records are skipped by the reply scan",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-h6", q_answers: [["A"]] }),
+          ),
+        );
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-h6"));
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-h7" }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 0) throw new Error(`expected 0 applied, got ${applied}`);
+        if (server.requests.length !== 0) {
+          throw new Error("no HTTP request for skipped form records");
+        }
+        if ((await findRecord("req-h7")) === undefined) {
+          throw new Error("non-terminal record must stay untouched");
+        }
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-h7"));
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
     },
   );
 
@@ -1384,6 +1648,17 @@ async function main() {
       });
     };
   }
+  // t09-dupe-fix：可定制 result 的 fetch stub（API-305 需要真实
+  // `{message_id}` 解包形态）。telegramRequest 返回 envelope.result。
+  async function stubFetchResult(calls, result) {
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url: String(url), body: JSON.parse(options.body) });
+      return new Response(JSON.stringify({ ok: true, result }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+  }
   function restoreFetch() {
     globalThis.fetch = realFetch;
   }
@@ -1575,8 +1850,29 @@ ${expectedResultLine}`) ||
   // ⬅️/➡️/❌；单问题无导航直接提交形态）；sendMessageWithKeyboard 返回
   // message_id → q_msg_id 回写；发送条件防御（q_answers!=null /
   // q_reject=true 不发送）；message 无 questions → 退化原文节选 plain 发送。
+  // v2 契约 §2.6：question 记录的 message = form.created 的 data 原样
+  // （`{form:{id, sessionID, title, fields:[...]}}`）。测试用 v1 风格
+  // questions 声明 → 转换为 v2 fields（question→description、header→title、
+  // options=[{value:label, label, description}]、multiple→multiselect）。
   function questionMessage(questions) {
-    return JSON.stringify({ questions });
+    return JSON.stringify({
+      form: {
+        id: "frm-test",
+        sessionID: "ses_testp0001",
+        title: "Test form",
+        fields: questions.map((question, index) => ({
+          key: `q${index}`,
+          title: question.header,
+          description: question.question,
+          type: question.multiple === true ? "multiselect" : "string",
+          options: (question.options ?? []).map((option) => ({
+            value: option.label,
+            label: option.label,
+            description: option.description,
+          })),
+        })),
+      },
+    });
   }
   // 旧选项卡分隔线（fix/question-card-option-layout 曾引入）：feat/
   // bordered-rich-tables 起原生表边框取代，Unicode thin solid divider
@@ -4138,6 +4434,1274 @@ ${expectedResultLine}`) ||
         throw new Error(`req-ttl-b must stay untouched: ${JSON.stringify(b)}`);
       }
       await monitor.dispose();
+    },
+  );
+
+  // ---- t09-dupe-fix 回归（重复等待记录 → 连续重复推送事故） ----
+  // 实机事故（2026-09-25）：多实例共享同一 projects.json 时，同一等待请求被
+  // append 出多份 send=false 副本；poller 每轮发送第一份未发送副本，markSessionSent
+  // 只置位第一条（幂等 no-op）→ 其余副本保持 send=false → 每轮重复发送同一请求
+  // （实机 16 次连续推送）。修复：append 同 request_id 幂等 + mark 全副本置位 +
+  // 扫描同轮按 request_id 去重。
+
+  // API-601：同 request_id 两份 send=false 副本 → 一轮扫描恰发送 1 次；两份
+  // 副本都置 send=true（单轮自愈）；下一轮不再发送。
+  await runCase(
+    "API-601 duplicate records: one scan sends exactly once and marks every copy (self-heal)",
+    async () => {
+      const requestId = "req-601a";
+      await registry.mutate((reg) =>
+        appendSessionRecord(reg, root, makeRecord({ request_id: requestId })),
+      );
+      // 注入第二份同 request_id 副本（绕过 append 幂等，复现历史遗留状态）
+      await seedDuplicateRecord(makeRecord({ request_id: requestId }));
+      const seeded = await findAllRecords(requestId);
+      if (seeded.length !== 2 || seeded.some((r) => r.send !== false)) {
+        throw new Error(`seed must be 2 pending copies: ${JSON.stringify(seeded)}`);
+      }
+      const sent = [];
+      const monitor = makeMonitor(async (text) => {
+        sent.push(text);
+      });
+      const first = await monitor.scanSessionQueue();
+      if (first !== 1) {
+        throw new Error(`expected 1 handled on first scan, got ${first}`);
+      }
+      if (sent.length !== 1) {
+        throw new Error(
+          `expected exactly 1 send for duplicated request_id, got ${sent.length}: ${JSON.stringify(sent)}`,
+        );
+      }
+      const afterFirst = await findAllRecords(requestId);
+      if (afterFirst.length !== 2) {
+        throw new Error(`duplicate copies must survive: ${JSON.stringify(afterFirst)}`);
+      }
+      if (afterFirst.some((r) => r.send !== true)) {
+        throw new Error(
+          `every duplicate copy must be marked send=true (self-heal): ${JSON.stringify(afterFirst)}`,
+        );
+      }
+      // 下一轮：无待发送副本 → 零发送（修复前第二轮仍会重发剩余副本）
+      const second = await monitor.scanSessionQueue();
+      if (second !== 0 || sent.length !== 1) {
+        throw new Error(
+          `second scan must send nothing (handled=${second}, sends=${sent.length})`,
+        );
+      }
+      await monitor.dispose();
+      await registry.mutate((reg) => removeSessionRecord(reg, requestId));
+    },
+  );
+
+  // API-602：同 request_id 副本 + 发送失败 → 本轮恰 1 次尝试（同轮去重），
+  // send 保持 false；下一轮重试成功 → 恰 1 次尝试且两份副本一起置位；
+  // 第三轮零尝试零发送。
+  await runCase(
+    "API-602 duplicate records: failed send retries once per scan, then marks every copy",
+    async () => {
+      const requestId = "req-602a";
+      await registry.mutate((reg) =>
+        appendSessionRecord(reg, root, makeRecord({ request_id: requestId })),
+      );
+      await seedDuplicateRecord(makeRecord({ request_id: requestId }));
+      let calls = 0;
+      const monitor = makeMonitor(async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("telegram send boom");
+      });
+      const first = await monitor.scanSessionQueue();
+      if (first !== 0 || calls !== 1) {
+        throw new Error(
+          `failure round must attempt exactly once (handled=${first}, attempts=${calls})`,
+        );
+      }
+      let copies = await findAllRecords(requestId);
+      if (copies.some((r) => r.send !== false)) {
+        throw new Error(`failed send must keep every copy send=false: ${JSON.stringify(copies)}`);
+      }
+      const second = await monitor.scanSessionQueue();
+      if (second !== 1 || calls !== 2) {
+        throw new Error(
+          `retry round must attempt exactly once and succeed (handled=${second}, attempts=${calls})`,
+        );
+      }
+      copies = await findAllRecords(requestId);
+      if (copies.some((r) => r.send !== true)) {
+        throw new Error(`retry success must mark every copy: ${JSON.stringify(copies)}`);
+      }
+      const third = await monitor.scanSessionQueue();
+      if (third !== 0 || calls !== 2) {
+        throw new Error(
+          `settled request must not be retried (handled=${third}, attempts=${calls})`,
+        );
+      }
+      await monitor.dispose();
+      await registry.mutate((reg) => removeSessionRecord(reg, requestId));
+    },
+  );
+
+  // API-603 (t09-dupe-fix)：sendMessageWithKeyboard 从**已解包**响应顶层读取
+  // message_id（telegramWithRetry 返回 envelope.result）。fake fetch 返回
+  // {ok:true,result:{message_id:42}} → 真实发送路径 → q_msg_id=42 落盘，
+  // 且一次性响应形态诊断记录 typeof=object keys=message_id（修复前解析
+  // response.result.* 恒 undefined → q_msg_id 永不回写）。
+  await runCase(
+    "API-603 sendMessageWithKeyboard persists q_msg_id from unwrapped message_id + shape diagnostic",
+    async () => {
+      const requestId = "req-603a";
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord(requestId, [
+            { question: "选择操作", header: "操作", options: [{ label: "A" }] },
+          ]),
+        ),
+      );
+      const fetches = [];
+      await stubFetchResult(fetches, { message_id: 42 });
+      const monitor = new TelegramSessionMonitor(
+        fakeClient,
+        fakeConfig,
+        root,
+        registry,
+      );
+      try {
+        const handled = await monitor.scanSessionQueue();
+        if (handled !== 1) {
+          throw new Error(`expected 1 handled, got ${handled}`);
+        }
+        const sendCalls = fetches.filter((call) =>
+          call.url.includes("sendRichMessage"),
+        );
+        if (sendCalls.length !== 1) {
+          throw new Error(
+            `expected 1 sendRichMessage call, got ${sendCalls.length}`,
+          );
+        }
+        if (!sendCalls[0].body.reply_markup?.inline_keyboard) {
+          throw new Error(
+            `question wizard send must keep keyboard: ${JSON.stringify(sendCalls[0].body)}`,
+          );
+        }
+        const persisted = await findRecord(requestId);
+        if (!persisted || persisted.q_msg_id !== 42) {
+          throw new Error(
+            `q_msg_id must be persisted from unwrapped {message_id:42}: ${JSON.stringify(persisted)}`,
+          );
+        }
+        if (persisted.send !== true) {
+          throw new Error(`send must be marked after wizard send: ${JSON.stringify(persisted)}`);
+        }
+        // 一次性响应形态诊断（typeof + 顶层键名，仅形态不含内容）
+        const diagPath = join(homedir(), ".otg", "tgdiag.log");
+        const diag = existsSync(diagPath) ? readFileSync(diagPath, "utf8") : "";
+        if (
+          !diag.includes(
+            "sendMessageWithKeyboard response: typeof=object keys=message_id",
+          )
+        ) {
+          throw new Error(
+            `shape diagnostic line missing in tgdiag.log (tail: ${diag.slice(-400)})`,
+          );
+        }
+      } finally {
+        restoreFetch();
+        await registry.mutate((reg) => removeSessionRecord(reg, requestId));
+        await monitor.dispose();
+      }
+    },
+  );
+
+  // ---- t10：form 端点发现（§A.1 修订）+ 归属门（实机事故修复）----------------
+  // 实机形态：daemon（opencode serve --service）argv 无 --port、env 无密码 →
+  // 旧发现失败；共享注册表下的非宿主 server（自带 --port + env 密码）把回写
+  // 打到自身 → 404 误删记录。这里冻结两条修复：发现优先级（argv → state
+  // service.json → legacy service.json → 显式失败）与 apply 前归属门。
+
+  function countDiagLines(fragment) {
+    const diag = existsSync(diagPath) ? readFileSync(diagPath, "utf8") : "";
+    return diag.split("\n").filter((line) => line.includes(fragment)).length;
+  }
+
+  function assertNoPasswordLeak(logs, secret) {
+    for (const entry of logs) {
+      const text = JSON.stringify(entry);
+      if (text.includes(secret)) {
+        throw new Error(`password leaked into logs: ${text}`);
+      }
+    }
+  }
+
+  // T10-ENDPOINT-1：argv `--port=N` equals 形态可发现并 204 应用（既有用例只
+  // 覆盖 `--port N` 空格形态）。
+  await runCase(
+    "T10-ENDPOINT-1 argv --port=N resolves and applies (204 deletes record)",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret", { argv: "equals" });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-eq", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        if (
+          server.requests[0].url !==
+          "/api/session/ses_testp0001/form/req-t10-eq/reply"
+        ) {
+          throw new Error(`url mismatch: ${server.requests[0].url}`);
+        }
+        if ((await findRecord("req-t10-eq")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-2：argv `--port 0` / `--port=abc` → 显式失败；即使 state /
+  // legacy service.json 均有效也绝不回落（no fallback）。
+  await runCase(
+    "T10-ENDPOINT-2 argv --port 0/invalid fails explicitly even with valid service.json files",
+    async () => {
+      const server = await startFormServer(() => 204);
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-inv", q_answers: [["A"]] }),
+          ),
+        );
+        const variants = [
+          ["space-0", 0, "space"],
+          ["equals-abc", "abc", "equals"],
+        ];
+        for (const [label, port, argv] of variants) {
+          setFormChannel(port, "test-secret", {
+            argv,
+            state: {
+              url: `http://127.0.0.1:${server.port}`,
+              pid: process.pid,
+              password: "state-secret",
+            },
+            legacy: { port: server.port, password: "legacy-secret" },
+          });
+          const monitor = makeMonitor(async () => {});
+          const logs = captureLogs(monitor);
+          const applied = await monitor.scanReplyQueue();
+          if (applied !== 0) {
+            throw new Error(`${label}: expected 0 applied, got ${applied}`);
+          }
+          if (server.requests.length !== 0) {
+            throw new Error(
+              `${label}: no HTTP request may be attempted on invalid --port`,
+            );
+          }
+          if (
+            !logs.some((entry) =>
+              entry.message.includes("is not a usable positive integer"),
+            )
+          ) {
+            throw new Error(
+              `${label}: missing explicit invalid-port reason: ${JSON.stringify(logs)}`,
+            );
+          }
+          if ((await findRecord("req-t10-inv")) === undefined) {
+            throw new Error(`${label}: record must be kept (unapplied)`);
+          }
+          await monitor.dispose();
+        }
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-inv"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-3：无 --port → state service.json（pid === 本进程）提供
+  // url + password，直接 204 应用（daemon 形态的修复路径）。
+  await runCase(
+    "T10-ENDPOINT-3 no --port: state service.json with pid match resolves url+password",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(undefined, null, {
+        argv: "none",
+        state: {
+          id: "svc-test",
+          version: "2.0.15",
+          url: `http://127.0.0.1:${server.port}`,
+          pid: process.pid,
+          password: "state-secret",
+        },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-state", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        const expectedAuth = `Basic ${Buffer.from("opencode:state-secret", "utf8").toString("base64")}`;
+        if (server.requests[0].headers.authorization !== expectedAuth) {
+          throw new Error(
+            `state service.json password must be used: ${server.requests[0].headers.authorization}`,
+          );
+        }
+        if ((await findRecord("req-t10-state")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-4：多个 service*.json → 优先 pid === 本进程的条目
+  // （即使默认 service.json 指向另一个 server）。
+  await runCase(
+    "T10-ENDPOINT-4 multiple service*.json: pid match wins over default service.json",
+    async () => {
+      const defaultServer = await startFormServer(() => 500);
+      const pidServer = await startFormServer(() => 204);
+      setFormChannel(undefined, null, { argv: "none" });
+      writeJsonFileSync(stateServicePath, {
+        url: `http://127.0.0.1:${defaultServer.port}`,
+        pid: process.pid + 1,
+        password: "default-secret",
+      });
+      writeJsonFileSync(join(stateServiceDir, "service-beta.json"), {
+        url: `http://127.0.0.1:${pidServer.port}`,
+        pid: process.pid,
+        password: "pid-secret",
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-multi", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (pidServer.requests.length !== 1 || defaultServer.requests.length !== 0) {
+          throw new Error(
+            `pid-matched entry must win: pid=${pidServer.requests.length} default=${defaultServer.requests.length}`,
+          );
+        }
+        const expectedAuth = `Basic ${Buffer.from("opencode:pid-secret", "utf8").toString("base64")}`;
+        if (pidServer.requests[0].headers.authorization !== expectedAuth) {
+          throw new Error("pid-matched password must be used");
+        }
+        if ((await findRecord("req-t10-multi")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await defaultServer.close();
+        await pidServer.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-5：无 pid 匹配 → 默认 service.json。
+  await runCase(
+    "T10-ENDPOINT-5 no pid match: default service.json is used",
+    async () => {
+      const defaultServer = await startFormServer(() => 204);
+      const otherServer = await startFormServer(() => 500);
+      setFormChannel(undefined, null, { argv: "none" });
+      writeJsonFileSync(stateServicePath, {
+        url: `http://127.0.0.1:${defaultServer.port}`,
+        pid: process.pid + 7,
+        password: "default-secret",
+      });
+      writeJsonFileSync(join(stateServiceDir, "service-beta.json"), {
+        url: `http://127.0.0.1:${otherServer.port}`,
+        pid: process.pid + 9,
+        password: "beta-secret",
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-default", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (
+          defaultServer.requests.length !== 1 ||
+          otherServer.requests.length !== 0
+        ) {
+          throw new Error(
+            `default service.json must be used: default=${defaultServer.requests.length} other=${otherServer.requests.length}`,
+          );
+        }
+        if ((await findRecord("req-t10-default")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await defaultServer.close();
+        await otherServer.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-6：state url 非 loopback / 非 http / 带凭据 → 拒绝（绝不把
+  // 密码发往别处），显式失败且密码不落日志。
+  await runCase(
+    "T10-ENDPOINT-6 non-loopback service.json url is rejected, password never logged",
+    async () => {
+      const rejected = [
+        "http://10.11.12.13:9",
+        "http://127.0.0.2:9",
+        "https://127.0.0.1:9",
+        "http://user:topsecret@127.0.0.1:9",
+      ];
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-nonloop", q_answers: [["A"]] }),
+          ),
+        );
+        for (const url of rejected) {
+          setFormChannel(undefined, null, {
+            argv: "none",
+            state: { url, pid: process.pid, password: "loopback-secret" },
+          });
+          const monitor = makeMonitor(async () => {});
+          const logs = captureLogs(monitor);
+          const applied = await monitor.scanReplyQueue();
+          if (applied !== 0) {
+            throw new Error(`${url}: expected 0 applied, got ${applied}`);
+          }
+          if (
+            !logs.some((entry) =>
+              entry.message.includes("url is not a loopback http endpoint"),
+            )
+          ) {
+            throw new Error(
+              `${url}: missing explicit non-loopback reason: ${JSON.stringify(logs)}`,
+            );
+          }
+          assertNoPasswordLeak(logs, "loopback-secret");
+          assertNoPasswordLeak(logs, "topsecret");
+          if ((await findRecord("req-t10-nonloop")) === undefined) {
+            throw new Error(`${url}: record must be kept (unapplied)`);
+          }
+          await monitor.dispose();
+        }
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) =>
+          removeSessionRecord(reg, "req-t10-nonloop"),
+        );
+      }
+    },
+  );
+
+  // T10-ENDPOINT-7：无 --port 且无 state 文件 → legacy ~/.config/opencode/
+  // service.json {port,password} 回退可用。
+  await runCase(
+    "T10-ENDPOINT-7 legacy ~/.config/opencode/service.json {port,password} fallback applies",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(undefined, null, {
+        argv: "none",
+        legacy: { port: server.port, password: "legacy-secret" },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-legacy", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        const expectedAuth = `Basic ${Buffer.from("opencode:legacy-secret", "utf8").toString("base64")}`;
+        if (server.requests[0].headers.authorization !== expectedAuth) {
+          throw new Error("legacy password must be used");
+        }
+        if ((await findRecord("req-t10-legacy")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-legacy"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-8：state 文件存在但不完整（缺 password）→ 继续尝试 legacy
+  // （发现链 (b) 不完整 → (c)）。
+  await runCase(
+    "T10-ENDPOINT-8 incomplete state service.json falls through to legacy",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(undefined, null, {
+        argv: "none",
+        state: {
+          url: `http://127.0.0.1:${server.port}`,
+          pid: process.pid,
+        },
+        legacy: { port: server.port, password: "legacy-secret" },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-fall", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        if ((await findRecord("req-t10-fall")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-fall"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-9：state service.json 每轮重新读取（首轮死端口失败保留记录，
+  // 重写为活端口后下轮成功）。
+  await runCase(
+    "T10-ENDPOINT-9 state service.json is re-read per attempt (dead port then live)",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(undefined, null, {
+        argv: "none",
+        state: {
+          url: "http://127.0.0.1:1",
+          pid: process.pid,
+          password: "state-secret",
+        },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-fresh", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        if (first !== 0) throw new Error(`expected 0 applied on dead port, got ${first}`);
+        if ((await findRecord("req-t10-fresh")) === undefined) {
+          throw new Error("record must be kept after failed fetch");
+        }
+        if (!logs.some((entry) => entry.message.includes("question apply failed"))) {
+          throw new Error(`failed fetch must be logged: ${JSON.stringify(logs)}`);
+        }
+        writeJsonFileSync(stateServicePath, {
+          url: `http://127.0.0.1:${server.port}`,
+          pid: process.pid,
+          password: "state-secret",
+        });
+        const second = await monitor.scanReplyQueue();
+        if (second !== 1) throw new Error(`expected 1 applied after rewrite, got ${second}`);
+        if ((await findRecord("req-t10-fresh")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-10：argv --port 存在但 env 密码缺失 → 显式失败，绝不回落
+  // 到有效的 state / legacy service.json。
+  await runCase(
+    "T10-ENDPOINT-10 argv port + missing env password fails, no service.json fallback",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, null, {
+        state: {
+          url: `http://127.0.0.1:${server.port}`,
+          pid: process.pid,
+          password: "state-secret",
+        },
+        legacy: { port: server.port, password: "legacy-secret" },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-nopw", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 0) throw new Error(`expected 0 applied, got ${applied}`);
+        if (server.requests.length !== 0) {
+          throw new Error("no HTTP request may be attempted without env password");
+        }
+        if (
+          !logs.some((entry) =>
+            entry.message.includes(
+              "neither OPENCODE_SERVER_PASSWORD nor OPENCODE_PASSWORD is set",
+            ),
+          )
+        ) {
+          throw new Error(`missing explicit no-password reason: ${JSON.stringify(logs)}`);
+        }
+        if ((await findRecord("req-t10-nopw")) === undefined) {
+          throw new Error("record must be kept (unapplied)");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-nopw"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-11：所有来源都缺失 → 显式失败原因列出全部尝试过的来源。
+  await runCase(
+    "T10-ENDPOINT-11 no source: failure reason names argv + state + legacy",
+    async () => {
+      setFormChannel(undefined, "test-secret", { argv: "none" });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-none", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 0) throw new Error(`expected 0 applied, got ${applied}`);
+        const reason = logs.find((entry) =>
+          entry.message.includes("server port not discoverable"),
+        );
+        if (!reason) {
+          throw new Error(`missing explicit no-source reason: ${JSON.stringify(logs)}`);
+        }
+        for (const source of ["process.argv", "state service.json", "legacy service.json"]) {
+          if (!reason.message.includes(source)) {
+            throw new Error(`reason must name attempted source ${source}: ${reason.message}`);
+          }
+        }
+        if ((await findRecord("req-t10-none")) === undefined) {
+          throw new Error("record must be kept (unapplied)");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-none"));
+      }
+    },
+  );
+
+  // T10-GATE-1：question 路径归属门——session.get 失败 → 不 apply、不发 HTTP、
+  // 记录原样保留，且每 request_id 只记一次 skip dline（两轮扫描只 1 行）。
+  await runCase(
+    "T10-GATE-1 question gate: non-hosted session skips without apply/removal, logs once",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      fakeClient.sessionGetCalls = [];
+      fakeClient.sessionGetError = new Error("Session.NotFoundError");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-g1", q_answers: [["A"]] }),
+          ),
+        );
+        const marker = "apply skipped: session not hosted by this instance request=req-t10-g1";
+        const before = countDiagLines(marker);
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        const second = await monitor.scanReplyQueue();
+        if (first !== 0 || second !== 0) {
+          throw new Error(`expected 0 applied both rounds, got ${first}/${second}`);
+        }
+        if (server.requests.length !== 0) {
+          throw new Error("non-hosted instance must not POST the form reply");
+        }
+        if (logs.some((entry) => entry.message.includes("question apply failed"))) {
+          throw new Error("gate skip must not log an apply failure");
+        }
+        const record = await findRecord("req-t10-g1");
+        if (!record || record.q_answers == null || record.resolved !== false) {
+          throw new Error(`record must stay untouched: ${JSON.stringify(record)}`);
+        }
+        const after = countDiagLines(marker);
+        if (after - before !== 1) {
+          throw new Error(`expected exactly 1 skip dline, got ${after - before}`);
+        }
+        if (fakeClient.sessionGetCalls.length !== 2) {
+          throw new Error(
+            `gate must check ownership per round: ${fakeClient.sessionGetCalls.length}`,
+          );
+        }
+        await monitor.dispose();
+      } finally {
+        fakeClient.sessionGetError = undefined;
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-g1"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-GATE-2：permission 路径同样走归属门（非宿主不调 permission.reply、
+  // 不删除记录；404 终态逻辑只在宿主实例上生效）。
+  await runCase(
+    "T10-GATE-2 permission gate: non-hosted session skips permission.reply, record kept",
+    async () => {
+      fakeClient.replyCalls = [];
+      fakeClient.replyError = undefined;
+      fakeClient.sessionGetError = new Error("Session.NotFoundError");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({ request_id: "req-t10-g2", reply: "once" }),
+          ),
+        );
+        const marker = "apply skipped: session not hosted by this instance request=req-t10-g2";
+        const before = countDiagLines(marker);
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        const second = await monitor.scanReplyQueue();
+        if (first !== 0 || second !== 0) {
+          throw new Error(`expected 0 applied both rounds, got ${first}/${second}`);
+        }
+        if (fakeClient.replyCalls.length !== 0) {
+          throw new Error("non-hosted instance must not call permission.reply");
+        }
+        if (logs.some((entry) => entry.message.includes("Permission reply apply failed"))) {
+          throw new Error("gate skip must not log an apply failure");
+        }
+        const record = await findRecord("req-t10-g2");
+        if (!record || record.reply !== "once" || record.resolved !== false) {
+          throw new Error(`record must stay untouched: ${JSON.stringify(record)}`);
+        }
+        const after = countDiagLines(marker);
+        if (after - before !== 1) {
+          throw new Error(`expected exactly 1 skip dline, got ${after - before}`);
+        }
+        await monitor.dispose();
+      } finally {
+        fakeClient.sessionGetError = undefined;
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-g2"));
+      }
+    },
+  );
+
+  // T10-GATE-3：归属门通过 → 与既有语义完全一致（session.get 按记录
+  // sessionID 调用；permission.reply 透传并删除记录）。
+  await runCase(
+    "T10-GATE-3 hosted session passes the gate and applies exactly as before",
+    async () => {
+      fakeClient.replyCalls = [];
+      fakeClient.replyError = undefined;
+      fakeClient.sessionGetError = undefined;
+      fakeClient.sessionGetCalls = [];
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-t10-g3", reply: "always" }),
+        ),
+      );
+      const monitor = makeMonitor(async () => {});
+      captureLogs(monitor);
+      const applied = await monitor.scanReplyQueue();
+      if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+      if (fakeClient.replyCalls.length !== 1) {
+        throw new Error(`expected 1 permission.reply call, got ${fakeClient.replyCalls.length}`);
+      }
+      if (
+        fakeClient.sessionGetCalls.length !== 1 ||
+        fakeClient.sessionGetCalls[0].sessionID !== "ses_testp0001"
+      ) {
+        throw new Error(
+          `gate must query the record session: ${JSON.stringify(fakeClient.sessionGetCalls)}`,
+        );
+      }
+      if ((await findRecord("req-t10-g3")) !== undefined) {
+        throw new Error("record must be deleted after successful apply");
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // T10-GATE-4：归属门的失败是「本轮跳过」而非粘滞——session.get 恢复后
+  // 下一轮正常 apply。
+  await runCase(
+    "T10-GATE-4 transient gate failure retries and applies on the next round",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      fakeClient.sessionGetError = new Error("network unreachable");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-g4", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        if (first !== 0) throw new Error(`expected 0 applied on gate failure, got ${first}`);
+        if (server.requests.length !== 0) {
+          throw new Error("no HTTP request while the gate fails");
+        }
+        if ((await findRecord("req-t10-g4")) === undefined) {
+          throw new Error("record must be kept after gate failure");
+        }
+        fakeClient.sessionGetError = undefined;
+        const second = await monitor.scanReplyQueue();
+        if (second !== 1) throw new Error(`expected 1 applied after recovery, got ${second}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        if ((await findRecord("req-t10-g4")) !== undefined) {
+          throw new Error("record must be deleted after recovery");
+        }
+        await monitor.dispose();
+      } finally {
+        fakeClient.sessionGetError = undefined;
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // ---- t13：共享存储跨实例回写归属（host_pid 印章）+ 404 终态修订 -------------
+  // 实机事故：两个 server 共享 HOME/XDG，非宿主 B 的 session.get 门 fail open
+  // （t13-probe P4：A/B session.get 载荷完全一致），B 把回写打到自身 → 404 →
+  // 删除共享记录。修复：等待记录创建时写入 host_pid（创建进程 = 收到 asked
+  // 事件的宿主，t13-probe P1：只有宿主进程收到 session 事件）；回写前只有
+  // host_pid === process.pid 的实例才 apply；404 一律不再视为终态（P2：非宿主
+  // pending 与宿主已决形态都可能 404；409 FormAlreadySettled 是唯一确认已决
+  // 信号）。
+
+  // T13-STAMP-1：host_pid === 本进程 → question 记录正常 apply（204）并删除；
+  // 印章命中时不再调用 session.get 过渡门。
+  await runCase(
+    "T13-STAMP-1 question record stamped with this pid applies; stamp short-circuits session.get",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      fakeClient.sessionGetCalls = [];
+      fakeClient.sessionGetError = undefined;
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({
+              requestID: "req-t13-s1",
+              q_answers: [["A"]],
+              host_pid: process.pid,
+            }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        if (fakeClient.sessionGetCalls.length !== 0) {
+          throw new Error(
+            `stamp match must not call session.get: ${JSON.stringify(fakeClient.sessionGetCalls)}`,
+          );
+        }
+        if ((await findRecord("req-t13-s1")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // T13-STAMP-2：host_pid !== 本进程 → 非宿主跳过：零 HTTP、零删除、记录原样；
+  // 两轮扫描只记 1 行 skip dline；不产生 apply failure 日志；session.get 不参与。
+  await runCase(
+    "T13-STAMP-2 question record stamped with another pid skips without apply/removal, logs once",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      fakeClient.sessionGetCalls = [];
+      fakeClient.sessionGetError = undefined;
+      const otherPid = process.pid + 1;
+      const marker = "apply skipped: waiting record owned by another instance request=req-t13-s2";
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({
+              requestID: "req-t13-s2",
+              q_answers: [["A"]],
+              host_pid: otherPid,
+            }),
+          ),
+        );
+        const before = countDiagLines(marker);
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        const second = await monitor.scanReplyQueue();
+        if (first !== 0 || second !== 0) {
+          throw new Error(`expected 0 applied both rounds, got ${first}/${second}`);
+        }
+        if (server.requests.length !== 0) {
+          throw new Error("non-owner instance must not send the form request");
+        }
+        if (fakeClient.sessionGetCalls.length !== 0) {
+          throw new Error("stamp mismatch must not fall back to session.get");
+        }
+        if (logs.some((entry) => entry.message.includes("question apply failed"))) {
+          throw new Error("gate skip must not log an apply failure");
+        }
+        const record = await findRecord("req-t13-s2");
+        if (!record || record.q_answers == null || record.resolved !== false) {
+          throw new Error(`record must stay untouched: ${JSON.stringify(record)}`);
+        }
+        const after = countDiagLines(marker);
+        if (after - before !== 1) {
+          throw new Error(`expected exactly 1 skip dline, got ${after - before}`);
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-s2"));
+        await server.close();
+      }
+    },
+  );
+
+  // T13-STAMP-3：permission 记录 host_pid !== 本进程 → 非宿主不调
+  // permission.reply、不删除记录（同一归属门覆盖 permission 路径）。
+  await runCase(
+    "T13-STAMP-3 permission record stamped with another pid skips permission.reply and keeps record",
+    async () => {
+      fakeClient.replyCalls = [];
+      fakeClient.replyError = undefined;
+      const otherPid = process.pid + 2;
+      const marker = "apply skipped: waiting record owned by another instance request=req-t13-s3";
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({
+              request_id: "req-t13-s3",
+              reply: "once",
+              host_pid: otherPid,
+            }),
+          ),
+        );
+        const before = countDiagLines(marker);
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        const second = await monitor.scanReplyQueue();
+        if (first !== 0 || second !== 0) {
+          throw new Error(`expected 0 applied both rounds, got ${first}/${second}`);
+        }
+        if (fakeClient.replyCalls.length !== 0) {
+          throw new Error("non-owner instance must not call permission.reply");
+        }
+        const record = await findRecord("req-t13-s3");
+        if (!record || record.reply !== "once" || record.resolved !== false) {
+          throw new Error(`record must stay untouched: ${JSON.stringify(record)}`);
+        }
+        const after = countDiagLines(marker);
+        if (after - before !== 1) {
+          throw new Error(`expected exactly 1 skip dline, got ${after - before}`);
+        }
+        await monitor.dispose();
+      } finally {
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-s3"));
+      }
+    },
+  );
+
+  // T13-STAMP-4：permission 记录 host_pid === 本进程 → 正常 apply + 删除；
+  // 印章命中时不再调用 session.get 过渡门。
+  await runCase(
+    "T13-STAMP-4 permission record stamped with this pid applies and deletes; no session.get",
+    async () => {
+      fakeClient.replyCalls = [];
+      fakeClient.replyError = undefined;
+      fakeClient.sessionGetCalls = [];
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({
+              request_id: "req-t13-s4",
+              reply: "always",
+              host_pid: process.pid,
+            }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (fakeClient.replyCalls.length !== 1) {
+          throw new Error(`expected 1 permission.reply call, got ${fakeClient.replyCalls.length}`);
+        }
+        if (fakeClient.sessionGetCalls.length !== 0) {
+          throw new Error("stamp match must not call session.get");
+        }
+        if ((await findRecord("req-t13-s4")) !== undefined) {
+          throw new Error("record must be deleted after successful apply");
+        }
+        await monitor.dispose();
+      } finally {
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-s4"));
+      }
+    },
+  );
+
+  // T13-404：404 不是终态——reply 每轮重试且记录保留（绝不删除共享记录）；
+  // 换 409（唯一确认已决信号）后才删除。
+  await runCase(
+    "T13-404 form reply 404 keeps record and retries; 409 then deletes",
+    async () => {
+      let status = 404;
+      const server = await startFormServer(() => status);
+      setFormChannel(server.port, "test-secret");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({
+              requestID: "req-t13-404",
+              q_answers: [["A"]],
+              host_pid: process.pid,
+            }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        if (first !== 0) throw new Error(`expected 0 applied on 404, got ${first}`);
+        if ((await findRecord("req-t13-404")) === undefined) {
+          throw new Error("404 must keep the record");
+        }
+        if (!logs.some((entry) => entry.message.includes("Form reply rejected with HTTP 404"))) {
+          throw new Error(`404 reason must be logged: ${JSON.stringify(logs)}`);
+        }
+        const second = await monitor.scanReplyQueue();
+        if (second !== 0 || server.requests.length !== 2) {
+          throw new Error(
+            `404 must retry every round (applied=${second}, requests=${server.requests.length})`,
+          );
+        }
+        if ((await findRecord("req-t13-404")) === undefined) {
+          throw new Error("retried 404 must still keep the record");
+        }
+        status = 409;
+        const third = await monitor.scanReplyQueue();
+        if (third !== 1) throw new Error(`expected 1 applied on 409, got ${third}`);
+        if ((await findRecord("req-t13-404")) !== undefined) {
+          throw new Error("409 terminal must delete the record");
+        }
+        const callsAfter = server.requests.length;
+        const fourth = await monitor.scanReplyQueue();
+        if (fourth !== 0 || server.requests.length !== callsAfter) {
+          throw new Error("deleted record must not be retried");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-404"));
+        await server.close();
+      }
+    },
+  );
+
+  // T13-404-CANCEL：cancel（q_reject）404 同样保留记录重试；409 删除。
+  await runCase(
+    "T13-404-CANCEL form cancel 404 keeps record and retries; 409 then deletes",
+    async () => {
+      let status = 404;
+      const server = await startFormServer(() => status);
+      setFormChannel(server.port, "test-secret");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({
+              requestID: "req-t13-404c",
+              q_reject: true,
+              host_pid: process.pid,
+            }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        if (first !== 0) throw new Error(`expected 0 applied on 404, got ${first}`);
+        if ((await findRecord("req-t13-404c")) === undefined) {
+          throw new Error("cancel 404 must keep the record");
+        }
+        status = 409;
+        const second = await monitor.scanReplyQueue();
+        if (second !== 1) throw new Error(`expected 1 applied on 409, got ${second}`);
+        if ((await findRecord("req-t13-404c")) !== undefined) {
+          throw new Error("cancel 409 terminal must delete the record");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-404c"));
+        await server.close();
+      }
+    },
+  );
+
+  // T13-CB-400：answerCallbackQuery 返回 400（query too old 类）→ 恰好 1 次
+  // 尝试（不重试、不再补发「操作失败」弹窗）；业务副作用（reply 落盘）保留。
+  await runCase(
+    "T13-CB-400 stale callback query answers once, no retry, no fallback answer",
+    async () => {
+      const fetches = [];
+      globalThis.fetch = async (url, options) => {
+        fetches.push({ url: String(url), body: JSON.parse(options.body) });
+        if (String(url).includes("answerCallbackQuery")) {
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              error_code: 400,
+              description:
+                "Bad Request: query is too old and response timeout expired or query ID is invalid",
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ ok: true, result: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      };
+      try {
+        const requestId = "req-cb-400";
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({ request_id: requestId, type: "permission" }),
+          ),
+        );
+        const monitor = new TelegramSessionMonitor(
+          fakeClient,
+          fakeConfig,
+          root,
+          registry,
+        );
+        await monitor.handleCallback({
+          id: "cb-400",
+          from: { id: 123 },
+          message: { message_id: 7, chat: { id: 123 }, text: "ORIGINAL" },
+          data: `otg:perm:${requestId}:once`,
+        });
+        const answerCalls = fetches.filter((call) =>
+          call.url.includes("answerCallbackQuery"),
+        );
+        if (answerCalls.length !== 1) {
+          throw new Error(
+            `400 must not be retried nor answered twice: attempts=${answerCalls.length}`,
+          );
+        }
+        const persisted = await findRecord(requestId);
+        if (!persisted || persisted.reply !== "once") {
+          throw new Error(
+            `reply write must survive the answer failure: ${JSON.stringify(persisted)}`,
+          );
+        }
+        await monitor.dispose();
+        await registry.mutate((reg) => removeSessionRecord(reg, requestId));
+      } finally {
+        restoreFetch();
+      }
     },
   );
 

@@ -1,14 +1,18 @@
-import type {
-  AssistantMessage,
-  Session,
-  Todo,
-} from "@opencode-ai/sdk";
+import type { V2SessionInfo } from "./v2/types";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 export type SessionState = "idle" | "busy" | "retry";
 export type SessionOutcome = "completed" | "failed" | "cancelled";
 export type ToolState = "pending" | "running" | "completed" | "error";
 export type WaitingType = "permission" | "question";
+
+// v2 status shape consumed by applyStatus (v1 SDK `SessionStatus` equivalent):
+// v2 drives state transitions through session.execution.* / step.* events, so
+// the retry variant is retained for the display/apply machinery only.
+export type SessionStatus =
+  | { type: "idle" }
+  | { type: "busy" }
+  | { type: "retry"; attempt: number; message: string; next: number };
 
 export type TelegramConfig = {
   botToken: string;
@@ -59,7 +63,7 @@ export type ToolProjection = {
 
 export type SessionProjection = {
   sessionID: string;
-  info?: Session;
+  info?: V2SessionInfo;
   status: SessionState;
   outcome?: SessionOutcome;
   observedRunning: boolean;
@@ -71,18 +75,45 @@ export type SessionProjection = {
   lastTransitionAt: number;
   idleTimer?: ReturnType<typeof setTimeout>;
   agent?: string;
-  messagesByID: Map<string, AssistantMessage>;
   toolsByCallID: Map<string, ToolProjection>;
-  todos: Todo[];
   waitingByRequestID: Map<string, WaitingProjection>;
   tokens: TokenTotals;
   pendingError?: ErrorSummary;
+  // v2 §2.7: set while an undelivered "steer" inbox item exists; postpones idle
+  // finalization. Optional so projections created before the field existed are
+  // treated as false (undefined).
+  awaitingInput?: boolean;
+  // v2 §2.7: delivery state per inboxID for this session; `awaitingInput` is
+  // derived from it (any "steer" entry). Optional — a projection without the
+  // map has no pending inbox items.
+  inboxDeliveryByID?: Map<string, "steer" | "queue">;
 };
 
 export type RuntimeEvent = {
   id?: string;
   type: string;
   properties: Record<string, unknown>;
+  // v2 envelope location (§2.0). Optional and publisher-dependent: the container
+  // evidence (probe-a1/probe-lineage/harness SSE captures, opencode v2.0.15)
+  // shows session.created/step.*/tool.*/form.*/permission.asked carry it while
+  // session.execution.* / session.usage.updated / permission.replied do not.
+  // t12 consumes it for the per-instance ownership gate.
+  location?: { directory?: string };
+};
+
+// Local shape of the question wizard payload stored in a SessionRecord message
+// (v1 `@opencode-ai/sdk` QuestionV2Info equivalent; v2 form.* mapping is ticket
+// 04's, §2.6).
+export type QuestionV2Option = {
+  label?: string;
+  description?: string;
+};
+
+export type QuestionV2Info = {
+  header?: string;
+  question?: string;
+  options?: QuestionV2Option[];
+  multiple?: boolean;
 };
 
 export type TelegramCallbackQuery = {
@@ -124,15 +155,6 @@ export type TelegramEnvelope<T> = {
     retry_after?: number;
   };
 };
-
-export type TodoCounts = {
-  inProgress: number;
-  pending: number;
-  completed: number;
-  cancelled: number;
-  total: number;
-};
-// 原 todoCounts()（monitor.ts:2991-2999）的返回结构，todoSummary（3001-3006）参数化用
 
 export type TokensSummary = {
   input: number;

@@ -1,0 +1,26 @@
+data: {"id":"evt_0d9e4ed3f001wk7I6L4sHBox42","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d9e4ed77001E2UFqQcVr4Vl9L","created":1790362054007,"type":"session.created","location":{"directory":"/tmp/home"},"data":{"sessionID":"ses_f261b1289ffeqQdpZWes2YJFyG","slug":"neon-rocket","version":"2.0.15","projectID":"74b23e0067970794112a980bf226755fbfff7d22","location":{"directory":"/tmp/home"},"subpath":"","title":"t13-shared-cross","permissions":[{"action":"shell","resource":"*","effect":"ask"}]},"durable":{"aggregateID":"ses_f261b1289ffeqQdpZWes2YJFyG","seq":0,"version":1}}
+
+data: {"id":"evt_0d9e4edbf002ErFgxyZmmG5k5o","created":1790362054079,"type":"permission.asked","location":{"directory":"/tmp/home"},"data":{"id":"per_0d9e4edbf001RCtRzYlKibgV3D","sessionID":"ses_f261b1289ffeqQdpZWes2YJFyG","action":"shell","resources":["echo t13"]}}
+
+data: {"id":"evt_0d9e4ee030024ejgHLV0t1sB9G","created":1790362054147,"type":"form.created","location":{"directory":"/tmp/home"},"data":{"form":{"id":"frm_0d9e4ee0300109AaV1zNWi5Ujz","sessionID":"ses_f261b1289ffeqQdpZWes2YJFyG","title":"t13 string form","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}}
+
+data: {"id":"evt_0d9e4ee47002x2JFCHpHFUiejj","created":1790362054215,"type":"form.created","location":{"directory":"/tmp/home"},"data":{"form":{"id":"frm_0d9e4ee47001x76eaqibvwa2LD","sessionID":"ses_f261b1289ffeqQdpZWes2YJFyG","title":"t13 multiselect form","fields":[{"key":"tags","title":"Tags","type":"multiselect","options":[{"value":"x","label":"X"},{"value":"y","label":"Y"}],"custom":false}]}}}
+
+data: {"id":"evt_0d9e4eedf001Jg9pUNX7CW6u90","created":1790362054367,"type":"models-dev.refreshed","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9e4ef1d001ZIwMmSxxE34GsS","created":1790362054429,"type":"integration.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9e4ef3e001KvW5MBNRSIPDTb","created":1790362054462,"type":"provider.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9e4ef44001kKdeafIIlsCDri","created":1790362054468,"type":"model.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+

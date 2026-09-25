@@ -1,0 +1,51 @@
+timestamp=2026-09-24T16:27:00.237Z level=INFO run=3adf0b27 message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18131\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:00.242Z level=ERROR run=3adf0b27 message="cli process failed" cause="Cause([Fail(Error: Could not reach server at http://127.0.0.1:18131 (cause: ClientError: Transport (cause: TypeError: Unable to connect. Is the computer able to access the url?)))])" args="[\"api\",\"--server\",\"http://127.0.0.1:18131\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:00.800Z level=INFO run=97d67c26 message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18131\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:00.945Z level=INFO run=9f6ee27a message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18131\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:00.237Z level=INFO run=45490d1c message="cli starting" version=2.0.15 channel=latest local=false args="[\"serve\",\"--port\",\"18131\",\"--print-logs\"]" role=cli
+timestamp=2026-09-24T16:27:00.356Z level=INFO run=45490d1c message="database schema bootstrap started" migrations=48 role=server
+timestamp=2026-09-24T16:27:00.363Z level=INFO run=45490d1c message="database schema bootstrap completed" migrations=48 durationMs=7 role=server
+timestamp=2026-09-24T16:27:00.858Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/home-setup/.config/opencode type=directory ignores=3 http.span=12 role=server
+timestamp=2026-09-24T16:27:00.860Z level=INFO run=45490d1c message="watcher subscribe" path=/ type=entries ignores=0 http.span=14 role=server
+timestamp=2026-09-24T16:27:00.861Z level=INFO run=45490d1c message="watcher started" path=/ type=entries backend=node ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:00.861Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:00.861Z level=INFO run=45490d1c message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:00.861Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/home-setup type=entries ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:00.861Z level=INFO run=45490d1c message="watcher started" path=/tmp/home-setup type=entries backend=node ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:00.883Z level=INFO run=45490d1c message="watcher started" path=/tmp/home-setup/.config/opencode type=directory backend=inotify ignores=3 http.span=37 role=server
+timestamp=2026-09-24T16:27:00.887Z level=INFO run=45490d1c message="location services booted" directory=/tmp workspaceID=undefined durationMs=41 http.span=41 role=server
+timestamp=2026-09-24T16:27:00.892Z level=INFO run=45490d1c msg="loading plugin" id=/tmp/home-setup/.config/opencode/plugin/probe-autodiscover.ts entrypoint=file:///tmp/home-setup/.config/opencode/plugin/probe-autodiscover.ts http.span=46 role=server
+timestamp=2026-09-24T16:27:00.895Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/home-setup/.config/opencode/plugin/probe-autodiscover.ts type=file ignores=0 http.span=49 role=server
+timestamp=2026-09-24T16:27:00.895Z level=INFO run=45490d1c message="watcher started" path=/tmp/home-setup/.config/opencode/plugin/probe-autodiscover.ts type=file backend=node ignores=0 http.span=49 role=server
+timestamp=2026-09-24T16:27:00.895Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/home-setup/.config/opencode/probe-plugin.ts type=file ignores=0 http.span=49 role=server
+timestamp=2026-09-24T16:27:00.895Z level=INFO run=45490d1c message="watcher started" path=/tmp/home-setup/.config/opencode/probe-plugin.ts type=file backend=node ignores=0 http.span=49 role=server
+timestamp=2026-09-24T16:27:00.896Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/home-setup/.config/opencode/probe-lib/helper.ts type=file ignores=0 http.span=50 role=server
+timestamp=2026-09-24T16:27:00.896Z level=INFO run=45490d1c message="watcher started" path=/tmp/home-setup/.config/opencode/probe-lib/helper.ts type=file backend=node ignores=0 http.span=50 role=server
+timestamp=2026-09-24T16:27:00.896Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/home-setup/.config/opencode/probe-lib/log.ts type=file ignores=0 http.span=50 role=server
+timestamp=2026-09-24T16:27:00.896Z level=INFO run=45490d1c message="watcher started" path=/tmp/home-setup/.config/opencode/probe-lib/log.ts type=file backend=node ignores=0 http.span=50 role=server
+timestamp=2026-09-24T16:27:01.037Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/home-setup/.config/opencode/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:27:01.038Z level=INFO run=45490d1c message="watcher started" path=/tmp/home-setup/.config/opencode/AGENTS.md type=file backend=node ignores=0 http.span=192 role=server
+timestamp=2026-09-24T16:27:01.038Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:27:01.038Z level=INFO run=45490d1c message="watcher started" path=/tmp/AGENTS.md type=file backend=node ignores=0 http.span=192 role=server
+timestamp=2026-09-24T16:27:01.048Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/home-setup/.config/opencode/skill type=file ignores=0
+timestamp=2026-09-24T16:27:01.048Z level=INFO run=45490d1c message="watcher started" path=/tmp/home-setup/.config/opencode/skill type=file backend=node ignores=0 http.span=202 role=server
+timestamp=2026-09-24T16:27:01.050Z level=INFO run=45490d1c message="watcher subscribe" path=/tmp/home-setup/.config/opencode/skills type=file ignores=0
+timestamp=2026-09-24T16:27:01.050Z level=INFO run=45490d1c message="watcher started" path=/tmp/home-setup/.config/opencode/skills type=file backend=node ignores=0 http.span=204 role=server
+timestamp=2026-09-24T16:27:01.070Z level=INFO run=45490d1c message=event event.id=evt_0d43de44e0015EuwKCfZJ9CsX2 event.created=1790267221070 event.type=provider.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=224 role=server
+timestamp=2026-09-24T16:27:01.076Z level=INFO run=45490d1c message=event event.id=evt_0d43de453001HUIXswe9dYe0MA event.created=1790267221076 event.type=model.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=230 role=server
+timestamp=2026-09-24T16:27:01.078Z level=INFO run=45490d1c message=event event.id=evt_0d43de456001fj0XAOQo0YeXVX event.created=1790267221078 event.type=agent.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=232 role=server
+timestamp=2026-09-24T16:27:01.078Z level=INFO run=45490d1c message=event event.id=evt_0d43de456002pJmDkMbQdYMVnY event.created=1790267221078 event.type=command.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=232 role=server
+timestamp=2026-09-24T16:27:04.443Z level=INFO run=45490d1c message=event event.id=evt_0d43df17b00107x5I6rPhAAha2 event.created=1790267224443 event.type=provider.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={}
+timestamp=2026-09-24T16:27:04.449Z level=INFO run=45490d1c message=event event.id=evt_0d43df180001hDkgWeLypaKRdZ event.created=1790267224449 event.type=model.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=3603 role=server
+timestamp=2026-09-24T16:27:07.059Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/home-setup/.config/opencode/probe-lib/log.ts type=file http.span=6213 role=server
+timestamp=2026-09-24T16:27:07.060Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/home-setup/.config/opencode/probe-lib/helper.ts type=file http.span=6214 role=server
+timestamp=2026-09-24T16:27:07.060Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/home-setup/.config/opencode/probe-plugin.ts type=file http.span=6214 role=server
+timestamp=2026-09-24T16:27:07.060Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/home-setup/.config/opencode/plugin/probe-autodiscover.ts type=file http.span=6214 role=server
+timestamp=2026-09-24T16:27:07.062Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/home-setup/.config/opencode/skill type=file http.span=6216 role=server
+timestamp=2026-09-24T16:27:07.062Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/home-setup/.config/opencode/skills type=file http.span=6216 role=server
+timestamp=2026-09-24T16:27:07.064Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/AGENTS.md type=file http.span=6218 role=server
+timestamp=2026-09-24T16:27:07.064Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/home-setup/.config/opencode/AGENTS.md type=file http.span=6218 role=server
+timestamp=2026-09-24T16:27:07.070Z level=INFO run=45490d1c message="watcher stopped" path=/ type=entries http.span=6224 role=server
+timestamp=2026-09-24T16:27:07.071Z level=INFO run=45490d1c message="watcher stopped" path=/tmp type=entries http.span=6225 role=server
+timestamp=2026-09-24T16:27:07.071Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/home-setup type=entries http.span=6225 role=server
+timestamp=2026-09-24T16:27:07.071Z level=INFO run=45490d1c message="watcher stopped" path=/tmp/home-setup/.config/opencode type=directory http.span=6225 role=server

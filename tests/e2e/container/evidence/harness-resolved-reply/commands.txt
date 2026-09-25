@@ -1,0 +1,200 @@
+=== scenario: harness (lifecycle / waiting records / permission write-back closure) ===
+=== plugin under test ===
+/home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/evidence/harness-resolved-reply/plugin-under-test.ts
+=== exact command ===
+docker run --rm --name t05-harness-2035991 \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/evidence/harness-resolved-reply:/plugin:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/harness:/harness:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/evidence/harness-resolved-reply:/evidence \
+  -e T05_PLUGIN=/plugin/plugin-under-test.ts -e T05_PORT=30755 -e T05_PASSWORD=<redacted> \
+  -e T05_HARNESS_FORM_REPLY=1 -e T05_HARNESS_MODEL=0 \
+  -e T05_HARNESS_RESOLVED_REPLY=1 \
+  -e T05_HARNESS_REPLY_ERROR_PROBE=1 \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /harness/scenario.sh'
+=== output follows ===
++ export HOME=/tmp/home
++ ROOT=/tmp/proj
++ mkdir -p /tmp/home/.config/opencode/plugin /tmp/home/.otg /tmp/proj
++ cd /tmp/proj
++ PLUGIN_SRC=/plugin/plugin-under-test.ts
++ cp /plugin/plugin-under-test.ts /tmp/home/.config/opencode/plugin/telegram-session-monitor.ts
++ [ 1 = 1 ]
++ cp /harness/plugins/reply-error-probe.ts /tmp/home/.config/opencode/plugin/t05-reply-error-probe.ts
++ cp /harness/configs/telegram.synthetic.json /tmp/home/.otg/telegram.json
++ cp /harness/configs/projects.seed.json /tmp/home/.otg/projects.json
++ PORT=30755
++ set +x
++ PROJECTS=/tmp/home/.otg/projects.json
++ DIAG=/tmp/home/.otg/tgdiag.log
++ SERVER_LOG=/tmp/home/.local/share/opencode/log/opencode.log
++ SPID=13
++ API=opencode api --server http://127.0.0.1:30755
++ setsid opencode serve --port 30755 --print-logs
++ seq 1 60
++ opencode api --server http://127.0.0.1:30755 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:30755 plugin.list
++ break
++ seq 1 60
++ grep -q loading plugin.*telegram-session-monitor.ts /tmp/home/.local/share/opencode/log/opencode.log
++ sleep 0.5
++ grep -q loading plugin.*telegram-session-monitor.ts /tmp/home/.local/share/opencode/log/opencode.log
++ break
++ seq 1 40
++ grep -qE MODULE LOADED|initialize\(\) called /tmp/home/.otg/tgdiag.log
++ break
++ sleep 3
++ cp /tmp/home/.otg/tgdiag.log /evidence/tgdiag-after-boot.txt
++ set +x
++ opencode api --server http://127.0.0.1:30755 session.create -d {"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}]}
++ SESSION_OUT={"data":{"id":"ses_f2610f774ffeRmSMeuVWA5uLDD","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362716301,"updated":1790362716301},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f2610f774ffeRmSMeuVWA5uLDD","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362716301,"updated":1790362716301},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f2610f774ffeRmSMeuVWA5uLDD","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362716301,"updated":1790362716301},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}
++ grep -o "id":"ses_[^"]*"
++ head -1
++ cut -d" -f4
++ SID=ses_f2610f774ffeRmSMeuVWA5uLDD
++ echo SID=ses_f2610f774ffeRmSMeuVWA5uLDD
+SID=ses_f2610f774ffeRmSMeuVWA5uLDD
++ seq 1 20
++ grep -q "type":"session.created" /evidence/sse-raw.txt
++ break
++ sleep 1
++ opencode api --server http://127.0.0.1:30755 session.permission.create --param sessionID=ses_f2610f774ffeRmSMeuVWA5uLDD -d {"action":"shell","resources":["echo e2e-waiting"]}
++ PERM_OUT={"data":{"id":"per_0d9ef0cc7001wxTxN1yO9vXNq8","effect":"ask"}}
++ echo {"data":{"id":"per_0d9ef0cc7001wxTxN1yO9vXNq8","effect":"ask"}}
++ echo {"data":{"id":"per_0d9ef0cc7001wxTxN1yO9vXNq8","effect":"ask"}}
++ grep -o "id":"per_[^"]*"
++ + head -1
+cut -d" -f4
++ PERID=per_0d9ef0cc7001wxTxN1yO9vXNq8
++ echo PERID=per_0d9ef0cc7001wxTxN1yO9vXNq8
++ wait_for_record per_0d9ef0cc7001wxTxN1yO9vXNq8 40
++ local rid=per_0d9ef0cc7001wxTxN1yO9vXNq8 limit=40
+PERID=per_0d9ef0cc7001wxTxN1yO9vXNq8
++ seq 1 40
++ grep -q "request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8" /tmp/home/.otg/projects.json
++ sleep 1
++ grep -q "request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8" /tmp/home/.otg/projects.json
++ return 0
++ cp /tmp/home/.otg/projects.json /evidence/projects-after-permission.json
++ opencode api --server http://127.0.0.1:30755 session.form.create --param sessionID=ses_f2610f774ffeRmSMeuVWA5uLDD -d {"title":"e2e question","fields":[{"key":"choice","type":"string","title":"Pick","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}
++ FORM_OUT={"data":{"id":"frm_0d9ef10f70015Yse6NFOnQqWgE","sessionID":"ses_f2610f774ffeRmSMeuVWA5uLDD","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
++ echo {"data":{"id":"frm_0d9ef10f70015Yse6NFOnQqWgE","sessionID":"ses_f2610f774ffeRmSMeuVWA5uLDD","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
++ echo {"data":{"id":"frm_0d9ef10f70015Yse6NFOnQqWgE","sessionID":"ses_f2610f774ffeRmSMeuVWA5uLDD","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
++ grep -o "id":"frm_[^"]*"
++ head -1
++ cut -d" -f4
++ FRMID=frm_0d9ef10f70015Yse6NFOnQqWgE
++ echo FRMID=frm_0d9ef10f70015Yse6NFOnQqWgE
++ wait_for_record frm_0d9ef10f70015Yse6NFOnQqWgE 40
++ local rid=frm_0d9ef10f70015Yse6NFOnQqWgE limit=40
+FRMID=frm_0d9ef10f70015Yse6NFOnQqWgE
++ seq 1 40
++ grep -q "request_id": "frm_0d9ef10f70015Yse6NFOnQqWgE" /tmp/home/.otg/projects.json
++ return 0
++ cp /tmp/home/.otg/projects.json /evidence/projects-after-form.json
++ printf {"sessionID":"%s","permissionID":"%s","formID":"%s"}\n ses_f2610f774ffeRmSMeuVWA5uLDD per_0d9ef0cc7001wxTxN1yO9vXNq8 frm_0d9ef10f70015Yse6NFOnQqWgE
++ inject_json_field per_0d9ef0cc7001wxTxN1yO9vXNq8 reply "once"
++ local rid=per_0d9ef0cc7001wxTxN1yO9vXNq8 field=reply value="once"
++ seq 1 10
++ grep -q "request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8" /tmp/home/.otg/projects.json
++ sed -i s|^\([[:space:]]*\)"request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8",$|\1"request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8",\n\1"reply": "once",| /tmp/home/.otg/projects.json
++ grep -qF "reply": "once" /tmp/home/.otg/projects.json
++ return 0
++ echo injected reply for per_0d9ef0cc7001wxTxN1yO9vXNq8
++ wait_for_record_gone per_0d9ef0cc7001wxTxN1yO9vXNq8 30
++ local rid=per_0d9ef0cc7001wxTxN1yO9vXNq8 limit=30
+injected reply for per_0d9ef0cc7001wxTxN1yO9vXNq8
++ seq 1 30
++ grep -q "request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8" /tmp/home/.otg/projects.json
++ sleep 1
++ grep -q "request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8" /tmp/home/.otg/projects.json
++ return 0
++ cp /tmp/home/.otg/projects.json /evidence/projects-after-reply.json
++ [ 1 = 1 ]
++ inject_json_field frm_0d9ef10f70015Yse6NFOnQqWgE q_answers [["A"]]
++ local rid=frm_0d9ef10f70015Yse6NFOnQqWgE field=q_answers value=[["A"]]
++ seq 1 10
++ grep -q "request_id": "frm_0d9ef10f70015Yse6NFOnQqWgE" /tmp/home/.otg/projects.json
++ sed -i s|^\([[:space:]]*\)"request_id": "frm_0d9ef10f70015Yse6NFOnQqWgE",$|\1"request_id": "frm_0d9ef10f70015Yse6NFOnQqWgE",\n\1"q_answers": [["A"]],| /tmp/home/.otg/projects.json
++ grep -qF "q_answers": [["A"]] /tmp/home/.otg/projects.json
++ return 0
++ echo injected q_answers for frm_0d9ef10f70015Yse6NFOnQqWgE
++ wait_for_record_gone frm_0d9ef10f70015Yse6NFOnQqWgE 30
++ local rid=frm_0d9ef10f70015Yse6NFOnQqWgE limit=30
+injected q_answers for frm_0d9ef10f70015Yse6NFOnQqWgE
++ seq 1 30
++ grep -q "request_id": "frm_0d9ef10f70015Yse6NFOnQqWgE" /tmp/home/.otg/projects.json
++ sleep 1
++ grep -q "request_id": "frm_0d9ef10f70015Yse6NFOnQqWgE" /tmp/home/.otg/projects.json
++ return 0
++ cp /tmp/home/.otg/projects.json /evidence/projects-after-form-reply.json
++ opencode api --server http://127.0.0.1:30755 session.create -d {"title":"e2e-lifecycle"}
++ LIFE_OUT={"data":{"id":"ses_f2610e6e1ffefUTGReXGA5E6DZ","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362720544,"updated":1790362720544},"title":"e2e-lifecycle","location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f2610e6e1ffefUTGReXGA5E6DZ","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362720544,"updated":1790362720544},"title":"e2e-lifecycle","location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f2610e6e1ffefUTGReXGA5E6DZ","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362720544,"updated":1790362720544},"title":"e2e-lifecycle","location":{"directory":"/tmp/proj"}}}
++ grep -o "id":"ses_[^"]*"
++ head -1
++ cut -d" -f4
++ BID=ses_f2610e6e1ffefUTGReXGA5E6DZ
++ echo BID=ses_f2610e6e1ffefUTGReXGA5E6DZ
++ opencode api --server http://127.0.0.1:30755 session.switchModel --param sessionID=ses_f2610e6e1ffefUTGReXGA5E6DZ -d {"model":{"id":"definitely-not-a-model","providerID":"opencode"}}
+BID=ses_f2610e6e1ffefUTGReXGA5E6DZ
++ timeout 90 opencode api --server http://127.0.0.1:30755 session.prompt --param sessionID=ses_f2610e6e1ffefUTGReXGA5E6DZ -d {"text":"hello"}
++ seq 1 120
++ grep -qE terminal notification attempt failed|Telegram message send failed /tmp/home/.otg/tgdiag.log
++ sleep 1
++ grep -qE terminal notification attempt failed|Telegram message send failed /tmp/home/.otg/tgdiag.log
++ sleep 1
++ grep -qE terminal notification attempt failed|Telegram message send failed /tmp/home/.otg/tgdiag.log
++ sleep 1
++ grep -qE terminal notification attempt failed|Telegram message send failed /tmp/home/.otg/tgdiag.log
++ sleep 1
++ grep -qE terminal notification attempt failed|Telegram message send failed /tmp/home/.otg/tgdiag.log
++ sleep 1
++ grep -qE terminal notification attempt failed|Telegram message send failed /tmp/home/.otg/tgdiag.log
++ sleep 1
++ grep -qE terminal notification attempt failed|Telegram message send failed /tmp/home/.otg/tgdiag.log
++ break
++ cp /tmp/home/.otg/tgdiag.log /evidence/tgdiag-final.txt
++ [ 0 = 1 ]
++ [ 1 = 1 ]
++ cp /evidence/projects-after-permission.json /tmp/home/.otg/projects.json
++ inject_json_field per_0d9ef0cc7001wxTxN1yO9vXNq8 reply "once"
++ local rid=per_0d9ef0cc7001wxTxN1yO9vXNq8 field=reply value="once"
++ seq 1 10
++ grep -q "request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8" /tmp/home/.otg/projects.json
++ sed -i s|^\([[:space:]]*\)"request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8",$|\1"request_id": "per_0d9ef0cc7001wxTxN1yO9vXNq8",\n\1"reply": "once",| /tmp/home/.otg/projects.json
++ grep -qF "reply": "once" /tmp/home/.otg/projects.json
++ return 0
++ echo P2c: re-injected reply for already-settled per_0d9ef0cc7001wxTxN1yO9vXNq8
+P2c: re-injected reply for already-settled per_0d9ef0cc7001wxTxN1yO9vXNq8
++ seq 1 15
++ grep -qE Permission request no longer exists|Permission reply apply failed /tmp/home/.otg/tgdiag.log
++ sleep 1
++ grep -qE Permission request no longer exists|Permission reply apply failed /tmp/home/.otg/tgdiag.log
++ break
++ sleep 2
++ cp /tmp/home/.otg/tgdiag.log /evidence/tgdiag-resolved-reply.txt
++ cp /tmp/home/.otg/projects.json /evidence/projects-after-resolved-reply.json
++ set +x
++ cat /evidence/api-resolved-reply-http.status
++ echo P2c: raw HTTP status 404
++ echo --- plugin loader lines ---
++ grep -E loading plugin|failed to load plugin|configured plugin /tmp/home/.local/share/opencode/log/opencode.log
+P2c: raw HTTP status 404
+--- plugin loader lines ---
+timestamp=2026-09-25T18:58:34.277Z level=INFO run=0c4cec68 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/t05-reply-error-probe.ts entrypoint=file:///tmp/home/.config/opencode/plugin/t05-reply-error-probe.ts http.span=57 role=server
+timestamp=2026-09-25T18:58:34.281Z level=INFO run=0c4cec68 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts entrypoint=file:///tmp/home/.config/opencode/plugin/telegram-session-monitor.ts http.span=61 role=server
++ cp /tmp/home/.local/share/opencode/log/opencode.log /evidence/server-log.txt
++ cp /tmp/home/.otg/projects.json /evidence/projects-final.json
++ kill -TERM 64
++ kill -TERM -13
++ sleep 1
++ echo --- evidence ---
++ wc -l /tmp/home/.otg/tgdiag.log /evidence/sse-raw.txt
+--- evidence ---
+  21 /tmp/home/.otg/tgdiag.log
+  28 /evidence/sse-raw.txt
+  49 total

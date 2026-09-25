@@ -1,0 +1,33 @@
+2026-09-25T14:19:31.496Z [11] MODULE LOADED
+2026-09-25T14:19:31.635Z [11] setup() pid=11 root=/tmp/home
+2026-09-25T14:19:31.638Z [11] initialize() called
+2026-09-25T14:19:31.638Z [11] runTelegram() started
+2026-09-25T14:19:31.638Z [11] reply scan: starting 1s ticker
+2026-09-25T14:19:31.639Z [11] poller lock acquired
+2026-09-25T14:19:31.639Z [11] sessions scan: starting 1s ticker
+2026-09-25T14:19:31.639Z [11] deleteWebhook: calling
+2026-09-25T14:19:32.856Z [105] MODULE LOADED
+2026-09-25T14:19:32.994Z [105] setup() pid=105 root=/tmp/home
+2026-09-25T14:19:32.997Z [105] initialize() called
+2026-09-25T14:19:32.997Z [105] runTelegram() started
+2026-09-25T14:19:32.997Z [105] reply scan: starting 1s ticker
+2026-09-25T14:19:32.998Z [105] poller lock held elsewhere; scheduling retry
+2026-09-25T14:19:35.620Z [11] [warn] Session record send failed; will retry on next scan {"requestId":"frm_0d8ef899d001Ri2NU6nlZHpDPA","error":"TelegramApiError(401)"}
+2026-09-25T14:19:35.936Z [11] [warn] Session record send failed; will retry on next scan {"requestId":"frm_0d8ef899d001Ri2NU6nlZHpDPA","error":"TelegramApiError(401)"}
+2026-09-25T14:19:37.006Z [105] [info] Form reply is terminal (HTTP 404); removing session record {"requestId":"frm_0d8ef899d001Ri2NU6nlZHpDPA","status":404}
+2026-09-25T14:19:37.998Z [105] self-update: skipped (not an npm cache install)
+2026-09-25T14:19:49.404Z [11] self-update: skipped (not an npm cache install)
+2026-09-25T14:19:50.693Z [11] [error] Telegram initialization failed; continuing to poll {"error":"TelegramApiError(401)"}
+2026-09-25T14:19:50.693Z [11] init failed: TelegramApiError(401); continuing to poll
+2026-09-25T14:19:50.693Z [11] poll loop: starting
+2026-09-25T14:19:50.693Z [11] getUpdates: calling
+2026-09-25T14:19:50.970Z [11] [error] Telegram rejected the configured bot token
+2026-09-25T14:19:52.999Z [105] runTelegram() started
+2026-09-25T14:19:52.999Z [105] poller lock acquired
+2026-09-25T14:19:52.999Z [105] sessions scan: starting 1s ticker
+2026-09-25T14:19:52.999Z [105] deleteWebhook: calling
+2026-09-25T14:19:55.307Z [105] [error] Telegram initialization failed; continuing to poll {"error":"TelegramApiError(401)"}
+2026-09-25T14:19:55.307Z [105] init failed: TelegramApiError(401); continuing to poll
+2026-09-25T14:19:55.307Z [105] poll loop: starting
+2026-09-25T14:19:55.307Z [105] getUpdates: calling
+2026-09-25T14:19:55.580Z [105] [error] Telegram rejected the configured bot token

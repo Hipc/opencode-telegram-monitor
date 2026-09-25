@@ -1,0 +1,23 @@
+timestamp=2026-09-24T16:27:08.099Z level=INFO run=ea1e458a message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18132\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:08.103Z level=ERROR run=ea1e458a message="cli process failed" cause="Cause([Fail(Error: Could not reach server at http://127.0.0.1:18132 (cause: ClientError: Transport (cause: TypeError: Unable to connect. Is the computer able to access the url?)))])" args="[\"api\",\"--server\",\"http://127.0.0.1:18132\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:08.661Z level=INFO run=7f018a8d message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18132\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:08.789Z level=INFO run=bf3a958d message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18132\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:08.098Z level=INFO run=b41aba11 message="cli starting" version=2.0.15 channel=latest local=false args="[\"serve\",\"--port\",\"18132\",\"--print-logs\"]" role=cli
+timestamp=2026-09-24T16:27:08.206Z level=INFO run=b41aba11 message="database schema bootstrap started" migrations=48 role=server
+timestamp=2026-09-24T16:27:08.213Z level=INFO run=b41aba11 message="database schema bootstrap completed" migrations=48 durationMs=8 role=server
+timestamp=2026-09-24T16:27:08.719Z level=INFO run=b41aba11 message="watcher subscribe" path=/tmp/home-effect/.config/opencode type=directory ignores=3 http.span=19 role=server
+timestamp=2026-09-24T16:27:08.721Z level=INFO run=b41aba11 message="watcher subscribe" path=/ type=entries ignores=0 http.span=21 role=server
+timestamp=2026-09-24T16:27:08.722Z level=INFO run=b41aba11 message="watcher started" path=/ type=entries backend=node ignores=0 http.span=22 role=server
+timestamp=2026-09-24T16:27:08.722Z level=INFO run=b41aba11 message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=22 role=server
+timestamp=2026-09-24T16:27:08.722Z level=INFO run=b41aba11 message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=22 role=server
+timestamp=2026-09-24T16:27:08.722Z level=INFO run=b41aba11 message="watcher subscribe" path=/tmp/home-effect type=entries ignores=0 http.span=22 role=server
+timestamp=2026-09-24T16:27:08.723Z level=INFO run=b41aba11 message="watcher started" path=/tmp/home-effect type=entries backend=node ignores=0 http.span=23 role=server
+timestamp=2026-09-24T16:27:08.732Z level=INFO run=b41aba11 message="watcher started" path=/tmp/home-effect/.config/opencode type=directory backend=inotify ignores=3 http.span=32 role=server
+timestamp=2026-09-24T16:27:08.738Z level=INFO run=b41aba11 message="location services booted" directory=/tmp workspaceID=undefined durationMs=37 http.span=38 role=server
+timestamp=2026-09-24T16:27:08.741Z level=INFO run=b41aba11 msg="loading plugin" id=/tmp/home-effect/.config/opencode/plugin/probe-effect.ts entrypoint=file:///tmp/home-effect/.config/opencode/plugin/probe-effect.ts http.span=41 role=server
+timestamp=2026-09-24T16:27:08.743Z level=INFO run=b41aba11 message="watcher subscribe" path=/tmp/home-effect/.config/opencode/plugin/probe-effect.ts type=file ignores=0 http.span=43 role=server
+timestamp=2026-09-24T16:27:08.743Z level=INFO run=b41aba11 message="watcher started" path=/tmp/home-effect/.config/opencode/plugin/probe-effect.ts type=file backend=node ignores=0 http.span=43 role=server
+timestamp=2026-09-24T16:27:08.744Z level=INFO run=b41aba11 message="watcher subscribe" path=/tmp/home-effect/.config/opencode/probe-lib/log.ts type=file ignores=0 http.span=44 role=server
+timestamp=2026-09-24T16:27:08.744Z level=INFO run=b41aba11 message="watcher started" path=/tmp/home-effect/.config/opencode/probe-lib/log.ts type=file backend=node ignores=0 http.span=44 role=server
+timestamp=2026-09-24T16:27:14.901Z level=INFO run=b41aba11 message="watcher stopped" path=/tmp/home-effect/.config/opencode/probe-lib/log.ts type=file http.span=6201 role=server
+timestamp=2026-09-24T16:27:14.901Z level=INFO run=b41aba11 message="watcher stopped" path=/tmp/home-effect/.config/opencode/plugin/probe-effect.ts type=file http.span=6201 role=server

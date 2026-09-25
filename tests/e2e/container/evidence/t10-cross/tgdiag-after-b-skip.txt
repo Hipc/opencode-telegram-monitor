@@ -1,0 +1,22 @@
+2026-09-25T18:59:02.497Z [11] MODULE LOADED
+2026-09-25T18:59:02.631Z [11] setup() pid=11 root=/tmp/home
+2026-09-25T18:59:02.635Z [11] initialize() called
+2026-09-25T18:59:02.636Z [11] runTelegram() started
+2026-09-25T18:59:02.636Z [11] reply scan: starting 1s ticker
+2026-09-25T18:59:02.637Z [11] poller lock acquired
+2026-09-25T18:59:02.637Z [11] sessions scan: starting 1s ticker
+2026-09-25T18:59:02.637Z [11] deleteWebhook: calling
+2026-09-25T18:59:03.851Z [105] MODULE LOADED
+2026-09-25T18:59:03.983Z [105] setup() pid=105 root=/tmp/home
+2026-09-25T18:59:03.986Z [105] initialize() called
+2026-09-25T18:59:03.986Z [105] runTelegram() started
+2026-09-25T18:59:03.986Z [105] reply scan: starting 1s ticker
+2026-09-25T18:59:03.987Z [105] poller lock held elsewhere; scheduling retry
+2026-09-25T18:59:04.514Z [11] [error] Telegram initialization failed; continuing to poll {"error":"TelegramApiError(401)"}
+2026-09-25T18:59:04.514Z [11] init failed: TelegramApiError(401); continuing to poll
+2026-09-25T18:59:04.514Z [11] poll loop: starting
+2026-09-25T18:59:04.514Z [11] getUpdates: calling
+2026-09-25T18:59:04.793Z [11] [error] Telegram rejected the configured bot token
+2026-09-25T18:59:05.968Z [11] [warn] Session record send failed; will retry on next scan {"requestId":"frm_0d9ef7152001QwH8K7Ec0UdGTq","error":"TelegramApiError(401)"}
+2026-09-25T18:59:06.502Z [105] reply scan: apply skipped: waiting record owned by another instance request=frm_0d9ef7152001QwH8K7Ec0UdGTq session=ses_f26108ef6ffeMtMLWqFaR1XhvG host_pid=11 pid=105
+2026-09-25T18:59:07.454Z [105] self-update: skipped (not an npm cache install)

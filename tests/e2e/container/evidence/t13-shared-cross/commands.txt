@@ -1,0 +1,218 @@
+=== scenario: t13-shared-cross (shared-storage two-server apply routing) ===
+=== exact command ===
+docker run --rm --name t13-shared-cross-2000709 \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/evidence/t13-shared-cross:/plugin:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/harness:/harness:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/evidence/t13-shared-cross:/evidence \
+  -e T13_PLUGIN=/plugin/plugin-under-test.ts \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /harness/t13-shared-cross-scenario.sh'
+=== output follows ===
+t13-shared-cross: starting server A (opencode serve --service, shared HOME/XDG)
+t13-shared-cross: A pid=11
+t13-shared-cross: A endpoint discovered from service.json (password never printed)
+t13-shared-cross: A plugin active root=/tmp/home
++ api_a session.create -d {"title":"t13-shared-cross","permissions":[{"action":"shell","resource":"*","effect":"ask"}]}
++ OPENCODE_SERVER_PASSWORD=-5OGXZ2soTzofvx9l3Snr3YXsMToOFlhpOL1E-LRsfQ OPENCODE_PASSWORD=-5OGXZ2soTzofvx9l3Snr3YXsMToOFlhpOL1E-LRsfQ opencode api --server http://127.0.0.1:49374 session.create -d {"title":"t13-shared-cross","permissions":[{"action":"shell","resource":"*","effect":"ask"}]}
++ SESSION_OUT={"data":{"id":"ses_f26153cf3ffebvbwElUkPjcZM6","projectID":"74b23e0067970794112a980bf226755fbfff7d22","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362436366,"updated":1790362436366},"title":"t13-shared-cross","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/home"}}}
++ printf %s {"data":{"id":"ses_f26153cf3ffebvbwElUkPjcZM6","projectID":"74b23e0067970794112a980bf226755fbfff7d22","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362436366,"updated":1790362436366},"title":"t13-shared-cross","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/home"}}}
++ + head -1
+sed -n s/.*"id":"\(ses_[^"]*\)".*/\1/p
++ SID=ses_f26153cf3ffebvbwElUkPjcZM6
++ [ -n ses_f26153cf3ffebvbwElUkPjcZM6 ]
++ echo t13-shared-cross: session ses_f26153cf3ffebvbwElUkPjcZM6 created on A
+t13-shared-cross: session ses_f26153cf3ffebvbwElUkPjcZM6 created on A
++ api_a session.permission.create --param sessionID=ses_f26153cf3ffebvbwElUkPjcZM6 -d {"action":"shell","resources":["echo t13"]}
++ OPENCODE_SERVER_PASSWORD=-5OGXZ2soTzofvx9l3Snr3YXsMToOFlhpOL1E-LRsfQ OPENCODE_PASSWORD=-5OGXZ2soTzofvx9l3Snr3YXsMToOFlhpOL1E-LRsfQ opencode api --server http://127.0.0.1:49374 session.permission.create --param sessionID=ses_f26153cf3ffebvbwElUkPjcZM6 -d {"action":"shell","resources":["echo t13"]}
++ PERM_OUT={"data":{"id":"per_0d9eac357001COpP1eOVTwe7Qt","effect":"ask"}}
++ printf %s {"data":{"id":"per_0d9eac357001COpP1eOVTwe7Qt","effect":"ask"}}
++ sed -n s/.*"id":"\(per_[^"]*\)".*/\1/p
++ head -1
++ PERID=per_0d9eac357001COpP1eOVTwe7Qt
++ [ -n per_0d9eac357001COpP1eOVTwe7Qt ]
++ echo t13-shared-cross: permission per_0d9eac357001COpP1eOVTwe7Qt created on A
+t13-shared-cross: permission per_0d9eac357001COpP1eOVTwe7Qt created on A
++ api_a session.form.create --param sessionID=ses_f26153cf3ffebvbwElUkPjcZM6 -d {"title":"t13 string form","fields":[{"key":"choice","type":"string","title":"Pick","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}
++ OPENCODE_SERVER_PASSWORD=-5OGXZ2soTzofvx9l3Snr3YXsMToOFlhpOL1E-LRsfQ OPENCODE_PASSWORD=-5OGXZ2soTzofvx9l3Snr3YXsMToOFlhpOL1E-LRsfQ opencode api --server http://127.0.0.1:49374 session.form.create --param sessionID=ses_f26153cf3ffebvbwElUkPjcZM6 -d {"title":"t13 string form","fields":[{"key":"choice","type":"string","title":"Pick","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}
++ FORM1_OUT={"data":{"id":"frm_0d9eac39d0015up4Ew3EYyIktT","sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","title":"t13 string form","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
++ printf %s {"data":{"id":"frm_0d9eac39d0015up4Ew3EYyIktT","sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","title":"t13 string form","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
++ sed -n s/.*"id":"\(frm_[^"]*\)".*/\1/p
++ head -1
++ F1=frm_0d9eac39d0015up4Ew3EYyIktT
++ [ -n frm_0d9eac39d0015up4Ew3EYyIktT ]
++ echo t13-shared-cross: form1 frm_0d9eac39d0015up4Ew3EYyIktT created on A
+t13-shared-cross: form1 frm_0d9eac39d0015up4Ew3EYyIktT created on A
++ api_a session.form.create --param sessionID=ses_f26153cf3ffebvbwElUkPjcZM6 -d {"title":"t13 multiselect form","fields":[{"key":"tags","type":"multiselect","title":"Tags","options":[{"value":"x","label":"X"},{"value":"y","label":"Y"}],"custom":false}]}
++ OPENCODE_SERVER_PASSWORD=-5OGXZ2soTzofvx9l3Snr3YXsMToOFlhpOL1E-LRsfQ OPENCODE_PASSWORD=-5OGXZ2soTzofvx9l3Snr3YXsMToOFlhpOL1E-LRsfQ opencode api --server http://127.0.0.1:49374 session.form.create --param sessionID=ses_f26153cf3ffebvbwElUkPjcZM6 -d {"title":"t13 multiselect form","fields":[{"key":"tags","type":"multiselect","title":"Tags","options":[{"value":"x","label":"X"},{"value":"y","label":"Y"}],"custom":false}]}
++ FORM2_OUT={"data":{"id":"frm_0d9eac3e40013vS5SVODLOEQYZ","sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","title":"t13 multiselect form","fields":[{"key":"tags","title":"Tags","type":"multiselect","options":[{"value":"x","label":"X"},{"value":"y","label":"Y"}],"custom":false}]}}
++ printf %s {"data":{"id":"frm_0d9eac3e40013vS5SVODLOEQYZ","sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","title":"t13 multiselect form","fields":[{"key":"tags","title":"Tags","type":"multiselect","options":[{"value":"x","label":"X"},{"value":"y","label":"Y"}],"custom":false}]}}
++ sed -n s/.*"id":"\(frm_[^"]*\)".*/\1/p+ 
+head -1
++ F2=frm_0d9eac3e40013vS5SVODLOEQYZ
++ [ -n frm_0d9eac3e40013vS5SVODLOEQYZ ]
++ echo t13-shared-cross: form2 frm_0d9eac3e40013vS5SVODLOEQYZ created on A
++ wait_for_record per_0d9eac357001COpP1eOVTwe7Qt 40
++ local rid=per_0d9eac357001COpP1eOVTwe7Qt limit=40
+t13-shared-cross: form2 frm_0d9eac3e40013vS5SVODLOEQYZ created on A
++ seq 1 40
++ grep -q "request_id": "per_0d9eac357001COpP1eOVTwe7Qt" /tmp/home/.otg/projects.json
++ sleep 1
++ grep -q "request_id": "per_0d9eac357001COpP1eOVTwe7Qt" /tmp/home/.otg/projects.json
++ return 0
++ wait_for_record frm_0d9eac39d0015up4Ew3EYyIktT 40
++ local rid=frm_0d9eac39d0015up4Ew3EYyIktT limit=40
++ seq 1 40
++ grep -q "request_id": "frm_0d9eac39d0015up4Ew3EYyIktT" /tmp/home/.otg/projects.json
++ return 0
++ wait_for_record frm_0d9eac3e40013vS5SVODLOEQYZ 40
++ local rid=frm_0d9eac3e40013vS5SVODLOEQYZ limit=40
++ seq 1 40
++ grep -q "request_id": "frm_0d9eac3e40013vS5SVODLOEQYZ" /tmp/home/.otg/projects.json
++ return 0
++ cp /tmp/home/.otg/projects.json /evidence/projects-before-inject.json
++ free_port
++ local p hex
++ seq 1 60
++ p=20000
++ printf %04X 20000
++ hex=4E20
++ awk {print $2} /proc/net/tcp /proc/net/tcp6
++ grep -qi :4E20$
++ echo 20000
++ return 0
++ B_PORT=20000
++ [ -n 20000 ]
++ head -c 24 /dev/urandom
++ tr +/ -_
++ tr -d =
++ base64
++ B_PW=FhqoyeU6KylUnsBudYZ4JCa4pYLc9m14
++ echo t13-shared-cross: starting server B (plain serve --port <dynamic>, shared HOME/XDG)
++ cd /tmp/home
+t13-shared-cross: starting server B (plain serve --port <dynamic>, shared HOME/XDG)
+t13-shared-cross: B pid=139
++ BPID=139
++ echo t13-shared-cross: B pid=139
++ BAPI=http://127.0.0.1:20000
++ OPENCODE_SERVER_PASSWORD=FhqoyeU6KylUnsBudYZ4JCa4pYLc9m14 OPENCODE_PASSWORD=FhqoyeU6KylUnsBudYZ4JCa4pYLc9m14 setsid opencode serve --hostname 127.0.0.1 --port 20000 --print-logs
++ seq 1 80
++ OPENCODE_SERVER_PASSWORD=FhqoyeU6KylUnsBudYZ4JCa4pYLc9m14 OPENCODE_PASSWORD=FhqoyeU6KylUnsBudYZ4JCa4pYLc9m14 opencode api --server http://127.0.0.1:20000 plugin.list
++ sleep 0.5
++ OPENCODE_SERVER_PASSWORD=FhqoyeU6KylUnsBudYZ4JCa4pYLc9m14 OPENCODE_PASSWORD=FhqoyeU6KylUnsBudYZ4JCa4pYLc9m14 opencode api --server http://127.0.0.1:20000 plugin.list
++ break
++ B_ROOT=
++ seq 1 80
++ grep -F setup() pid=139 root= /tmp/home/.otg/tgdiag.log
++ sed -n s/.*root=\(.*\)$/\1/p
++ head -1
++ B_ROOT=
++ [ -n  ]
++ sleep 0.5
++ grep -F setup() pid=139 root= /tmp/home/.otg/tgdiag.log
++ sed -n s/.*root=\(.*\)$/\1/p
++ head -1
++ B_ROOT=/tmp/home
++ [ -n /tmp/home ]
++ break
++ [ -n /tmp/home ]
++ echo t13-shared-cross: B plugin active root=/tmp/home
++ [ /tmp/home != /tmp/home ]
++ set +x
+t13-shared-cross: B plugin active root=/tmp/home
++ sleep 3
+t13-shared-cross: SIGSTOP A (owner frozen); inject reply/q_answers/q_reject
++ echo t13-shared-cross: SIGSTOP A (owner frozen); inject reply/q_answers/q_reject
++ kill -STOP 11
++ inject_json_field per_0d9eac357001COpP1eOVTwe7Qt reply "once"
++ local rid=per_0d9eac357001COpP1eOVTwe7Qt field=reply value="once"
++ seq 1 10
++ grep -q "request_id": "per_0d9eac357001COpP1eOVTwe7Qt" /tmp/home/.otg/projects.json
++ sed -i s|^\([[:space:]]*\)"request_id": "per_0d9eac357001COpP1eOVTwe7Qt",$|\1"request_id": "per_0d9eac357001COpP1eOVTwe7Qt",\n\1"reply": "once",| /tmp/home/.otg/projects.json
++ grep -qF "reply": "once" /tmp/home/.otg/projects.json
++ return 0
++ inject_json_field frm_0d9eac39d0015up4Ew3EYyIktT q_answers [["A"]]
++ local rid=frm_0d9eac39d0015up4Ew3EYyIktT field=q_answers value=[["A"]]
++ seq 1 10
++ grep -q "request_id": "frm_0d9eac39d0015up4Ew3EYyIktT" /tmp/home/.otg/projects.json
++ sed -i s|^\([[:space:]]*\)"request_id": "frm_0d9eac39d0015up4Ew3EYyIktT",$|\1"request_id": "frm_0d9eac39d0015up4Ew3EYyIktT",\n\1"q_answers": [["A"]],| /tmp/home/.otg/projects.json
++ grep -qF "q_answers": [["A"]] /tmp/home/.otg/projects.json
++ return 0
++ inject_json_field frm_0d9eac3e40013vS5SVODLOEQYZ q_reject true
++ local rid=frm_0d9eac3e40013vS5SVODLOEQYZ field=q_reject value=true
++ seq 1 10
++ grep -q "request_id": "frm_0d9eac3e40013vS5SVODLOEQYZ" /tmp/home/.otg/projects.json
++ sed -i s|^\([[:space:]]*\)"request_id": "frm_0d9eac3e40013vS5SVODLOEQYZ",$|\1"request_id": "frm_0d9eac3e40013vS5SVODLOEQYZ",\n\1"q_reject": true,| /tmp/home/.otg/projects.json
++ grep -qF "q_reject": true /tmp/home/.otg/projects.json
++ return 0
++ B_SKIPPED=0
++ B_DELETED=0
++ seq 1 30
++ grep -cF apply skipped: waiting record owned by another instance /tmp/home/.otg/tgdiag.log
++ true
++ skips=0
++ gone=0
++ grep -q "request_id": "per_0d9eac357001COpP1eOVTwe7Qt" /tmp/home/.otg/projects.json
++ grep -q "request_id": "frm_0d9eac39d0015up4Ew3EYyIktT" /tmp/home/.otg/projects.json
++ grep -q "request_id": "frm_0d9eac3e40013vS5SVODLOEQYZ" /tmp/home/.otg/projects.json
++ [ 0 -ge 3 ]
++ [ 0 -ge 3 ]
++ sleep 1
++ grep -cF apply skipped: waiting record owned by another instance /tmp/home/.otg/tgdiag.log
++ skips=3
++ gone=0
++ grep -q "request_id": "per_0d9eac357001COpP1eOVTwe7Qt" /tmp/home/.otg/projects.json
++ grep -q "request_id": "frm_0d9eac39d0015up4Ew3EYyIktT" /tmp/home/.otg/projects.json
++ grep -q "request_id": "frm_0d9eac3e40013vS5SVODLOEQYZ" /tmp/home/.otg/projects.json
++ [ 3 -ge 3 ]
++ B_SKIPPED=1
++ break
++ echo t13-shared-cross: B window skips=1 deleted_all=0
++ sleep 5
+t13-shared-cross: B window skips=1 deleted_all=0
++ cp /tmp/home/.otg/projects.json /evidence/projects-after-b-window.json
++ cp /tmp/home/.otg/tgdiag.log /evidence/tgdiag-after-b-window.txt
+t13-shared-cross: SIGCONT A (owner resumes)
++ echo t13-shared-cross: SIGCONT A (owner resumes)
++ kill -CONT 11
++ wait_for_record_gone per_0d9eac357001COpP1eOVTwe7Qt 30
++ local rid=per_0d9eac357001COpP1eOVTwe7Qt limit=30
++ seq 1 30
++ grep -q "request_id": "per_0d9eac357001COpP1eOVTwe7Qt" /tmp/home/.otg/projects.json
++ sleep 1
++ grep -q "request_id": "per_0d9eac357001COpP1eOVTwe7Qt" /tmp/home/.otg/projects.json
++ return 0
++ wait_for_record_gone frm_0d9eac39d0015up4Ew3EYyIktT 30
++ local rid=frm_0d9eac39d0015up4Ew3EYyIktT limit=30
++ seq 1 30
++ grep -q "request_id": "frm_0d9eac39d0015up4Ew3EYyIktT" /tmp/home/.otg/projects.json
++ return 0
++ wait_for_record_gone frm_0d9eac3e40013vS5SVODLOEQYZ 30
++ local rid=frm_0d9eac3e40013vS5SVODLOEQYZ limit=30
++ seq 1 30
++ grep -q "request_id": "frm_0d9eac3e40013vS5SVODLOEQYZ" /tmp/home/.otg/projects.json
++ return 0
++ seq 1 30
++ grep -q "type":"form.replied" /evidence/a-sse.txt
++ grep -q "type":"form.cancelled" /evidence/a-sse.txt
++ grep -q "type":"permission.replied" /evidence/a-sse.txt
++ break
++ sleep 5
++ cp /tmp/home/.otg/projects.json /evidence/projects-final.json
++ cp /tmp/home/.otg/tgdiag.log /evidence/tgdiag-final.txt
++ tr \0  
++ tr \0  
++ tr \0 \n
++ grep -q ^OPENCODE_SERVER_PASSWORD=
++ echo server_password_env=absent
++ grep -q -- --port /evidence/b-cmdline.txt
++ echo b_port_in_argv=yes
++ tr \0 \n
++ grep -q ^OPENCODE_SERVER_PASSWORD=
++ echo b_server_password_env=present
++ printf {"aPid":%s,"bPid":%s,"sessionID":"%s","permissionID":"%s","form1":"%s","form2":"%s","aRoot":"%s","bRoot":"%s","bSkips":%s,"bDeletedAll":%s}\n 11 139 ses_f26153cf3ffebvbwElUkPjcZM6 per_0d9eac357001COpP1eOVTwe7Qt frm_0d9eac39d0015up4Ew3EYyIktT frm_0d9eac3e40013vS5SVODLOEQYZ /tmp/home /tmp/home 1 0
++ cp /tmp/serve-a.log /evidence/serve-a.log
++ cp /tmp/serve-b.log /evidence/serve-b.log
++ kill -TERM 58
++ kill -TERM 192
++ kill -TERM -11
++ kill -TERM -139
++ sleep 1
++ echo t13-shared-cross: done (b_skipped=1 b_deleted_all=0)
+t13-shared-cross: done (b_skipped=1 b_deleted_all=0)

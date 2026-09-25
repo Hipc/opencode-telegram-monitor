@@ -51,15 +51,31 @@ async function runCase(name, fn, timeoutMs = 8_000) {
 }
 
 function makeMonitor(registry, root) {
+  // 契约 §7.1 冻结 fake v2 client（方法返回直接对象；v1 扁平 reply 与
+  // _client.post 私货已删除，§3.2）。
   const fakeClient = {
-    app: { log: async () => {} },
-    session: {
-      list: async () => ({ data: [] }),
-      status: async () => ({ data: {} }),
-      get: async ({ path }) => ({ data: { id: path.id, title: "Test" } }),
+    app: { name: "cli", version: "2.0.15", channel: "latest" },
+    location: {
+      directory: root,
+      workspaceID: undefined,
+      project: { id: "proj-test", directory: root, canonical: root },
     },
-    postSessionIdPermissionsPermissionId: async () => ({ data: true }),
-    _client: { post: async () => ({ data: true }) },
+    event: { subscribe: async () => [] },
+    permission: {
+      reply: async () => {},
+      list: async () => [],
+      get: async ({ sessionID, requestID }) => ({
+        id: requestID,
+        sessionID,
+        action: "shell",
+        resources: [],
+      }),
+    },
+    session: {
+      get: async ({ sessionID }) => ({ id: sessionID, title: "Test" }),
+      create: async ({ title }) => ({ id: "ses-test", title }),
+      context: async () => [],
+    },
   };
   const fakeConfig = {
     botToken: "123456789:TESTTOKEN_DO_NOT_USE_abcdefg",

@@ -1,0 +1,20 @@
+=== scenario: t10-cross (cross-process ownership gate + state service.json discovery) ===
+=== exact command ===
+docker run --rm --name t10-cross-724516 \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t10/tests/e2e/container/evidence/t10-cross-prefix:/plugin:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t10/tests/e2e/container/harness:/harness:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t10/tests/e2e/container/evidence/t10-cross-prefix:/evidence \
+  -e T10_PLUGIN=/plugin/plugin-under-test.ts \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /harness/t10-cross-scenario.sh'
+=== output follows ===
+t10-cross: starting server A (opencode serve --service)
+t10-cross: A pid=11
+t10-cross: A endpoint discovered from service.json (url host/port not printed, password never printed)
+t10-cross: A plugin active root=/tmp/home
+t10-cross: session ses_f271076aaffeGPeYlual6LXqGm created on A
+t10-cross: form frm_0d8ef899d001Ri2NU6nlZHpDPA created on A
+t10-cross: starting server B (plain serve --port <dynamic>, separate HOME storage, shared otg/config)
+t10-cross: B pid=105
+t10-cross: B plugin active root=/tmp/home
+t10-cross: SIGSTOP A (owner frozen) and inject q_answers
+t10-cross: B skip observed=0
+t10-cross: SIGCONT A (owner resumes)
+t10-cross: done (record_gone=yes b_skipped=0)

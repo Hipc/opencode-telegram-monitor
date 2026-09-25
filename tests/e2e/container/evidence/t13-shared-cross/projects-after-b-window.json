@@ -1,0 +1,47 @@
+{
+  "projects": [
+    {
+      "path": "/tmp/home",
+      "enabled": true,
+      "addedAt": "2026-01-01T00:00:00.000Z",
+      "sessions": [
+        {
+          "session_id": "ses_f26153cf3ffebvbwElUkPjcZM6",
+          "session_name": "t13-shared-cross",
+          "type": "question",
+          "message": "{\"form\":{\"id\":\"frm_0d9eac39d0015up4Ew3EYyIktT\",\"sessionID\":\"ses_f26153cf3ffebvbwElUkPjcZM6\",\"title\":\"t13 string form\",\"fields\":[{\"key\":\"choice\",\"title\":\"Pick\",\"type\":\"string\",\"options\":[{\"value\":\"a\",\"label\":\"A\"},{\"value\":\"b\",\"label\":\"B\"}],\"custom\":true}]}}",
+          "send": false,
+          "resolved": false,
+          "request_id": "frm_0d9eac39d0015up4Ew3EYyIktT",
+          "q_answers": [["A"]],
+          "created_at": "2026-09-25T18:53:56.511Z",
+          "host_pid": 11
+        },
+        {
+          "session_id": "ses_f26153cf3ffebvbwElUkPjcZM6",
+          "session_name": "t13-shared-cross",
+          "type": "question",
+          "message": "{\"form\":{\"id\":\"frm_0d9eac3e40013vS5SVODLOEQYZ\",\"sessionID\":\"ses_f26153cf3ffebvbwElUkPjcZM6\",\"title\":\"t13 multiselect form\",\"fields\":[{\"key\":\"tags\",\"title\":\"Tags\",\"type\":\"multiselect\",\"options\":[{\"value\":\"x\",\"label\":\"X\"},{\"value\":\"y\",\"label\":\"Y\"}],\"custom\":false}]}}",
+          "send": false,
+          "resolved": false,
+          "request_id": "frm_0d9eac3e40013vS5SVODLOEQYZ",
+          "q_reject": true,
+          "created_at": "2026-09-25T18:53:56.581Z",
+          "host_pid": 11
+        },
+        {
+          "session_id": "ses_f26153cf3ffebvbwElUkPjcZM6",
+          "session_name": "t13-shared-cross",
+          "type": "permission",
+          "message": "{\"id\":\"per_0d9eac357001COpP1eOVTwe7Qt\",\"sessionID\":\"ses_f26153cf3ffebvbwElUkPjcZM6\",\"action\":\"shell\",\"resources\":[\"echo t13\"]}",
+          "send": false,
+          "resolved": false,
+          "request_id": "per_0d9eac357001COpP1eOVTwe7Qt",
+          "reply": "once",
+          "created_at": "2026-09-25T18:53:57.441Z",
+          "host_pid": 11
+        }
+      ]
+    }
+  ]
+}

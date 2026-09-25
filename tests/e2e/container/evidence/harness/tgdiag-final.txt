@@ -1,0 +1,19 @@
+2026-09-25T18:58:15.755Z [12] MODULE LOADED
+2026-09-25T18:58:15.890Z [12] setup() pid=12 root=/tmp/proj
+2026-09-25T18:58:15.892Z [12] initialize() called
+2026-09-25T18:58:15.893Z [12] runTelegram() started
+2026-09-25T18:58:15.893Z [12] reply scan: starting 1s ticker
+2026-09-25T18:58:15.894Z [12] poller lock acquired
+2026-09-25T18:58:15.894Z [12] sessions scan: starting 1s ticker
+2026-09-25T18:58:15.894Z [12] deleteWebhook: calling
+2026-09-25T18:58:18.166Z [12] [error] Telegram initialization failed; continuing to poll {"error":"TelegramApiError(401)"}
+2026-09-25T18:58:18.166Z [12] init failed: TelegramApiError(401); continuing to poll
+2026-09-25T18:58:18.166Z [12] poll loop: starting
+2026-09-25T18:58:18.166Z [12] getUpdates: calling
+2026-09-25T18:58:19.632Z [12] [error] Telegram rejected the configured bot token
+2026-09-25T18:58:20.392Z [12] scheduleWaitingNotify(per_0d9eeca66001OBoq7OS0wWRABg) type=permission
+2026-09-25T18:58:20.894Z [12] self-update: skipped (not an npm cache install)
+2026-09-25T18:58:21.912Z [12] [warn] Session record removal skipped: registry mutate timeout or no matching record {"requestID":"per_0d9eeca66001OBoq7OS0wWRABg"}
+2026-09-25T18:58:22.915Z [12] [warn] removeSessionRecord skipped (no match or lock timeout); will retry on next scan {"requestId":"frm_0d9eecea5001d6f5a6KolZzvTR"}
+2026-09-25T18:58:23.701Z [12] inbox enqueued session=f2611293 inbox=msg_0d9e type=user delivery=steer
+2026-09-25T18:58:29.006Z [12] [error] Telegram message send failed {"error":"TelegramApiError(401)"}

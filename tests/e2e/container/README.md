@@ -1,0 +1,524 @@
+# Container e2e harness + real-TG smoke recipe (ticket 05)
+
+Reproducible, container-only verification tooling for the opencode v2 adaptation
+(`docs/modules/opencode-v2-contract.md`). Everything runs inside docker; nothing
+is installed on the host and no local opencode directory is touched.
+
+| File | Purpose |
+|---|---|
+| `run.sh` | host entrypoint for every scenario |
+| `lib/common.sh` | docker/port/ownership helpers |
+| `probe-a1/` | §9/A.1 + A.6 supplementary probe (form reply channel, natural question flow) |
+| `probe-lineage/` | §9 supplementary probe (subagent lineage / parentID observability) |
+| `t13-probe/` | shared-storage two-server probe P1-P5 (event delivery, form/permission route semantics, session.get diff, multiselect) |
+| `harness/` | container e2e scenario + mechanism-validation double + real-TG recipe scripts |
+| `harness/fake-telegram.mjs` | fake Telegram Bot API endpoint for the duplicate-record scenario (CONNECT + TLS, request log) |
+| `harness/dupe-scenario.sh` | t09 duplicate-record / message_id regression scenario |
+| `harness/t10-cross-scenario.sh` | t10 cross-process ownership gate + state `service.json` discovery scenario |
+| `harness/t12-ownership-scenario.sh` | t12 multi-root event ownership in one serve process (field: N notifications, N labels) |
+| `harness/t13-shared-cross-scenario.sh` | t13 shared-storage two-server apply routing (host stamp / 404 deletion) scenario |
+| `assert/` | node assertion suites over the collected evidence (`assert/dupe.mjs` = t09 regression, `assert/t10-cross.mjs` = t10 gate/discovery, `assert/t12-ownership.mjs` = t12 ownership, `assert/t13-probe.mjs` = P1-P5, `assert/t13-shared-cross.mjs` = t13 apply routing) |
+| `evidence/` | recorded outputs of the green runs in this round |
+
+Requirements: docker with `hipc/opencode2:latest` (opencode v2.0.15) and
+`otg-toolchain:latest` (node+bun for the bundle build); `node` on the host for
+the assertion scripts.
+
+Resource discipline: every container runs `--rm` with a unique `t05`/`t05b-`/
+`t09-`/`t10-`/`t12-`/`t13-` name, no ports are published (the serve port lives in
+the container network namespace and is picked dynamically, checked against the
+host listener table), and the runner stops what it starts (the t09 scenario also
+removes its `t09-dupe-net-*` network and its host-side temp TLS dir).
+`run.sh clean` removes leftover
+`t05*`/`t09-*`/`t10-*`/`t12-*`/`t13-*` containers and `t09-dupe-net-*` networks
+if a run is interrupted.
+
+---
+
+## 1. §9/A probe — form reply channel + natural question flow
+
+```sh
+tests/e2e/container/run.sh probe-a1          # ~25 s, container-only
+tests/e2e/container/run.sh assert-probe-a1   # assertions over the evidence
+```
+
+Evidence: `evidence/probe-a1/` (`probe-a1.jsonl`, `sse-raw.txt`, `server-log.txt`,
+`commands.txt`, `api-*.json`). Findings and the contract-facing verdict:
+**`probe-a1/VERDICT.md`**.
+
+Result summary (all 18 checks green):
+
+- `client.rpc.session.form.reply` is **absent** (`Object.keys(client.rpc)` is
+  `["register"]`); the client surface has no form/inbox reply method.
+- **Supported channel:** in-process `fetch` to the server's own loopback API —
+  `POST http://127.0.0.1:<port>/api/session/<sessionID>/form/<formID>/reply`
+  with `authorization: Basic base64("opencode:" + <password>)`,
+  `content-type: application/json`, body `{"answer":{"<key>": <value>}}` → `204`.
+  Port from `process.argv` (`serve --port N`); password from
+  `OPENCODE_SERVER_PASSWORD` / `OPENCODE_PASSWORD` (both visible to the plugin).
+  No-auth and Bearer both return 401. `GET /openapi.json` carries the full API
+  spec (`session.form.reply`, `session.form.cancel`, `session.inbox.*`).
+- Natural question flow (A.6): the model `question` tool creates a
+  `form.created` with `metadata.kind="question"`, fields `q0..qN`
+  (`title`=`header`, `description`=question, options, `custom`), and after the
+  plugin answers it, `form.replied` → `session.tool.success` →
+  `session.execution.succeeded`. Headless `opencode run` auto-cancels the form
+  (no UI); `opencode serve` keeps it pending, which is the flow the TG wizard
+  can service.
+- Limitation for the contract revision: port discovery only works when the
+  server has a discoverable port (`opencode run --standalone` uses
+  `serve --stdio --port 0`), so the reply step must fail visibly when it cannot
+  be resolved — no invented fallback.
+
+---
+
+## 1b. §9 probe — subagent lineage / parentID
+
+```sh
+tests/e2e/container/run.sh probe-lineage          # ~50 s incl. one model turn
+tests/e2e/container/run.sh assert-probe-lineage   # evidence summary
+```
+
+Findings and the contract-facing verdict: **`probe-lineage/VERDICT.md`**.
+Evidence: `evidence/probe-lineage/`.
+
+Result summary (all 7 structural checks green):
+
+- **parent linkage IS observable**: a child session spawned by the real `subagent`
+  tool carries `parentID` in `session.created` data and in
+  `client.session.get` results; `GET /api/session?parentID=<root>` lists it.
+- Deterministic model-free control: `POST /api/experimental/session/import` with
+  an explicit `info.parentID` produces the same observable shape.
+- Fork control: `session.fork` emits `session.forked` with `data.parentID`
+  (= source), but the forked session itself has `parentID=null` and
+  `fork:{sessionID,boundary}` — it is not a `parentID` child.
+- No parent key appears in execution/step/tool event data or `session.context`.
+- Contract input: §9 item closed as observable in contract revision r2; §2.1/
+  §3.1 record the child-session shape (`parentID?` / `agent?` / `model?`). The
+  adapted `src/**` consumes `parentID` since `401e7c1` (F1), restoring the v1
+  parent/root projection and root token aggregation.
+
+---
+
+## 2. Container e2e harness
+
+Drives a real opencode v2 server with the plugin under test auto-discovered
+from `<configDir>/plugin/telegram-session-monitor.ts`, a synthetic
+`~/.otg/telegram.json` (no real credentials) and a pre-seeded
+`~/.otg/projects.json` (`enabled: true`). Scripted sessions are deterministic
+API triggers (`opencode api`), no model is required.
+
+```sh
+# mechanism validation (stub double, ~20 s):
+T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh harness \
+  --plugin tests/e2e/container/harness/plugins/harness-stub.ts
+T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh assert-harness
+
+# green-run against the adapted plugin (tickets 03+04 merged; builds the
+# bundle from this worktree, 20 checks green — catalog 22, H3.6/H3.7 run only
+# with the resolved-reply flags — see evidence/harness):
+T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh harness
+T05_HARNESS_FORM_REPLY=1 tests/e2e/container/run.sh assert-harness
+
+# optional settled-request capture (ticket 04 isNotFoundError evidence; run
+# into its own evidence dir so the canonical green-run evidence stays intact):
+T05_HARNESS_OUT="$PWD/tests/e2e/container/evidence/harness-resolved-reply" \
+T05_HARNESS_FORM_REPLY=1 T05_HARNESS_RESOLVED_REPLY=1 T05_HARNESS_REPLY_ERROR_PROBE=1 \
+  tests/e2e/container/run.sh harness
+T05_HARNESS_OUT="$PWD/tests/e2e/container/evidence/harness-resolved-reply" \
+T05_HARNESS_FORM_REPLY=1 T05_HARNESS_RESOLVED_REPLY=1 T05_HARNESS_REPLY_ERROR_PROBE=1 \
+  tests/e2e/container/run.sh assert-harness
+```
+
+`T05_HARNESS_FORM_REPLY=1` additionally exercises the form write-back closure
+(only meaningful once the plugin implements the §9/A.1 channel; without it the
+form check is reported as `pending`, never as a failure). `T05_HARNESS_MODEL=1`
+adds an optional model-backed success turn (slow/flaky by nature; off by
+default). `T05_HARNESS_RESOLVED_REPLY=1` adds P2c: it restores the pending
+permission record and re-injects `reply:"once"` after the request was settled
+(stale TG button), capturing the plugin's 404 classification / raw error shape
+in `tgdiag-resolved-reply.txt`. `T05_HARNESS_REPLY_ERROR_PROBE=1` additionally
+loads a diagnostic double that re-calls `client.permission.reply` on the settled
+request and writes the full client-side error shape to `reply-error-shape.json`.
+
+### Phases and observables
+
+| Phase | Trigger | Observable |
+|---|---|---|
+| P0 | `opencode serve` + `plugin.list` boot | loader line `loading plugin .../telegram-session-monitor.ts`; `tgdiag.log` init marker |
+| P1 | `session.permission.create` / `session.form.create` | `projects.json` SessionRecords `type=permission` (after the 1 s debounce) and `type=question` (immediate), `message` = full payload JSON |
+| P2 | external `reply:"once"` injection (same write the TG button does) | record deleted + `permission.replied` on `GET /api/event` |
+| P2b | external `q_answers:[["A"]]` injection (same write the TG wizard does) | record deleted + `form.replied` on the wire |
+| P3 | bogus model + `session.prompt` → `session.execution.failed` | terminal notification attempt in `tgdiag.log` (`Telegram message send failed`) |
+| P2c | optional settled-request re-reply (stale button) | H3.6 terminal-required: settled reply classified 404 (record deleted, no retry loop) in `tgdiag-resolved-reply.txt`; `reply-error-shape.json` client-side shape |
+
+Assertion catalog (`assert/harness.mjs`): 22 check IDs — H1.1–H1.3 loading/init,
+H2.1x permission record, H2.2x question record, H3.1/H3.2/H3.2a/H3.3 permission
+closure, H3.4–H3.5 form closure (gated), H3.6 settled-reply classification
+(gated; terminal-required — 404 must delete the record with no retry loop),
+H3.7 client-side error-shape capture (gated), H4.1–H4.2 lifecycle. The canonical
+green-run executes 20 of the 22 IDs; with the `RESOLVED_REPLY` +
+`REPLY_ERROR_PROBE` flags all 22 run.
+Green output is recorded in `evidence/harness/commands.txt` and the assertion
+transcript is embedded in the ticket return.
+
+Note on H3.3: the adapted plugin's success path is silent by design — it logs
+only the 404 terminal path and apply failures (contract §3.3 / 04). H3.3
+therefore asserts "the request was tracked and no apply failure was logged";
+the positive closure evidence is H3.1 (record deleted) plus H3.2/H3.2a
+(`permission.replied` on the wire with the injected decision). The earlier
+stub-era regex expected a stub-only diag marker and was fixed here.
+
+## 2b. Duplicate-record / message_id regression (t09-dupe-fix)
+
+```sh
+tests/e2e/container/run.sh dupe          # ~60 s, container-only
+tests/e2e/container/run.sh assert-dupe   # 12 assertions over the evidence
+```
+
+Reproduces the field incident "trigger one question → continuous repeated
+Telegram messages": multiple plugin monitors sharing one `projects.json`
+append duplicate SessionRecords for the same `request_id` (all `send=false`);
+the poller then re-sends a leftover copy on every scan.
+
+The scenario seeds two permission copies (same `request_id`, both `send=false`)
+plus one question record directly in the seeded registry and points the plugin
+at a **fake Telegram endpoint** (`harness/fake-telegram.mjs`: a plain-HTTP
+CONNECT that answers `200 Connection established` and terminates TLS on the
+same socket with a throwaway test cert for `api.telegram.org`, replying with
+Telegram envelopes `{"ok":true,"result":…}` and logging every request to
+`evidence/dupe/fake-telegram.jsonl`). No real bot token and no real Telegram
+traffic are involved; the scenario container opts into the test cert via
+`NODE_TLS_REJECT_UNAUTHORIZED=0` (container-local only — never product code).
+
+Assertions (`assert/dupe.mjs`): exactly one `sendRichMessage` per request_id
+over many scan rounds (D1.1); every duplicate copy ends `send=true`
+(single-round self-heal, D1.3); the wizard send's `message_id` is persisted as
+`q_msg_id` (unwrapped-response parse, D2.2); shape diagnostic
+`sendMessageWithKeyboard response: typeof=object keys=message_id` (D3.1);
+`setup() pid=… root=…` activation line (D4.1); no
+"Question wizard send returned no message_id" warn (D3.2).
+
+Negative control: the same scenario against the pre-fix bundle sends the
+duplicated request_id 16× in the observation window, leaves the copies
+`[true,false]` and persists no `q_msg_id` — the exact field signature.
+
+`--plugin <bundle>` runs the scenario against a provided bundle instead of
+building the worktree (used for the pre-fix negative control).
+
+## 2c. Cross-process ownership gate + state service.json discovery (t10)
+
+```sh
+tests/e2e/container/run.sh t10-cross                # ~2 min, container-only
+tests/e2e/container/run.sh assert-t10-cross         # 15 assertions (positive)
+T10_CROSS_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t10-cross-prefix \
+T05_PLUGIN_SRC=<base-worktree> tests/e2e/container/run.sh t10-cross
+T10_CROSS_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t10-cross-prefix \
+  tests/e2e/container/run.sh assert-t10-cross --negative-control
+```
+
+Reproduces the field incident "TG question submit never reached the TUI": two
+real servers share one `~/.otg` registry and project root —
+**A** = `opencode serve --service` (the field daemon shape: no `--port` in argv,
+no `OPENCODE_SERVER_PASSWORD` in env; it registers
+`$XDG_STATE_HOME/opencode/service.json` with `{url,pid,password}`) and
+**B** = plain `serve --port <dynamic>` with its own password env but separate
+session storage (it does not host the session). The form is created on A;
+`q_answers` is injected while A is SIGSTOPped so B's skip is deterministic;
+A resumes and must apply.
+
+Assertions: A discovered itself through the state `service.json` (pid match)
+and emitted exactly one `form.replied`; B logged
+`apply skipped: session not hosted by this instance` and performed no apply,
+no terminal 404 removal and no record deletion; the record survived B's skip
+window and was removed only after the owner applied.
+
+The negative control runs the same scenario against the pre-fix bundle and
+asserts the field signature instead: B classified its self-POST 404 as terminal
+and deleted the record while A was frozen; A never emitted `form.replied`.
+Evidence: `evidence/t10-cross/` (positive) and `evidence/t10-cross-prefix/`
+(negative control).
+
+## 2d. Multi-root event ownership (t12)
+
+```sh
+tests/e2e/container/run.sh t12-ownership                 # ~2.5 min, container-only
+tests/e2e/container/run.sh assert-t12-ownership          # 8 assertions (positive)
+T12_OWNERSHIP_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t12-ownership-prefix \
+T05_PLUGIN_SRC=<base-worktree> tests/e2e/container/run.sh t12-ownership
+T12_OWNERSHIP_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t12-ownership-prefix \
+  tests/e2e/container/run.sh assert-t12-ownership --negative-control
+```
+
+Reproduces the field incident "one completed session → several notifications
+with different project labels": ONE `opencode serve` process activates the
+plugin once per location/root (field log: ~7 roots), and every monitor
+subscribes to the same global v2 event stream. The scenario activates two roots
+in one process (A via `opencode api plugin.list` from `/tmp/projA`, B via
+`GET /api/plugin?location[directory]=/tmp/projB`), then completes a session in
+A deterministically (bogus model → `session.execution.failed`) with the fake
+Telegram endpoint recording every send.
+
+Assertions (positive): both roots activated on the same pid; exactly ONE
+`sendRichMessage`, carrying A's project label and the session row; no
+B-labelled send; the B monitor logged
+`event skipped: location not owned by this instance directory=/tmp/projA`.
+The negative control runs the same topology against the pre-fix bundle and
+asserts the field signature: ≥2 notifications for the SAME session, one
+labelled `projA` and one `projB`, and no ownership-skip diagnostic.
+
+Same-root reachability investigated in the container (see the ticket report):
+repeated location requests for one directory load the location once (one
+`setup`); the same plugin file in both `plugin/` and `plugins/` logs two
+"loading plugin" lines but still one `setup`; `location.reload` does produce
+same-root re-activation (`event stream ended` → new `setup`, same pid), so the
+process-wide seen-event set is the defense for that swap window.
+Evidence: `evidence/t12-ownership/` (positive) and
+`evidence/t12-ownership-prefix/` (negative control).
+
+## 2e. Shared-storage two-server probe (t13, P1-P5)
+
+```sh
+tests/e2e/container/run.sh t13-probe                 # ~1 min, container-only
+tests/e2e/container/run.sh assert-t13-probe          # P1-P5 evidence checks
+```
+
+Reproduces the field topology "two servers share ONE HOME/XDG storage": A =
+`opencode serve --service` (hosts the session) and B = plain `serve --port`, both
+loading the probe plugin (`t13-probe/plugin.ts`) from the same config dir. The
+scenario drives the v2 HTTP API directly. Findings and the fix-facing verdict:
+**`t13-probe/VERDICT.md`**; raw evidence in `evidence/t13-probe/`.
+
+Result summary (all 17 checks green):
+
+- **P1**: only the host process receives the session's events
+  (`session.created` / `permission.asked` / `form.created`); the non-host B,
+  with the same root activated, receives none — a creation-time `host_pid` stamp
+  is a reliable host determination.
+- **P2**: non-owner B gets **404 FormNotFoundError** for pending form
+  get/reply/cancel; owner A gets 200/204 and **409 FormAlreadySettledError**
+  once settled. 404 is ambiguous and must never be treated as settled.
+- **P3**: non-owner B gets **404 PermissionNotFoundError** for
+  `permission.get`/`reply`; owner A gets 200/204.
+- **P4**: `session.get` payloads are **byte-identical** from A and B — the t10
+  `session.get` gate fails open in shared storage.
+- **P5**: `type:"multiselect"` round-trips unchanged in `form.created` and
+  `form.get` (the wizard `multiple` mapping is correct).
+
+## 2f. Shared-storage cross-server apply routing (t13 fix)
+
+```sh
+tests/e2e/container/run.sh t13-shared-cross          # ~2.5 min, container-only
+tests/e2e/container/run.sh assert-t13-shared-cross   # 17 assertions (positive)
+T13_SHARED_CROSS_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t13-shared-cross-prefix \
+T05_PLUGIN_SRC=<base-worktree> tests/e2e/container/run.sh t13-shared-cross
+T13_SHARED_CROSS_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t13-shared-cross-prefix \
+  tests/e2e/container/run.sh assert-t13-shared-cross --negative-control
+```
+
+The user's exact failure topology: A = `serve --service` hosts a session with a
+pending permission + two pending forms (string + multiselect); B = plain
+`serve --port` shares the same HOME/XDG and the same root. A is SIGSTOPped, the
+TG-side terminal fields (`reply:"once"`, `q_answers`, `q_reject`) are injected
+into the shared registry, and B's reply scan runs.
+
+Assertions (positive): every record carries `host_pid` = A's pid; B logs
+`apply skipped: waiting record owned by another instance` for all three and
+deletes nothing while A is frozen; after A resumes, A applies exactly once
+(`form.replied` / `form.cancelled` / `permission.replied` on A's event stream)
+and removes all three records. The negative control runs the same topology
+against the pre-fix bundle and asserts the field signature: B classifies its
+self-POST/self-DELETE 404 as terminal and deletes all three shared records while
+A is frozen; A never emits a settle event. Evidence:
+`evidence/t13-shared-cross/` (positive) and `evidence/t13-shared-cross-prefix/`
+(negative control).
+
+### Bundle build
+```sh
+tests/e2e/container/run.sh build   # copies the worktree into otg-toolchain and runs node scripts/build.mjs
+```
+
+The artifact is written to `evidence/build/plugin-under-test.ts` (generated,
+not committed); the transcript is committed. The harness never builds on the
+host.
+
+---
+
+## 3. Real-TG smoke recipe
+
+Reads the host `~/.otg` (real bot credentials) **read-only**, copies it inside
+the container, and drives one trivial session through a long-lived
+`opencode serve` until the terminal notification send is attempted (and
+asserted). `T05_REAL_SMOKE_HOST_OTG=<dir>` points the recipe at a synthetic
+copy instead of `~/.otg` — used for the send-path mechanism check in §3b. The
+host directory is never written (verified below).
+
+### 3a. Read-only mount check (runnable now, no Telegram traffic)
+
+```sh
+tests/e2e/container/run.sh real-tg-recipe --check
+```
+
+Observed evidence (`evidence/real-tg-recipe/commands.txt`):
+
+- `/host-otg` appears in `/proc/mounts` with `ro`;
+- `touch /host-otg/...` fails with `Read-only file system`;
+- the config copies to `/tmp/home/.otg` (6 entries, names/sizes only printed);
+- a marker written into the copy does not appear under `/host-otg`.
+
+### 3b. Full run (final verification phase) — serve-based, asserts the send path
+
+```sh
+# safe mode (default): the container never calls getUpdates, so it cannot
+# compete with the host bot. Lifecycle notifications still send.
+tests/e2e/container/run.sh real-tg-recipe --run
+
+# full mode: the container may poll getUpdates (waiting-record notifications);
+# only run when no other opencode instance is active for the same bot token.
+T05_REAL_SMOKE_FULL=1 tests/e2e/container/run.sh real-tg-recipe --run
+```
+
+Inside the container (`harness/real-tg-recipe.sh`):
+
+1. refuses to continue if `/host-otg` is writable;
+2. copies `/host-otg` to `/tmp/home/.otg` (real `telegram.json` is used as-is;
+   contents are never printed);
+3. writes a synthetic `projects.json` in the **copy** with the container project
+   `/tmp/proj` `enabled: true` (the host registry points at host paths);
+4. records the pre-run diag line offset (the copy is a snapshot, so every later
+   line belongs to this run); safe mode writes a fresh guard `poller.lock` and
+   **keeps refreshing its mtime every 10 s** for the whole run — the lock TTL is
+   60 s, so a longer run must not let the container consider the lock stale and
+   poll `getUpdates` against the host bot; full mode removes copied lock files;
+5. starts a long-lived `opencode serve --hostname 127.0.0.1 --port <free>` with
+   a synthetic password and drives one trivial turn via `opencode api
+   session.create` + `session.prompt`; after `step ended ... finish=stop` it
+   **keeps the server alive ≥ 15 s** so the 5 s idle debounce finalizes and the
+   ✅ terminal notification send actually fires, then waits (bounded at 90 s)
+   for a **terminal send outcome** in this run's own diag block — `http done
+   status=…`, `http fail: …` or `Telegram message send failed`; a stage line
+   (`start`/`tunnel ok`/`tls ok`/`http written`) does not satisfy the wait. If
+   the latest send line is still a stage line (in-flight retry), a bounded 20 s
+   teardown grace runs before the server process group is stopped and the port
+   release confirmed;
+6. collects `tgdiag.log`, the server log, the password-filtered serve stdout and
+   the copied registry into `evidence/real-tg-recipe/`, and finally scans
+   **this run's own diag block** (pre-run offset + plugin PID) for the send.
+
+**Expected observations:** one `✅` lifecycle notification for `proj` in the
+real Telegram chat; the run's own diag block shows `MODULE LOADED` /
+`initialize() called` / `runTelegram() started`, `poller lock held elsewhere`
+(safe mode; no `getUpdates` lines) and the proxy send diagnostics
+`requestViaProxy[sendRichMessage] ... http done status=200`; host `~/.otg`
+unchanged (fingerprints in `host-otg-{before,after,diff}.txt`, identical
+headers so the diff compares entries only).
+
+**The recipe FAILS unless the run's own diag block shows a send attempt** —
+absence of a failure line alone is no longer sufficient. Possible RESULT lines:
+
+- `RESULT: ok send succeeded ...` — `sendRichMessage http 200` in this run's block;
+- `RESULT: FAIL send attempt reached Telegram but was rejected (401); ...` — the
+  attempt is proven but the token is invalid (expected in the synthetic check);
+- `RESULT: FAIL send attempt failed before Telegram accepted it ...`;
+- `RESULT: FAIL send attempt started but no completion line observed`;
+- `RESULT: FAIL no send attempt observed` — no send diagnostics at all,
+  including the pre-fix `opencode run --standalone` shape where the server exits
+  before the 5 s debounce fires (`dispose` clears the timer).
+
+The container exits non-zero on any FAIL. The wait never breaks on a stage
+line, so teardown cannot abort an in-flight request (`http fail: Plugin
+disposed` — the fixture bug observed on 2026-09-25, when the old wait matched
+`start` and killed the process group before the response arrived); a send with
+no terminal outcome inside the 90 s window prints an explicit
+`WARN: no terminal send outcome within 90s …` and still fails above. Duration:
+~20-40 s (model turn + 15 s hold + terminal-outcome wait + shutdown), plus the
+one-off bundle build; a slow or failed send adds up to 90 s of wait plus a 20 s
+teardown grace.
+
+Note: the positive (`200`) check reads the **proxy transport** diagnostics
+(`requestViaProxy[sendRichMessage]`); a direct-mode config (no `proxy`) emits no
+send-success line, so a successful direct-mode send would be reported as
+`no send attempt observed`. The recipe targets the host config, which uses the
+proxy.
+
+#### Send-path mechanism check (synthetic credentials, no real messages)
+
+Run the same recipe against a synthetic `/host-otg` copy — the real `~/.otg` is
+not mounted, no real message is sent:
+
+```sh
+mkdir -p /tmp/tg-synthetic-otg
+cat > /tmp/tg-synthetic-otg/telegram.json <<'JSON'
+{"botToken":"123456:TESTTOKEN_DO_NOT_USE","chatId":"123","proxy":"http://10.0.10.100:17892"}
+JSON
+T05_REAL_SMOKE_HOST_OTG=/tmp/tg-synthetic-otg \
+  tests/e2e/container/run.sh real-tg-recipe --run
+```
+
+Success criterion: the run's own diag block shows the send attempt reaching
+Telegram — `requestViaProxy[sendRichMessage] ... http done status=401` plus
+`[error] Telegram message send failed {"error":"TelegramApiError(401)"}`, 5 s
+after `step ended` (the idle debounce). The recipe reports FAIL **by design**
+here (the fake token is rejected); the proof is the attempt, not a 200.
+Recorded output: `evidence/real-tg-sendpath-check/` (2026-09-25, plugin bundle
+built from this worktree).
+
+---
+
+## 4. Status (explicitly not faked)
+
+- **Green-run against the adapted plugin (tickets 03/04)** — **done**: 20
+  checks green (catalog 22; H3.6/H3.7 run only with the resolved-reply flags),
+  form write-back closure included (`evidence/harness/`, run 2026-09-25 on task
+  HEAD `8f3572f`).
+- **Settled-request reply capture (ticket 04 `isNotFoundError`)** — **done and
+  fixed**: the real v2 `client.permission.reply` error on an already-settled
+  request is a plain `Error` (`name="Error"`,
+  `message="Permission request not found: <perID>"`, no `status`/`_tag`/
+  enumerable props); since `401e7c1` (F2) `isNotFoundError` classifies that
+  exact text as terminal — record deleted, no retry loop (contract §3.3 r2).
+  Raw HTTP 404 body `{"_tag":"PermissionNotFoundError",...}` and the full
+  client-side shape are in `evidence/harness-resolved-reply/`.
+- **Subagent lineage / parentID** — **done** (see §1b): observable and
+  consumed by `src/**` since `401e7c1` (F1); contract revision r2 closes the
+  §9 item.
+- **Cross-process gate + service.json discovery (t10)** — **done** (see §2c):
+  positive run 15/15 (A applied exactly once, B skipped, no record loss) and
+  the pre-fix negative control reproduces the field signature; recorded in
+  `evidence/t10-cross/` and `evidence/t10-cross-prefix/`.
+- **Shared-storage topology + apply routing (t13)** — **done** (see §2e/§2f):
+  P1-P5 probe 17/17 (`evidence/t13-probe/`, verdict in
+  `t13-probe/VERDICT.md`); the fixed plugin run 17/17 (B skips via the
+  `host_pid` stamp, A applies exactly once, all records removed) and the
+  pre-fix negative control reproduces the field deletion signature
+  (`evidence/t13-shared-cross/`, `evidence/t13-shared-cross-prefix/`).
+- **Real-TG smoke execution** — **pending** (final verification phase, real
+  credentials): the `--run` recipe is now serve-based and fails unless this
+  run's own diag block shows a send attempt (it no longer runs
+  `opencode run --standalone`, which exited before the 5 s idle debounce could
+  fire). The send path itself is self-checked with synthetic credentials —
+  `evidence/real-tg-sendpath-check/` shows the proxy send attempt reaching
+  Telegram 5 s after `step ended` (401 rejection, by design); the
+  real-credential `--run` executes in the orchestrator's final phase.
+- **Model-backed success lifecycle** — `T05_HARNESS_MODEL=1` optional path;
+  the deterministic P3 failure path is the default CI-stable lifecycle check.
+
+## 5. Evidence layout
+
+`evidence/probe-a1/` form-channel probe run · `evidence/probe-lineage/`
+subagent-lineage probe run · `evidence/t13-probe/` shared-storage two-server
+probe (P1-P5) · `evidence/harness/` green-run against the adapted plugin
+(20 checks green — catalog 22, form phase included; H3.6/H3.7 run only
+with the settled-reply flags) ·
+`evidence/harness-resolved-reply/` settled-request capture (H3.6/H3.7) ·
+`evidence/t10-cross/` cross-process gate + service.json discovery (positive) ·
+`evidence/t10-cross-prefix/` same scenario against the pre-fix bundle
+(negative control) · `evidence/t13-shared-cross/` shared-storage apply routing
+(positive) · `evidence/t13-shared-cross-prefix/` same scenario against the
+pre-fix bundle (negative control) ·
+`evidence/real-tg-recipe/` read-only mount check ·
+`evidence/real-tg-sendpath-check/` synthetic-credential send-path mechanism
+check (serve-based recipe; `RESULT: FAIL ... rejected (401)` by design — the
+proof is the send attempt in the run's own diag block) · `evidence/build/`
+toolchain build transcript. Regenerating any scenario replaces its evidence
+directory (`run.sh` wipes it first), so re-running is safe and reproducible.

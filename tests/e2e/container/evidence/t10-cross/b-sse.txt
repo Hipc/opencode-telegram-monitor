@@ -1,0 +1,14 @@
+data: {"id":"evt_0d9ef761d001WvEqx9x51TaluV","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d9ef7c3d0014HWiG4zKbJUWFH","created":1790362745917,"type":"models-dev.refreshed","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9ef7c800014waXMhjp8Iy1LD","created":1790362745984,"type":"integration.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9ef7ca6001BnyKOXbyXGr8fi","created":1790362746022,"type":"provider.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9ef7cad0018QxEo0MxezpSCZ","created":1790362746029,"type":"model.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+: heartbeat
+

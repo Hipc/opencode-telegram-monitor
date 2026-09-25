@@ -1,0 +1,1 @@
+{"data":{"id":"ses_f261139d1ffeJ9uD9Rgfp8S5s6","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362699312,"updated":1790362699312},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}

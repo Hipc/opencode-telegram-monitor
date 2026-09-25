@@ -1,0 +1,28 @@
+data: {"id":"evt_0d9eac2d3001ryjszqMMUFIP3w","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d9eac30e001dFbCApn1zNB227","created":1790362436366,"type":"session.created","location":{"directory":"/tmp/home"},"data":{"sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","slug":"brave-meadow","version":"2.0.15","projectID":"74b23e0067970794112a980bf226755fbfff7d22","location":{"directory":"/tmp/home"},"subpath":"","title":"t13-shared-cross","permissions":[{"action":"shell","resource":"*","effect":"ask"}]},"durable":{"aggregateID":"ses_f26153cf3ffebvbwElUkPjcZM6","seq":0,"version":1}}
+
+data: {"id":"evt_0d9eac357002P1bCdCk5ZVrwR4","created":1790362436439,"type":"permission.asked","location":{"directory":"/tmp/home"},"data":{"id":"per_0d9eac357001COpP1eOVTwe7Qt","sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","action":"shell","resources":["echo t13"]}}
+
+data: {"id":"evt_0d9eac39d002hqfplrATfzE6zJ","created":1790362436509,"type":"form.created","location":{"directory":"/tmp/home"},"data":{"form":{"id":"frm_0d9eac39d0015up4Ew3EYyIktT","sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","title":"t13 string form","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}}
+
+data: {"id":"evt_0d9eac3e4002kbr0nqmvRN0c5s","created":1790362436580,"type":"form.created","location":{"directory":"/tmp/home"},"data":{"form":{"id":"frm_0d9eac3e40013vS5SVODLOEQYZ","sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","title":"t13 multiselect form","fields":[{"key":"tags","title":"Tags","type":"multiselect","options":[{"value":"x","label":"X"},{"value":"y","label":"Y"}],"custom":false}]}}}
+
+data: {"id":"evt_0d9eac4b5001M7FbF4rM4w9fZI","created":1790362436789,"type":"models-dev.refreshed","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9eac4f5001SvH5loE7F2SFfy","created":1790362436853,"type":"integration.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9eac517001hIsyiNvoUbHvur","created":1790362436887,"type":"provider.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9eac51c001RTMkwX09JeK6gP","created":1790362436892,"type":"model.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9eae9cf001vJ8nztKIsTCr0L","created":1790362446287,"type":"form.replied","location":{"directory":"/tmp/home"},"data":{"id":"frm_0d9eac39d0015up4Ew3EYyIktT","sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","answer":{"choice":"a"}}}
+
+data: {"id":"evt_0d9eae9d300139kZDmDV4NDfRA","created":1790362446291,"type":"form.cancelled","location":{"directory":"/tmp/home"},"data":{"id":"frm_0d9eac3e40013vS5SVODLOEQYZ","sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6"}}
+
+data: {"id":"evt_0d9eae9e1001TAaihO2gZxPyZE","created":1790362446305,"type":"permission.replied","data":{"sessionID":"ses_f26153cf3ffebvbwElUkPjcZM6","requestID":"per_0d9eac357001COpP1eOVTwe7Qt","reply":"once"}}
+
+: heartbeat
+

@@ -1,0 +1,129 @@
+2026-09-25T16:08:59.203Z [13] MODULE LOADED
+2026-09-25T16:08:59.339Z [13] setup() pid=13 root=/tmp/projA
+2026-09-25T16:08:59.342Z [13] initialize() called
+2026-09-25T16:08:59.342Z [13] runTelegram() started
+2026-09-25T16:08:59.342Z [13] reply scan: starting 1s ticker
+2026-09-25T16:08:59.343Z [13] poller lock acquired
+2026-09-25T16:08:59.343Z [13] sessions scan: starting 1s ticker
+2026-09-25T16:08:59.343Z [13] deleteWebhook: calling
+2026-09-25T16:08:59.343Z [13] requestViaProxy[deleteWebhook] start
+2026-09-25T16:08:59.354Z [13] requestViaProxy[deleteWebhook] tunnel ok
+2026-09-25T16:08:59.356Z [13] requestViaProxy[deleteWebhook] tls ok
+2026-09-25T16:08:59.357Z [13] requestViaProxy[deleteWebhook] http written, waiting for response
+2026-09-25T16:08:59.358Z [13] requestViaProxy[deleteWebhook] http header (115 bytes): HTTP/1.1 200 OK
+2026-09-25T16:08:59.358Z [13] requestViaProxy[deleteWebhook] http done status=200 bodyLen=25
+2026-09-25T16:08:59.358Z [13] deleteWebhook: OK
+2026-09-25T16:08:59.358Z [13] setMyCommands: calling
+2026-09-25T16:08:59.358Z [13] requestViaProxy[setMyCommands] start
+2026-09-25T16:08:59.360Z [13] requestViaProxy[setMyCommands] tunnel ok
+2026-09-25T16:08:59.397Z [13] requestViaProxy[setMyCommands] tls ok
+2026-09-25T16:08:59.403Z [13] requestViaProxy[setMyCommands] http written, waiting for response
+2026-09-25T16:08:59.404Z [13] requestViaProxy[setMyCommands] http header (115 bytes): HTTP/1.1 200 OK
+2026-09-25T16:08:59.404Z [13] requestViaProxy[setMyCommands] http done status=200 bodyLen=25
+2026-09-25T16:08:59.404Z [13] setMyCommands: OK
+2026-09-25T16:08:59.404Z [13] poll loop: starting
+2026-09-25T16:08:59.404Z [13] getUpdates: calling
+2026-09-25T16:08:59.404Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:08:59.405Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:08:59.406Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:08:59.406Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:08:59.733Z [13] MODULE LOADED
+2026-09-25T16:08:59.778Z [13] setup() pid=13 root=/tmp/projB
+2026-09-25T16:08:59.779Z [13] initialize() called
+2026-09-25T16:08:59.779Z [13] runTelegram() started
+2026-09-25T16:08:59.779Z [13] reply scan: starting 1s ticker
+2026-09-25T16:08:59.780Z [13] poller lock held elsewhere; scheduling retry
+2026-09-25T16:09:01.410Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:01.410Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:01.410Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:01.410Z [13] getUpdates: calling
+2026-09-25T16:09:01.410Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:01.411Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:09:01.413Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:09:01.413Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:09:01.452Z [13] inbox enqueued session=f26ac398 inbox=msg_0d95 type=user delivery=steer
+2026-09-25T16:09:01.452Z [13] inbox enqueued session=f26ac398 inbox=msg_0d95 type=user delivery=steer
+2026-09-25T16:09:03.416Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:03.416Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:03.416Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:03.416Z [13] getUpdates: calling
+2026-09-25T16:09:03.416Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:03.418Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:09:03.419Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:09:03.420Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:09:04.343Z [13] self-update: skipped (not an npm cache install)
+2026-09-25T16:09:04.779Z [13] self-update: skipped (not an npm cache install)
+2026-09-25T16:09:05.422Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:05.422Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:05.423Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:05.423Z [13] getUpdates: calling
+2026-09-25T16:09:05.423Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:05.424Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:09:05.425Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:09:05.426Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:09:06.483Z [13] requestViaProxy[sendRichMessage] start
+2026-09-25T16:09:06.483Z [13] requestViaProxy[sendRichMessage] start
+2026-09-25T16:09:06.484Z [13] requestViaProxy[sendRichMessage] tunnel ok
+2026-09-25T16:09:06.485Z [13] requestViaProxy[sendRichMessage] tunnel ok
+2026-09-25T16:09:06.486Z [13] requestViaProxy[sendRichMessage] tls ok
+2026-09-25T16:09:06.486Z [13] requestViaProxy[sendRichMessage] http written, waiting for response
+2026-09-25T16:09:06.486Z [13] requestViaProxy[sendRichMessage] tls ok
+2026-09-25T16:09:06.486Z [13] requestViaProxy[sendRichMessage] http written, waiting for response
+2026-09-25T16:09:06.486Z [13] requestViaProxy[sendRichMessage] http header (130 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:06.486Z [13] requestViaProxy[sendRichMessage] http done status=200 bodyLen=40
+2026-09-25T16:09:06.487Z [13] requestViaProxy[sendRichMessage] http header (130 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:06.487Z [13] requestViaProxy[sendRichMessage] http done status=200 bodyLen=40
+2026-09-25T16:09:07.427Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:07.428Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:07.428Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:07.428Z [13] getUpdates: calling
+2026-09-25T16:09:07.428Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:07.429Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:09:07.431Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:09:07.431Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:09:09.433Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:09.433Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:09.433Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:09.433Z [13] getUpdates: calling
+2026-09-25T16:09:09.433Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:09.434Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:09:09.436Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:09:09.436Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:09:11.440Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:11.440Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:11.440Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:11.440Z [13] getUpdates: calling
+2026-09-25T16:09:11.441Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:11.441Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:09:11.443Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:09:11.443Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:09:13.446Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:13.446Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:13.447Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:13.447Z [13] getUpdates: calling
+2026-09-25T16:09:13.447Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:13.448Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:09:13.449Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:09:13.449Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:09:15.452Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:15.452Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:15.453Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:15.453Z [13] getUpdates: calling
+2026-09-25T16:09:15.453Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:15.454Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:09:15.456Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:09:15.456Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:09:17.459Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:17.459Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:17.459Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:17.459Z [13] getUpdates: calling
+2026-09-25T16:09:17.459Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:17.460Z [13] requestViaProxy[getUpdates] tunnel ok
+2026-09-25T16:09:17.461Z [13] requestViaProxy[getUpdates] tls ok
+2026-09-25T16:09:17.461Z [13] requestViaProxy[getUpdates] http written, waiting for response
+2026-09-25T16:09:19.465Z [13] requestViaProxy[getUpdates] http header (113 bytes): HTTP/1.1 200 OK
+2026-09-25T16:09:19.466Z [13] requestViaProxy[getUpdates] http done status=200 bodyLen=23
+2026-09-25T16:09:19.466Z [13] getUpdates: returned 0 update(s)
+2026-09-25T16:09:19.466Z [13] getUpdates: calling
+2026-09-25T16:09:19.466Z [13] requestViaProxy[getUpdates] start
+2026-09-25T16:09:19.467Z [13] requestViaProxy[getUpdates] tunnel ok

@@ -1,0 +1,20 @@
+data: {"id":"evt_0d9ef70d5001rjxuIUqPPVIadj","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d9ef710b0019CP4IObgNHrseQ","created":1790362743051,"type":"session.created","location":{"directory":"/tmp/home"},"data":{"sessionID":"ses_f26108ef6ffeMtMLWqFaR1XhvG","slug":"gentle-island","version":"2.0.15","projectID":"74b23e0067970794112a980bf226755fbfff7d22","location":{"directory":"/tmp/home"},"subpath":"","title":"t10-cross"},"durable":{"aggregateID":"ses_f26108ef6ffeMtMLWqFaR1XhvG","seq":0,"version":1}}
+
+data: {"id":"evt_0d9ef7152002ZvguRnaNZuC044","created":1790362743122,"type":"form.created","location":{"directory":"/tmp/home"},"data":{"form":{"id":"frm_0d9ef7152001QwH8K7Ec0UdGTq","sessionID":"ses_f26108ef6ffeMtMLWqFaR1XhvG","title":"t10-cross question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}}
+
+data: {"id":"evt_0d9ef72df001sWZimJLUvePQ65","created":1790362743520,"type":"models-dev.refreshed","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9ef7326001jZ1AURz7FjZJ9I","created":1790362743590,"type":"integration.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9ef734c001oS20jEQ6sfOTG5","created":1790362743628,"type":"provider.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d9ef7351001I3tWFNIDn34UC5","created":1790362743633,"type":"model.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d9efaee3001VRXT0pDDLTCJ58","created":1790362758883,"type":"form.replied","location":{"directory":"/tmp/home"},"data":{"id":"frm_0d9ef7152001QwH8K7Ec0UdGTq","sessionID":"ses_f26108ef6ffeMtMLWqFaR1XhvG","answer":{"choice":"a"}}}
+

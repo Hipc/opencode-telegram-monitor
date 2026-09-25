@@ -1,0 +1,43 @@
+timestamp=2026-09-24T16:27:23.776Z level=INFO run=5a874856 message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18134\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:23.780Z level=ERROR run=5a874856 message="cli process failed" cause="Cause([Fail(Error: Could not reach server at http://127.0.0.1:18134 (cause: ClientError: Transport (cause: TypeError: Unable to connect. Is the computer able to access the url?)))])" args="[\"api\",\"--server\",\"http://127.0.0.1:18134\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:24.333Z level=INFO run=ee7665c3 message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18134\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:24.460Z level=INFO run=521f1254 message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18134\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:23.776Z level=INFO run=7a8d4245 message="cli starting" version=2.0.15 channel=latest local=false args="[\"serve\",\"--port\",\"18134\",\"--print-logs\"]" role=cli
+timestamp=2026-09-24T16:27:23.876Z level=INFO run=7a8d4245 message="database schema bootstrap started" migrations=48 role=server
+timestamp=2026-09-24T16:27:23.884Z level=INFO run=7a8d4245 message="database schema bootstrap completed" migrations=48 durationMs=8 role=server
+timestamp=2026-09-24T16:27:24.383Z level=INFO run=7a8d4245 message="watcher subscribe" path=/tmp/home-helper-in-plugin/.config/opencode type=directory ignores=3 http.span=12 role=server
+timestamp=2026-09-24T16:27:24.385Z level=INFO run=7a8d4245 message="watcher subscribe" path=/ type=entries ignores=0 http.span=14 role=server
+timestamp=2026-09-24T16:27:24.385Z level=INFO run=7a8d4245 message="watcher started" path=/ type=entries backend=node ignores=0 http.span=14 role=server
+timestamp=2026-09-24T16:27:24.385Z level=INFO run=7a8d4245 message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=14 role=server
+timestamp=2026-09-24T16:27:24.386Z level=INFO run=7a8d4245 message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:24.386Z level=INFO run=7a8d4245 message="watcher subscribe" path=/tmp/home-helper-in-plugin type=entries ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:24.386Z level=INFO run=7a8d4245 message="watcher started" path=/tmp/home-helper-in-plugin type=entries backend=node ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:24.395Z level=INFO run=7a8d4245 message="watcher started" path=/tmp/home-helper-in-plugin/.config/opencode type=directory backend=inotify ignores=3 http.span=24 role=server
+timestamp=2026-09-24T16:27:24.406Z level=INFO run=7a8d4245 message="location services booted" directory=/tmp workspaceID=undefined durationMs=35 http.span=35 role=server
+timestamp=2026-09-24T16:27:24.410Z level=INFO run=7a8d4245 msg="loading plugin" id=/tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts entrypoint=file:///tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts http.span=39 role=server
+timestamp=2026-09-24T16:27:24.411Z level=INFO run=7a8d4245 message="watcher subscribe" path=/tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts type=file ignores=0 http.span=40 role=server
+timestamp=2026-09-24T16:27:24.412Z level=INFO run=7a8d4245 message="watcher started" path=/tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts type=file backend=node ignores=0 http.span=41 role=server
+timestamp=2026-09-24T16:27:24.412Z level=WARN run=7a8d4245 message="failed to load plugin" target=/tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts ref=err_bb1de5a1 cause="Cause([Fail(PluginModule.LoadError: Plugin must export a default definition with an id and an effect or setup function. (cause: SchemaError(Missing key\n  at [\"default\"])))])" http.span=41 role=server
+timestamp=2026-09-24T16:27:24.542Z level=INFO run=7a8d4245 message="watcher subscribe" path=/tmp/home-helper-in-plugin/.config/opencode/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:27:24.542Z level=INFO run=7a8d4245 message="watcher started" path=/tmp/home-helper-in-plugin/.config/opencode/AGENTS.md type=file backend=node ignores=0 http.span=171 role=server
+timestamp=2026-09-24T16:27:24.542Z level=INFO run=7a8d4245 message="watcher subscribe" path=/tmp/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:27:24.543Z level=INFO run=7a8d4245 message="watcher started" path=/tmp/AGENTS.md type=file backend=node ignores=0 http.span=172 role=server
+timestamp=2026-09-24T16:27:24.554Z level=INFO run=7a8d4245 message="watcher subscribe" path=/tmp/home-helper-in-plugin/.config/opencode/skill type=file ignores=0
+timestamp=2026-09-24T16:27:24.554Z level=INFO run=7a8d4245 message="watcher started" path=/tmp/home-helper-in-plugin/.config/opencode/skill type=file backend=node ignores=0 http.span=183 role=server
+timestamp=2026-09-24T16:27:24.556Z level=INFO run=7a8d4245 message="watcher subscribe" path=/tmp/home-helper-in-plugin/.config/opencode/skills type=file ignores=0
+timestamp=2026-09-24T16:27:24.556Z level=INFO run=7a8d4245 message="watcher started" path=/tmp/home-helper-in-plugin/.config/opencode/skills type=file backend=node ignores=0 http.span=185 role=server
+timestamp=2026-09-24T16:27:24.576Z level=INFO run=7a8d4245 message=event event.id=evt_0d43e402000119iLuCu7HA5lRY event.created=1790267244576 event.type=provider.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=205 role=server
+timestamp=2026-09-24T16:27:24.583Z level=INFO run=7a8d4245 message=event event.id=evt_0d43e4027001pXOa7UPvdOzXum event.created=1790267244583 event.type=model.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=212 role=server
+timestamp=2026-09-24T16:27:24.584Z level=INFO run=7a8d4245 message=event event.id=evt_0d43e4028001IeaKtf1XAQX5hu event.created=1790267244584 event.type=agent.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=213 role=server
+timestamp=2026-09-24T16:27:24.585Z level=INFO run=7a8d4245 message=event event.id=evt_0d43e40290015hARioHxXQREyv event.created=1790267244585 event.type=command.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=214 role=server
+timestamp=2026-09-24T16:27:29.400Z level=INFO run=7a8d4245 message=event event.id=evt_0d43e52f80015IJnmP51zgC6Np event.created=1790267249400 event.type=provider.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={}
+timestamp=2026-09-24T16:27:29.405Z level=INFO run=7a8d4245 message=event event.id=evt_0d43e52fd0015m73dx3TCuzzt8 event.created=1790267249405 event.type=model.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=5034 role=server
+timestamp=2026-09-24T16:27:30.563Z level=INFO run=7a8d4245 message="watcher stopped" path=/tmp/home-helper-in-plugin/.config/opencode/plugin/extless-helper.ts type=file http.span=6192 role=server
+timestamp=2026-09-24T16:27:30.567Z level=INFO run=7a8d4245 message="watcher stopped" path=/tmp/home-helper-in-plugin/.config/opencode/skill type=file http.span=6196 role=server
+timestamp=2026-09-24T16:27:30.567Z level=INFO run=7a8d4245 message="watcher stopped" path=/tmp/home-helper-in-plugin/.config/opencode/skills type=file http.span=6196 role=server
+timestamp=2026-09-24T16:27:30.569Z level=INFO run=7a8d4245 message="watcher stopped" path=/tmp/AGENTS.md type=file http.span=6198 role=server
+timestamp=2026-09-24T16:27:30.569Z level=INFO run=7a8d4245 message="watcher stopped" path=/tmp/home-helper-in-plugin/.config/opencode/AGENTS.md type=file http.span=6198 role=server
+timestamp=2026-09-24T16:27:30.575Z level=INFO run=7a8d4245 message="watcher stopped" path=/ type=entries http.span=6204 role=server
+timestamp=2026-09-24T16:27:30.575Z level=INFO run=7a8d4245 message="watcher stopped" path=/tmp type=entries http.span=6204 role=server
+timestamp=2026-09-24T16:27:30.575Z level=INFO run=7a8d4245 message="watcher stopped" path=/tmp/home-helper-in-plugin type=entries http.span=6204 role=server
+timestamp=2026-09-24T16:27:30.575Z level=INFO run=7a8d4245 message="watcher stopped" path=/tmp/home-helper-in-plugin/.config/opencode type=directory http.span=6204 role=server

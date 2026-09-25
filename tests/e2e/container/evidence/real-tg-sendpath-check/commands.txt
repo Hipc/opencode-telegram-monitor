@@ -1,0 +1,288 @@
+=== scenario: real-tg-recipe --run (serve-based, one Telegram notification attempt) ===
+=== exact command ===
+docker run --rm --name t05-real-tg-1917798 \
+  -v /tmp/t08-synthetic-otg:/host-otg:ro \
+  -v /tmp/t08-sendpath-evidence/real-tg-recipe:/plugin:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t08/tests/e2e/container/harness:/harness:ro \
+  -v /tmp/t08-sendpath-evidence/real-tg-recipe:/evidence \
+  -e T05_PLUGIN=/plugin/plugin-under-test.ts -e T05_PORT=26527 -e T05_PASSWORD=<redacted> \
+  -e T05_REAL_SMOKE_FULL=0 \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /harness/real-tg-recipe.sh'
+=== output follows ===
++ export HOME=/tmp/home
++ ROOT=/tmp/proj
++ mkdir -p /tmp/home/.config/opencode/plugin /tmp/home/.otg /tmp/proj
++ cd /tmp/proj
++ PLUGIN_SRC=/plugin/plugin-under-test.ts
++ cp /plugin/plugin-under-test.ts /tmp/home/.config/opencode/plugin/telegram-session-monitor.ts
++ touch /host-otg/t05-must-not-write
++ echo ok: /host-otg is read-only
+ok: /host-otg is read-only
++ ls -A /host-otg
++ [ -n poller.lock
+projects.json
+telegram.json
+tgdiag.log ]
++ cp -r /host-otg/. /tmp/home/.otg/
+ok: telegram.json copied (content not printed)
++ [ ! -f /tmp/home/.otg/telegram.json ]
++ echo ok: telegram.json copied (content not printed)
++ date -u +%Y-%m-%dT%H:%M:%S.000Z
++ printf {\n  "projects": [\n    {\n      "path": "%s",\n      "enabled": true,\n      "addedAt": "%s"\n    }\n  ]\n}\n /tmp/proj 2026-09-24T19:38:28.000Z
++ DIAG=/tmp/home/.otg/tgdiag.log
++ DIAG_BEFORE=0
++ [ -f /tmp/home/.otg/tgdiag.log ]
++ wc -l
++ DIAG_BEFORE=3
++ echo diag lines before this run: 3
++ SAFE=1
++ GUARD_PID=
++ [ 0 = 1 ]
+diag lines before this run: 3
++ date +%s%3N
++ printf {"pid":1,"host":"t05-host-guard","ownerId":"t05-host-guard","createdAt":%s} 1790278708289
++ touch /tmp/home/.otg/poller.lock
+mode: SAFE — poller lock guarded; lifecycle notifications only, no getUpdates
++ echo mode: SAFE — poller lock guarded; lifecycle notifications only, no getUpdates
++ GUARD_PID=17
++ PORT=26527
++ set +x
++ [ ! -e /tmp/t05-guard-stop ]
++ SPID=18
++ touch /tmp/home/.otg/poller.lock
++ API=opencode api --server http://127.0.0.1:26527
++ setsid opencode serve --hostname 127.0.0.1 --port 26527 --print-logs
++ seq 1 60
++ sleep 10
++ opencode api --server http://127.0.0.1:26527 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:26527 plugin.list
++ break
++ seq 1 60
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -q MODULE LOADED
++ sleep 0.5
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -q MODULE LOADED
++ break
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ + head -1
+sed -n s/^.*\[\([0-9][0-9]*\)\] MODULE LOADED.*$/\1/p
++ RUN_PID=18
++ echo run plugin pid: 18
++ SID=
++ [ -n 18 ]
+run plugin pid: 18
++ opencode api --server http://127.0.0.1:26527 session.create -d {"title":"real-tg-smoke"}
++ SES_OUT={"data":{"id":"ses_f2b12cebbffeiZSY6keQ9ow6dn","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790278709574,"updated":1790278709574},"title":"real-tg-smoke","location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f2b12cebbffeiZSY6keQ9ow6dn","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790278709574,"updated":1790278709574},"title":"real-tg-smoke","location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f2b12cebbffeiZSY6keQ9ow6dn","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790278709574,"updated":1790278709574},"title":"real-tg-smoke","location":{"directory":"/tmp/proj"}}}
++ grep -o "id":"ses_[^"]*"
++ head -1
++ cut -d" -f4
++ SID=ses_f2b12cebbffeiZSY6keQ9ow6dn
++ echo SID=ses_f2b12cebbffeiZSY6keQ9ow6dn
+SID=ses_f2b12cebbffeiZSY6keQ9ow6dn
++ echo ses_f2b12cebbffeiZSY6keQ9ow6dn
++ sed s/^ses_//
++ cut -c1-8
++ SHORT=f2b12ceb
++ [ -n ses_f2b12cebbffeiZSY6keQ9ow6dn ]
++ timeout 120 opencode api --server http://127.0.0.1:26527 session.prompt --param sessionID=ses_f2b12cebbffeiZSY6keQ9ow6dn -d {"text":"Reply with exactly: tg-smoke-ok"}
+prompt_exit=0
++ echo prompt_exit=0
++ TERMINAL_AT=
++ seq 1 240
++ run_lines
++ [ -n 18 ]
++ grep+  -q step ended session=f2b12ceb
+run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
++ sleep 1
++ run_lines
++ [ -n 18 ]
++ grep -q step ended session=f2b12ceb
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
++ sleep 1
++ run_lines
++ [ -n 18 ]
++ grep -q step ended session=f2b12ceb
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
++ sleep 1
++ run_lines
++ [ -n 18 ]
++ grep -q step ended session=f2b12ceb
++ run_block
++ + sed -n 4,$p /tmp/home/.otg/tgdiag.log
+grep -F [18]
++ sleep 1
++ run_lines
++ [ -n 18 ]
++ grep -q step ended session=f2b12ceb
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
++ date +%s
++ TERMINAL_AT=1790278713
++ break
++ [ -z 1790278713 ]
++ date +%s
++ [ 0 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 1 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 2 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 3 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 4 -lt 15 ]
++ sleep 1
++ [ ! -e /tmp/t05-guard-stop ]
++ touch /tmp/home/.otg/poller.lock
++ sleep 10
++ date +%s
++ [ 5 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 6 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 7 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 8 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 9 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 10 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 11 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 12 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 13 -lt 15 ]
++ sleep 1
++ date +%s
++ [ 14 -lt 15 ]
++ sleep 1
++ [ ! -e /tmp/t05-guard-stop ]
++ touch /tmp/home/.otg/poller.lock
++ sleep 10
++ date +%s
++ [ 15 -lt 15 ]
++ date +%s
+held server alive 15s after turn completion
++ echo held server alive 15s after turn completion
++ seq 1 30
++ run_lines
++ [ -n 18 ]
++ grep -qE requestViaProxy\[sendRichMessage\]|Telegram message send failed
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
++ break
++ [ 1 = 1 ]
++ touch /tmp/t05-guard-stop
++ kill 17
++ kill -TERM -18
++ wait 18
++ true
++ seq 1 20
++ curl -s -o /dev/null --max-time 1 http://127.0.0.1:26527/
++ break
++ curl -s -o /dev/null --max-time 1 http://127.0.0.1:26527/
++ leftovers=
++ [ -r /proc/1/cmdline ]
++ tr \0  
++ cmd=sh -c sh /harness/real-tg-recipe.sh 
++ [ -r /proc/172/cmdline ]
++ tr \0  
++ cmd=sleep 10 
++ [ -r /proc/7/cmdline ]
++ tr \0  
++ cmd=sh /harness/real-tg-recipe.sh 
++ [ -n  ]
++ echo ok: serve stopped, port 26527 released, no leftover opencode serve process
++ SERVER_STOPPED=1
++ cp /tmp/home/.otg/tgdiag.log /evidence/tgdiag-real-smoke.txt
+ok: serve stopped, port 26527 released, no leftover opencode serve process
++ cp /tmp/home/.local/share/opencode/log/opencode.log /evidence/server-log.txt
++ cp /tmp/home/.otg/projects.json /evidence/projects-after-smoke.json
++ grep -v server password /tmp/t05-serve.log
++ echo --- this run's diag block (pid=18) ---
+--- this run's diag block (pid=18) ---
++ run_lines
++ [ -n 18 ]
++ grep -E MODULE LOADED|initialize\(\) called|runTelegram|poller lock|bootstrap|inbox enqueued|step ended|requestViaProxy\[sendRichMessage\]|Telegram message send failed|Telegram rejected
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
+2026-09-24T19:38:29.017Z [18] MODULE LOADED
+2026-09-24T19:38:29.157Z [18] initialize() called
+2026-09-24T19:38:29.157Z [18] runTelegram() started
+2026-09-24T19:38:29.159Z [18] poller lock held elsewhere; scheduling retry
+2026-09-24T19:38:29.649Z [18] inbox enqueued session=f2b12ceb inbox=msg_0d4e type=user delivery=steer
+2026-09-24T19:38:33.269Z [18] step ended session=f2b12ceb finish=stop
+2026-09-24T19:38:38.271Z [18] requestViaProxy[sendRichMessage] start
+2026-09-24T19:38:38.273Z [18] requestViaProxy[sendRichMessage] tunnel ok
+2026-09-24T19:38:40.536Z [18] requestViaProxy[sendRichMessage] tls ok
+2026-09-24T19:38:40.537Z [18] requestViaProxy[sendRichMessage] http written, waiting for response
+2026-09-24T19:38:40.805Z [18] requestViaProxy[sendRichMessage] http header (405 bytes): HTTP/1.1 401 Unauthorized
+2026-09-24T19:38:40.805Z [18] requestViaProxy[sendRichMessage] http done status=401 bodyLen=58
+2026-09-24T19:38:40.805Z [18] [error] Telegram message send failed {"error":"TelegramApiError(401)"}
++ [ -z 18 ]
++ run_lines
++ [ -n 18 ]
++ grep -q requestViaProxy\[sendRichMessage\] http done status=200
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
++ run_lines
++ [ -n 18 ]
++ grep -q Telegram message send failed
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
++ run_lines
++ [ -n 18 ]
++ grep -qE TelegramApiError\(401\)|http done status=401
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
++ RESULT_LINE=RESULT: FAIL send attempt reached Telegram but was rejected (401); expected only with synthetic/invalid credentials
++ EXIT_CODE=1
++ [ 1 = 1 ]
++ run_lines
++ [ -n 18 ]
++ grep -q getUpdates
++ run_block
++ sed -n 4,$p /tmp/home/.otg/tgdiag.log
++ grep -F [18]
+--- evidence ---
++ [ 1 = 0 ]
++ echo --- evidence ---
++ wc -l /tmp/home/.otg/tgdiag.log /evidence/tgdiag-real-smoke.txt /evidence/serve-stdout.txt
+   19 /tmp/home/.otg/tgdiag.log
+   19 /evidence/tgdiag-real-smoke.txt
+   42 /evidence/serve-stdout.txt
+   80 total
++ echo RESULT: FAIL send attempt reached Telegram but was rejected (401); expected only with synthetic/invalid credentials
++ exit 1
+RESULT: FAIL send attempt reached Telegram but was rejected (401); expected only with synthetic/invalid credentials

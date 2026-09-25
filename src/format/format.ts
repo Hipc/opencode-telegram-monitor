@@ -1,5 +1,4 @@
 import { basename } from "node:path";
-import type { QuestionV2Info, Session, Todo } from "@opencode-ai/sdk";
 
 import {
   ICON_CANCELLED,
@@ -11,7 +10,6 @@ import {
   ICON_QUESTION,
   ICON_RETRYING,
   ICON_RUNNING,
-  ICON_TODO,
   ICON_USAGE,
   ICON_WAITING,
   MENU_MAX_PROJECTS,
@@ -20,16 +18,17 @@ import {
 import { entryToken, type ProjectRegistry } from "../registry";
 import type {
   ErrorSummary,
+  QuestionV2Info,
   SessionDisplayState,
   SessionOutcome,
   SessionProjection,
   TelegramInlineButton,
   TelegramInlineKeyboard,
   TokenTotals,
-  TodoCounts,
   TokensSummary,
   WaitingType,
 } from "../types";
+import type { V2SessionInfo } from "../v2/types";
 import { safeText, safeTextKeepPaths, type RedactionContext } from "./redact";
 import {
   escapeHtml,
@@ -42,7 +41,7 @@ import {
 export type FormatContext = RedactionContext & {
   projectLabel: string;
   sessions: Map<string, SessionProjection>;
-  sessionInfo: Map<string, Session>;
+  sessionInfo: Map<string, V2SessionInfo>;
 };
 
 export function formatNumber(value: number): string {
@@ -119,21 +118,6 @@ export function limitMessage(text: string): string {
     if (opens > closes) truncated += closeTag.repeat(opens - closes);
   }
   return truncated;
-}
-
-export function todoCounts(todos: Todo[]): TodoCounts {
-  return {
-    inProgress: todos.filter((todo) => todo.status === "in_progress").length,
-    pending: todos.filter((todo) => todo.status === "pending").length,
-    completed: todos.filter((todo) => todo.status === "completed").length,
-    cancelled: todos.filter((todo) => todo.status === "cancelled").length,
-    total: todos.length,
-  };
-}
-
-export function todoSummary(counts: TodoCounts): string {
-  if (counts.total === 0) return "none reported";
-  return `${counts.completed}/${counts.total} completed, ${counts.inProgress} in progress, ${counts.pending} pending, ${counts.cancelled} cancelled`;
 }
 
 export function totalTokens(tokens: TokenTotals): number {
@@ -216,7 +200,7 @@ export function iconForWaitingType(type: WaitingType): string {
 export function childSessions(
   parentID: string,
   sessions: Map<string, SessionProjection>,
-  sessionInfo: Map<string, Session>,
+  sessionInfo: Map<string, V2SessionInfo>,
 ): SessionProjection[] {
   return [...sessions.values()].filter((candidate) => {
     let current = candidate.info?.parentID;
@@ -578,7 +562,6 @@ export function helpText(): string {
     "/sessions - List active sessions",
     "/use <short-id> - Select a session",
     "/status - Show selected session status",
-    "/todo - Show selected session todos",
     "/usage - Show selected session token usage and cost",
   ];
   const listItems = commands
@@ -592,7 +575,7 @@ export function helpText(): string {
     `<ul>${listItems}</ul>`,
     "<p>Planned (not available yet):</p>",
     `<ul>${plannedItems}</ul>`,
-    "<p>Read-only by default: since 2026-09-02 permission prompts can be answered with inline buttons (Allow once / Allow always / Deny) — only when you explicitly tap one. Questions and everything else are always handled in OpenCode.</p>",
+    "<p>Read-only by default: permission prompts render inline buttons (Allow once / Allow always / Deny) and questions render an answer wizard — both write back to OpenCode only when you explicitly tap or submit something in Telegram.</p>",
   ].join("\n");
 }
 
@@ -603,7 +586,6 @@ export function formatStatus(
   const currentTool = [...session.toolsByCallID.values()]
     .filter((tool) => tool.state === "pending" || tool.state === "running")
     .sort((left, right) => right.updatedAt - left.updatedAt)[0];
-  const todo = todoCounts(session.todos);
   const rows = [
     fieldRow("Session", sessionLabel(session, ctx)),
   ];
@@ -616,7 +598,6 @@ export function formatStatus(
     if (currentTool.progress)
       rows.push(fieldRow("Progress", currentTool.progress));
   }
-  rows.push(fieldRow("Todo", todoSummary(todo)));
   if (session.turnStartedAt && session.status !== "idle") {
     rows.push(
       fieldRow(
@@ -667,7 +648,6 @@ export function formatTerminalNotification(
   error: ErrorSummary | undefined,
   ctx: FormatContext,
 ): string {
-  const todo = todoCounts(session.todos);
   const rows = [
     fieldRow("Session", sessionLabel(session, ctx)),
   ];
@@ -687,8 +667,6 @@ export function formatTerminalNotification(
       ),
     );
   }
-  rows.push(fieldRow("Todo", todoSummary(todo)));
-
   const children = childSessions(
     session.sessionID,
     ctx.sessions,
@@ -732,59 +710,6 @@ export function formatTerminalNotification(
       fieldTable(rows),
     ].join("\n"),
   );
-}
-
-export function formatTodos(
-  session: SessionProjection,
-  ctx: FormatContext,
-): string {
-  const groups = [
-    "in_progress",
-    "pending",
-    "completed",
-    "cancelled",
-  ] as const;
-  const labels: Record<(typeof groups)[number], string> = {
-    in_progress: "IN PROGRESS",
-    pending: "PENDING",
-    completed: "COMPLETED",
-    cancelled: "CANCELLED",
-  };
-  const table = fieldTable([
-    fieldRow("Session", sessionLabel(session, ctx)),
-  ]);
-  const title = titleLine(ICON_TODO, ctx.projectLabel);
-
-  if (session.todos.length === 0) {
-    return limitMessage(
-      [title, table, paragraph("No todos reported.")].join("\n"),
-    );
-  }
-
-  const parts = [title, table];
-  let shown = 0;
-  for (const group of groups) {
-    const todos = session.todos.filter((todo) => todo.status === group);
-    if (todos.length === 0) continue;
-    parts.push(paragraph(labels[group]));
-    const items: string[] = [];
-    for (const todo of todos) {
-      const line = `- ${escapeHtml(safeText(todo.content, 180, ctx))}`;
-      if (
-        parts.join("\n").length + items.join("\n").length + line.length >
-        TELEGRAM_MESSAGE_LIMIT - 100
-      )
-        break;
-      items.push(`<li>${escapeHtml(safeText(todo.content, 180, ctx))}</li>`);
-      shown += 1;
-    }
-    if (items.length > 0) parts.push(`<ul>${items.join("")}</ul>`);
-  }
-
-  if (shown < session.todos.length) {
-    parts.push(paragraph(`... and ${session.todos.length - shown} more items`));
-  }
-  return limitMessage(parts.join("\n"));
 }
 
 export function formatUsage(

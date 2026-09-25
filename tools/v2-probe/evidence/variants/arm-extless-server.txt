@@ -1,0 +1,46 @@
+timestamp=2026-09-24T16:27:15.935Z level=INFO run=e8bf89d1 message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18133\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:15.940Z level=ERROR run=e8bf89d1 message="cli process failed" cause="Cause([Fail(Error: Could not reach server at http://127.0.0.1:18133 (cause: ClientError: Transport (cause: TypeError: Unable to connect. Is the computer able to access the url?)))])" args="[\"api\",\"--server\",\"http://127.0.0.1:18133\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:16.492Z level=INFO run=dbec947f message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18133\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:16.624Z level=INFO run=aaa2db05 message="cli starting" version=2.0.15 channel=latest local=false args="[\"api\",\"--server\",\"http://127.0.0.1:18133\",\"plugin.list\"]" role=cli
+timestamp=2026-09-24T16:27:15.934Z level=INFO run=380cbf35 message="cli starting" version=2.0.15 channel=latest local=false args="[\"serve\",\"--port\",\"18133\",\"--print-logs\"]" role=cli
+timestamp=2026-09-24T16:27:16.044Z level=INFO run=380cbf35 message="database schema bootstrap started" migrations=48 role=server
+timestamp=2026-09-24T16:27:16.052Z level=INFO run=380cbf35 message="database schema bootstrap completed" migrations=48 durationMs=8 role=server
+timestamp=2026-09-24T16:27:16.542Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp/home-extless/.config/opencode type=directory ignores=3 http.span=12 role=server
+timestamp=2026-09-24T16:27:16.545Z level=INFO run=380cbf35 message="watcher subscribe" path=/ type=entries ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:16.545Z level=INFO run=380cbf35 message="watcher started" path=/ type=entries backend=node ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:16.545Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=15 role=server
+timestamp=2026-09-24T16:27:16.546Z level=INFO run=380cbf35 message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=16 role=server
+timestamp=2026-09-24T16:27:16.546Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp/home-extless type=entries ignores=0 http.span=16 role=server
+timestamp=2026-09-24T16:27:16.546Z level=INFO run=380cbf35 message="watcher started" path=/tmp/home-extless type=entries backend=node ignores=0 http.span=16 role=server
+timestamp=2026-09-24T16:27:16.564Z level=INFO run=380cbf35 message="watcher started" path=/tmp/home-extless/.config/opencode type=directory backend=inotify ignores=3 http.span=34 role=server
+timestamp=2026-09-24T16:27:16.569Z level=INFO run=380cbf35 message="location services booted" directory=/tmp workspaceID=undefined durationMs=39 http.span=39 role=server
+timestamp=2026-09-24T16:27:16.574Z level=INFO run=380cbf35 msg="loading plugin" id=/tmp/home-extless/.config/opencode/plugin/probe-extless.ts entrypoint=file:///tmp/home-extless/.config/opencode/plugin/probe-extless.ts http.span=44 role=server
+timestamp=2026-09-24T16:27:16.576Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp/home-extless/.config/opencode/plugin/probe-extless.ts type=file ignores=0 http.span=46 role=server
+timestamp=2026-09-24T16:27:16.577Z level=INFO run=380cbf35 message="watcher started" path=/tmp/home-extless/.config/opencode/plugin/probe-extless.ts type=file backend=node ignores=0 http.span=47 role=server
+timestamp=2026-09-24T16:27:16.577Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp/home-extless/.config/opencode/probe-lib/log.ts type=file ignores=0 http.span=47 role=server
+timestamp=2026-09-24T16:27:16.577Z level=INFO run=380cbf35 message="watcher started" path=/tmp/home-extless/.config/opencode/probe-lib/log.ts type=file backend=node ignores=0 http.span=47 role=server
+timestamp=2026-09-24T16:27:16.577Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp/home-extless/.config/opencode/extless-helper.ts type=file ignores=0 http.span=47 role=server
+timestamp=2026-09-24T16:27:16.578Z level=INFO run=380cbf35 message="watcher started" path=/tmp/home-extless/.config/opencode/extless-helper.ts type=file backend=node ignores=0 http.span=48 role=server
+timestamp=2026-09-24T16:27:16.711Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp/home-extless/.config/opencode/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:27:16.711Z level=INFO run=380cbf35 message="watcher started" path=/tmp/home-extless/.config/opencode/AGENTS.md type=file backend=node ignores=0 http.span=181 role=server
+timestamp=2026-09-24T16:27:16.711Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp/AGENTS.md type=file ignores=0
+timestamp=2026-09-24T16:27:16.712Z level=INFO run=380cbf35 message="watcher started" path=/tmp/AGENTS.md type=file backend=node ignores=0 http.span=182 role=server
+timestamp=2026-09-24T16:27:16.721Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp/home-extless/.config/opencode/skill type=file ignores=0
+timestamp=2026-09-24T16:27:16.722Z level=INFO run=380cbf35 message="watcher started" path=/tmp/home-extless/.config/opencode/skill type=file backend=node ignores=0 http.span=192 role=server
+timestamp=2026-09-24T16:27:16.723Z level=INFO run=380cbf35 message="watcher subscribe" path=/tmp/home-extless/.config/opencode/skills type=file ignores=0
+timestamp=2026-09-24T16:27:16.723Z level=INFO run=380cbf35 message="watcher started" path=/tmp/home-extless/.config/opencode/skills type=file backend=node ignores=0 http.span=193 role=server
+timestamp=2026-09-24T16:27:16.744Z level=INFO run=380cbf35 message=event event.id=evt_0d43e2188001ae1J01PppJstR9 event.created=1790267236744 event.type=provider.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=214 role=server
+timestamp=2026-09-24T16:27:16.749Z level=INFO run=380cbf35 message=event event.id=evt_0d43e218d001IMJv4IfauLjkY1 event.created=1790267236749 event.type=model.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=219 role=server
+timestamp=2026-09-24T16:27:16.751Z level=INFO run=380cbf35 message=event event.id=evt_0d43e218e001cBBHUdldP4tsPw event.created=1790267236751 event.type=agent.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=221 role=server
+timestamp=2026-09-24T16:27:16.751Z level=INFO run=380cbf35 message=event event.id=evt_0d43e218f001zf8gcwdx8YMlIW event.created=1790267236751 event.type=command.updated event.location.directory=/tmp event.location.workspaceID=undefined event.data={} http.span=221 role=server
+timestamp=2026-09-24T16:27:22.736Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp/home-extless/.config/opencode/extless-helper.ts type=file http.span=6206 role=server
+timestamp=2026-09-24T16:27:22.737Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp/home-extless/.config/opencode/probe-lib/log.ts type=file http.span=6207 role=server
+timestamp=2026-09-24T16:27:22.737Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp/home-extless/.config/opencode/plugin/probe-extless.ts type=file http.span=6207 role=server
+timestamp=2026-09-24T16:27:22.739Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp/home-extless/.config/opencode/skill type=file http.span=6209 role=server
+timestamp=2026-09-24T16:27:22.739Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp/home-extless/.config/opencode/skills type=file http.span=6209 role=server
+timestamp=2026-09-24T16:27:22.741Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp/AGENTS.md type=file http.span=6211 role=server
+timestamp=2026-09-24T16:27:22.741Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp/home-extless/.config/opencode/AGENTS.md type=file http.span=6211 role=server
+timestamp=2026-09-24T16:27:22.748Z level=INFO run=380cbf35 message="watcher stopped" path=/ type=entries http.span=6218 role=server
+timestamp=2026-09-24T16:27:22.749Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp type=entries http.span=6219 role=server
+timestamp=2026-09-24T16:27:22.749Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp/home-extless type=entries http.span=6219 role=server
+timestamp=2026-09-24T16:27:22.749Z level=INFO run=380cbf35 message="watcher stopped" path=/tmp/home-extless/.config/opencode type=directory http.span=6219 role=server

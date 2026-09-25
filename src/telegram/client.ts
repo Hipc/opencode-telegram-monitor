@@ -15,6 +15,12 @@ import { TelegramApiError } from "./api-error";
 
 export type TransportContext = { config: TelegramConfig; signal: AbortSignal };
 
+/**
+ * Telegram 发送统一重试入口：网络错误、5xx、429（按 retry_after）重试，
+ * 上限 TELEGRAM_SEND_ATTEMPTS；401（认证失败）与 400（Bad Request，例如
+ * answerCallbackQuery 的 "query is too old" —— 重试必然同样失败）是永久错误，
+ * 立即抛出，避免把单次点击放大成多次 API 调用。
+ */
 export async function telegramWithRetry<T>(
   method: string,
   body: Record<string, unknown>,
@@ -34,7 +40,10 @@ export async function telegramWithRetry<T>(
     } catch (error) {
       if (ctx.signal.aborted) throw error;
       lastError = error;
-      if (error instanceof TelegramApiError && error.errorCode === 401)
+      if (
+        error instanceof TelegramApiError &&
+        (error.errorCode === 401 || error.errorCode === 400)
+      )
         throw error;
       if (attempt === TELEGRAM_SEND_ATTEMPTS) break;
       const retryAfter =

@@ -22,6 +22,9 @@ export type RegistryEntry = {
 // 等待状态落盘记录（契约 docs/modules/sessions-relay.md §2 冻结；Round 2 扩展
 // §13.1；Round 4 扩展 §14.1.1；Round 6 §16 起 resolved 不再由回写置位——
 // 终态 = 删除记录（removeSessionRecord），resolved 字段仅历史数据/解析兼容）。
+// t13 扩展 §14.4：host_pid = 创建该记录的进程 pid（收到 asked 事件的宿主，
+// t13-probe P1 证明只有宿主进程收到 session 事件）；回写消费端据此判定归属，
+// 缺失 = 旧版本记录（过渡期走 session.get 归属门）。
 // message 为完整事件 payload 的 JSON 字符串；send 为 poller 发送置位；
 // reply 为可选字段：null/缺失 = 未回复；三值 = 用户选定回复（透传不映射）。
 // q_* 为 question 向导可选字段（§14.1.1）：写入端初始不设置任何 q_* 键；
@@ -35,6 +38,7 @@ export type SessionRecord = {
   resolved: boolean; // 初始 false；replied/rejected 置 true；终态（不再改回）
   request_id: string; // 内部匹配键：asked 事件 properties.id；replied 匹配键
   created_at: string; // ISO 8601 字符串（new Date().toISOString()），本轮仅预留不消费
+  host_pid?: number; // t13：创建记录（=宿主该 session）的进程 pid；旧版本记录缺失
   reply?: "once" | "always" | "reject" | null; // Round 2：null/缺失=未回复；三值=用户选定回复（透传不映射）
   q_draft?: Array<Array<string>>; // 向导草稿：长度=questions 数；每题=已选 label 数组；未答=空数组
   q_stage?: number; // 向导当前题索引 0-based；=questions.length 表示总结阶段
@@ -111,12 +115,14 @@ function isStringMatrix(value: unknown): value is Array<Array<string>> {
 
 /**
  * 严格校验单条 SessionRecord（契约 sessions-relay.md §3.2，Round 2 扩展 §13.1，
- * Round 4 扩展 §14.1.2）：
+ * Round 4 扩展 §14.1.2，t13 扩展 §14.4 host_pid）：
  * 8 基础字段类型必须正确，不允许从默认值推断（如把非 boolean 的 send 按
  * truthy 处理）；任一字段不符 → undefined（调用方丢弃该记录，不抛错、不影响
  * 其它记录）。可选 reply 字段四态：键缺失 → 构造记录不含该键（serialize 自动
  * 省略，旧文件往返不新增键）；显式 null → null；三合法值 → 原样保留；其它
  * 任何值 → 丢弃整条记录（严格白名单风格，不抛错）。
+ * 可选 host_pid（t13）：键缺失 → 不含该键（旧版本记录 = 过渡期 session.get
+ * 归属门）；正整数 → 原样保留；其它 → 丢弃整条记录。
  * q_* 6 字段（§14.1.2）：键缺失 → 构造记录不含该键；q_input 显式 null → null；
  * 合法值 → 原样保留；其它任何值 → 丢弃整条记录。q_stage 只做 typeof number
  * （不校验范围/整数性——由回调状态重建处钳制）。
@@ -149,6 +155,18 @@ function parseSessionRecord(value: unknown): SessionRecord | undefined {
       reply = rec.reply;
     } else {
       return undefined; // 非法 reply 值：丢弃整条记录，不抛错、不影响其它记录
+    }
+  }
+  let host_pid: number | undefined;
+  if ("host_pid" in rec) {
+    if (
+      typeof rec.host_pid === "number" &&
+      Number.isInteger(rec.host_pid) &&
+      rec.host_pid > 0
+    ) {
+      host_pid = rec.host_pid;
+    } else {
+      return undefined; // 非法 host_pid：丢弃整条记录（严格白名单，同其它可选字段）
     }
   }
   let q_draft: Array<Array<string>> | undefined;
@@ -192,6 +210,7 @@ function parseSessionRecord(value: unknown): SessionRecord | undefined {
     request_id: rec.request_id,
     created_at: rec.created_at,
   };
+  if (host_pid !== undefined) record.host_pid = host_pid;
   if (reply !== undefined) record.reply = reply;
   if (q_draft !== undefined) record.q_draft = q_draft;
   if (q_stage !== undefined) record.q_stage = q_stage;
@@ -285,18 +304,33 @@ export function deleteProjectByPath(
 }
 
 /**
- * 追加一条 SessionRecord 到指定路径条目（决策 #3：追加不覆盖、不去重）。
+ * 追加一条 SessionRecord 到指定路径条目（决策 #3：追加不覆盖）。
+ * **同 request_id 幂等**（t09-dupe-fix supersede §4.1「纯函数不去重」条款）：
+ * 多个 monitor 共享同一注册表时（同进程多次插件加载 / 多进程），每个实例都会
+ * 为同一等待请求 append——重复副本会让 poller 每轮重复发送同一请求（实机事故：
+ * 同 request_id 连续重复推送）。同一 request_id 在注册表**任意条目**已存在 →
+ * 返回原 registry 引用（不追加、不写盘）；不同 request_id 仍追加不覆盖
+ * （多个并发等待各自成条，互不影响）。
  * 按 normalizeRegistryPath(rootPath) 匹配条目（复用 findRegistryEntry 语义）；
  * 条目不存在 → 返回原 registry 引用（幂等：mutate 的 next === registry 短路
  * 不写盘；调用方已先 registerProject，路径不存在是防御性兜底）。
  * 返回的 registry 必须是新对象引用（mutate 依赖引用比较做幂等短路）。
- * 契约 docs/modules/sessions-relay.md §4.1（冻结）。
+ * 契约 docs/modules/sessions-relay.md §4.1（同 request_id 去重条款由
+ * t09-dupe-fix 修订，待文档回写）。
  */
 export function appendSessionRecord(
   registry: ProjectRegistry,
   rootPath: string,
   record: SessionRecord,
 ): ProjectRegistry {
+  // 全局 request_id 去重：任意条目已有同 id 副本 → 原引用（多实例重复写入
+  // 同一等待请求的幂等收敛）。请求 ID 按契约全局唯一，故跨条目检查。
+  for (const entry of registry.projects) {
+    const sessions = entry.sessions;
+    if (!sessions) continue;
+    if (sessions.some((existing) => existing.request_id === record.request_id))
+      return registry;
+  }
   const normalized = normalizeRegistryPath(rootPath);
   const index = registry.projects.findIndex(
     (entry) => normalizeRegistryPath(entry.path) === normalized,
@@ -397,11 +431,16 @@ export function removeExpiredSessionRecords(
 }
 
 /**
- * 按 request_id 全局精确标记 send=true（poller 发送成功后置位）。无匹配 →
- * undefined；已置位 → 原引用；resolved 保持不动（poller 只置 send）。
- * 契约 docs/modules/sessions-relay.md §4.2（冻结）；Round 6（§16）起仅存
- * send 一个置位方向（resolved 终态已由删除语义取代，markSessionResolved
- * 移除）。
+ * 按 request_id 全局标记 send=true（poller 发送成功后置位）。**全部同
+ * request_id 副本一起置位**（t09-dupe-fix supersede §4.2「找第一条」条款）：
+ * 跨进程竞态遗留的多份副本若只标第一条，其余副本仍 send=false → 每轮扫描
+ * 重复发送同一请求（实机事故根因）；一次全标实现单轮自愈。
+ * 三态：无匹配 → undefined；匹配且全部已 true → 原引用（幂等，不写盘）；
+ * 否则新 registry，仅把匹配副本的 send 置 true，resolved 及其它字段不动
+ * （poller 只置 send）。契约 docs/modules/sessions-relay.md §4.2（同
+ * request_id 多副本置位条款由 t09-dupe-fix 修订，待文档回写）；Round 6
+ * （§16）起仅存 send 一个置位方向（resolved 终态已由删除语义取代，
+ * markSessionResolved 移除）。
  */
 export function markSessionSent(
   registry: ProjectRegistry,
@@ -597,31 +636,34 @@ export function clearQuestionInputs(
 /**
  * 私有实现（supersede §4.2 的 markSessionFlag）：Round 6 起仅服务 send 置位，
  * 不再需要 resolved 分支（resolved 终态已由删除语义取代，见 §16）。
- * 全局 request_id 精确匹配（跨全部条目找第一条）；无匹配 → undefined；已
- * 置位 → 原引用（幂等）；否则新 registry 仅改 send=true（resolved 不动）。
+ * t09-dupe-fix：全局 request_id 匹配**全部副本**一次置位（见 markSessionSent
+ * 注释）——已 true 的副本原样保留（引用不变），只重建含变更副本的条目。
+ * 无匹配 → undefined；匹配但全部已 true → 原引用（幂等）；否则新 registry
+ * 仅改 send=true（resolved 及其它字段不动）。
  */
 function markSessionFlag(
   registry: ProjectRegistry,
   requestID: string,
 ): ProjectRegistry | undefined {
-  for (let i = 0; i < registry.projects.length; i++) {
-    const entry = registry.projects[i]!;
+  let matched = false;
+  let changed = false;
+  const projects = registry.projects.map((entry) => {
     const sessions = entry.sessions;
-    if (!sessions) continue;
-    for (let j = 0; j < sessions.length; j++) {
-      if (sessions[j]!.request_id !== requestID) continue;
-      if (sessions[j]!.send === true) return registry; // 已置位：幂等，原引用
-      const projects = registry.projects.slice();
-      projects[i] = {
-        ...entry,
-        sessions: sessions.map((record, k) =>
-          k !== j ? record : { ...record, send: true },
-        ),
-      };
-      return { projects };
-    }
-  }
-  return undefined; // 无匹配：无可标记记录，静默跳过写盘
+    if (!sessions) return entry;
+    let entryChanged = false;
+    const nextSessions = sessions.map((record) => {
+      if (record.request_id !== requestID) return record;
+      matched = true;
+      if (record.send === true) return record; // 已置位副本：原引用保留
+      entryChanged = true;
+      return { ...record, send: true };
+    });
+    if (!entryChanged) return entry;
+    changed = true;
+    return { ...entry, sessions: nextSessions };
+  });
+  if (!matched) return undefined; // 无匹配：无可标记记录，静默跳过写盘
+  return changed ? { projects } : registry; // 全已置位：幂等，原引用
 }
 
 // 跨进程写锁参数（契约 docs/modules/projects-registry.md §4.1）：

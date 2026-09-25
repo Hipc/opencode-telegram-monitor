@@ -1,0 +1,6 @@
+"/api/session/{sessionID}/form"
+"/api/session/{sessionID}/form/{formID}"
+"/api/session/{sessionID}/form/{formID}/reply"
+"/api/session/{sessionID}/permission"
+"/api/session/{sessionID}/permission/{requestID}"
+"/api/session/{sessionID}/permission/{requestID}/reply"

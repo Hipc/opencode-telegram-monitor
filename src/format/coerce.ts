@@ -1,6 +1,5 @@
 import { MAX_EVENT_IDS } from "../constants";
 import type { ErrorSummary } from "../types";
-import type { SessionStatus } from "@opencode-ai/sdk";
 import { TelegramApiError } from "../telegram/api-error";
 import { safeText, type RedactionContext } from "./redact";
 
@@ -25,26 +24,6 @@ export function rememberBounded(set: Set<string>, value: string): void {
   if (set.size <= MAX_EVENT_IDS) return;
   const oldest = set.values().next().value;
   if (oldest) set.delete(oldest);
-}
-
-export function status(
-  value: unknown,
-  ctx: RedactionContext,
-): SessionStatus | undefined {
-  const status = record(value);
-  const type = string(status?.type);
-  if (type === "idle" || type === "busy") return { type };
-  if (type !== "retry") return undefined;
-  return {
-    type: "retry",
-    attempt: number(status?.attempt) ?? 1,
-    message: safeText(
-      string(status?.message) ?? "Provider retry",
-      120,
-      ctx,
-    ),
-    next: number(status?.next) ?? Date.now(),
-  };
 }
 
 export function summarizeError(

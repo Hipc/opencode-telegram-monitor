@@ -1,0 +1,1 @@
+opencode serve --service --print-logs 

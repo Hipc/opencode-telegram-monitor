@@ -1,0 +1,21 @@
+{
+  "projects": [
+    {
+      "path": "/tmp/home",
+      "enabled": false,
+      "addedAt": "2026-09-25T14:19:31.637Z",
+      "sessions": [
+        {
+          "session_id": "ses_f271076aaffeGPeYlual6LXqGm",
+          "session_name": "t10-cross",
+          "type": "question",
+          "message": "{\"form\":{\"id\":\"frm_0d8ef899d001Ri2NU6nlZHpDPA\",\"sessionID\":\"ses_f271076aaffeGPeYlual6LXqGm\",\"title\":\"t10-cross question\",\"fields\":[{\"key\":\"choice\",\"title\":\"Pick\",\"type\":\"string\",\"options\":[{\"value\":\"a\",\"label\":\"A\"},{\"value\":\"b\",\"label\":\"B\"}],\"custom\":true}]}}",
+          "send": false,
+          "resolved": false,
+          "request_id": "frm_0d8ef899d001Ri2NU6nlZHpDPA",
+          "created_at": "2026-09-25T14:19:32.127Z"
+        }
+      ]
+    }
+  ]
+}

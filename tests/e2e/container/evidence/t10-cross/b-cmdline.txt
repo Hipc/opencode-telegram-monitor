@@ -1,0 +1,1 @@
+opencode serve --port 20000 --print-logs 

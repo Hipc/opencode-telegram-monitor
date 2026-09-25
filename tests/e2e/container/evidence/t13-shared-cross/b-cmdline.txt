@@ -1,0 +1,1 @@
+opencode serve --hostname 127.0.0.1 --port 20000 --print-logs 

@@ -1,0 +1,22 @@
+2026-09-25T18:47:33.469Z [11] MODULE LOADED
+2026-09-25T18:47:33.608Z [11] setup() pid=11 root=/tmp/home
+2026-09-25T18:47:33.611Z [11] initialize() called
+2026-09-25T18:47:33.611Z [11] runTelegram() started
+2026-09-25T18:47:33.611Z [11] reply scan: starting 1s ticker
+2026-09-25T18:47:33.612Z [11] poller lock acquired
+2026-09-25T18:47:33.612Z [11] sessions scan: starting 1s ticker
+2026-09-25T18:47:33.612Z [11] deleteWebhook: calling
+2026-09-25T18:47:34.081Z [11] scheduleWaitingNotify(per_0d9e4edbf001RCtRzYlKibgV3D) type=permission
+2026-09-25T18:47:35.980Z [138] MODULE LOADED
+2026-09-25T18:47:36.156Z [138] setup() pid=138 root=/tmp/home
+2026-09-25T18:47:36.158Z [138] initialize() called
+2026-09-25T18:47:36.159Z [138] runTelegram() started
+2026-09-25T18:47:36.159Z [138] reply scan: starting 1s ticker
+2026-09-25T18:47:36.160Z [138] poller lock held elsewhere; scheduling retry
+2026-09-25T18:47:38.612Z [11] self-update: skipped (not an npm cache install)
+2026-09-25T18:47:39.071Z [11] [warn] Session record send failed; will retry on next scan {"requestId":"frm_0d9e4ee0300109AaV1zNWi5Ujz","error":"TelegramApiError(401)"}
+2026-09-25T18:47:39.360Z [11] [warn] Session record send failed; will retry on next scan {"requestId":"frm_0d9e4ee47001x76eaqibvwa2LD","error":"TelegramApiError(401)"}
+2026-09-25T18:47:40.170Z [138] [info] Form reply is terminal (HTTP 404); removing session record {"requestId":"frm_0d9e4ee0300109AaV1zNWi5Ujz","status":404}
+2026-09-25T18:47:40.175Z [138] [info] Form cancel is terminal (HTTP 404); removing session record {"requestId":"frm_0d9e4ee47001x76eaqibvwa2LD","status":404}
+2026-09-25T18:47:40.177Z [138] [info] Permission request no longer exists (404); removing session record {"requestId":"per_0d9e4edbf001RCtRzYlKibgV3D","sessionId":"ses_f261b1289ffeqQdpZWes2YJFyG"}
+2026-09-25T18:47:41.160Z [138] self-update: skipped (not an npm cache install)

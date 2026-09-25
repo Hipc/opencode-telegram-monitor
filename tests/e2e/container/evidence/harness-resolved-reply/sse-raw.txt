@@ -1,0 +1,28 @@
+data: {"id":"evt_0d9ef0851001WwQdfdD8ektEq1","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d9ef088d001IKWTYBkdLlr3bZ","created":1790362716301,"type":"session.created","location":{"directory":"/tmp/proj"},"data":{"sessionID":"ses_f2610f774ffeRmSMeuVWA5uLDD","slug":"gentle-planet","version":"2.0.15","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","location":{"directory":"/tmp/proj"},"subpath":"","title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}]},"durable":{"aggregateID":"ses_f2610f774ffeRmSMeuVWA5uLDD","seq":0,"version":1}}
+
+data: {"id":"evt_0d9ef0cc7002LTbDUjxgTwH1M2","created":1790362717383,"type":"permission.asked","location":{"directory":"/tmp/proj"},"data":{"id":"per_0d9ef0cc7001wxTxN1yO9vXNq8","sessionID":"ses_f2610f774ffeRmSMeuVWA5uLDD","action":"shell","resources":["echo e2e-waiting"]}}
+
+data: {"id":"evt_0d9ef10f7002Q54MkPqDUZErBI","created":1790362718455,"type":"form.created","location":{"directory":"/tmp/proj"},"data":{"form":{"id":"frm_0d9ef10f70015Yse6NFOnQqWgE","sessionID":"ses_f2610f774ffeRmSMeuVWA5uLDD","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}}
+
+data: {"id":"evt_0d9ef12a8001dioZ1bXz015WkA","created":1790362718888,"type":"permission.replied","data":{"sessionID":"ses_f2610f774ffeRmSMeuVWA5uLDD","requestID":"per_0d9ef0cc7001wxTxN1yO9vXNq8","reply":"once"}}
+
+data: {"id":"evt_0d9ef1693001EjOWlTtoVGiO21","created":1790362719891,"type":"form.replied","location":{"directory":"/tmp/proj"},"data":{"id":"frm_0d9ef10f70015Yse6NFOnQqWgE","sessionID":"ses_f2610f774ffeRmSMeuVWA5uLDD","answer":{"choice":"a"}}}
+
+data: {"id":"evt_0d9ef19200011et0Bmif8jYqcF","created":1790362720544,"type":"session.created","location":{"directory":"/tmp/proj"},"data":{"sessionID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","slug":"misty-harbor","version":"2.0.15","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","location":{"directory":"/tmp/proj"},"subpath":"","title":"e2e-lifecycle"},"durable":{"aggregateID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","seq":0,"version":1}}
+
+data: {"id":"evt_0d9ef1966001kPT6oznN277fJw","created":1790362720614,"type":"session.model.selected","location":{"directory":"/tmp/proj"},"data":{"sessionID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","model":{"id":"definitely-not-a-model","providerID":"opencode"}},"durable":{"aggregateID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","seq":1,"version":1}}
+
+data: {"id":"evt_0d9ef19ad0010V1GuXdgcqkeRJ","created":1790362720685,"type":"session.inbox.enqueued","location":{"directory":"/tmp/proj"},"data":{"inboxID":"msg_0d9ef19ab001JvVHaAHPHMkg3v","sessionID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","item":{"type":"user","payload":{"text":"hello"},"delivery":"steer"}},"durable":{"aggregateID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","seq":2,"version":1}}
+
+data: {"id":"evt_0d9ef19b0001oliusADfDRCuKj","created":1790362720688,"type":"session.execution.started","data":{"sessionID":"ses_f2610e6e1ffefUTGReXGA5E6DZ"},"durable":{"aggregateID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","seq":3,"version":1}}
+
+data: {"id":"evt_0d9ef19c3001YWpVeEj2TLqEZc","created":1790362720707,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/tmp/proj"},"data":{"sessionID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","delta":{"core/environment":"0c4308d4e4fd0b38b261a07c7ef5111de144fd5c537908fac07121778bee75d4","core/date":"8652ede0af6d1b21e25507db627105f1c9c8fc8fb72156123605e42fce9be918","core/codemode":"9bbeb19ab2fa0ee4cafd3d2e36b9cfb6c72f8148481e8c67444eb0c9d38b5a22","core/skill-guidance":"8394362d28c82fa4d13c7a9f5568c05680f6687e07db8f426a0e3c92f3027dc9"}},"durable":{"aggregateID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","seq":4,"version":2}}
+
+data: {"id":"evt_0d9ef19c5001UxBQaQRACwdSs5","created":1790362720709,"type":"session.inbox.delivered","location":{"directory":"/tmp/proj"},"data":{"sessionID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","inboxID":"msg_0d9ef19ab001JvVHaAHPHMkg3v"},"durable":{"aggregateID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","seq":5,"version":1}}
+
+data: {"id":"evt_0d9ef19c80010LLNQyoIE05xYj","created":1790362720712,"type":"session.execution.failed","data":{"sessionID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","error":{"type":"provider.no-route","message":"Model unavailable: opencode/definitely-not-a-model"}},"durable":{"aggregateID":"ses_f2610e6e1ffefUTGReXGA5E6DZ","seq":6,"version":1}}
+
