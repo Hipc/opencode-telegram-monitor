@@ -297,8 +297,13 @@ Inside the container (`harness/real-tg-recipe.sh`):
    a synthetic password and drives one trivial turn via `opencode api
    session.create` + `session.prompt`; after `step ended ... finish=stop` it
    **keeps the server alive ≥ 15 s** so the 5 s idle debounce finalizes and the
-   ✅ terminal notification send actually fires, then stops the server process
-   group and confirms the port is released;
+   ✅ terminal notification send actually fires, then waits (bounded at 90 s)
+   for a **terminal send outcome** in this run's own diag block — `http done
+   status=…`, `http fail: …` or `Telegram message send failed`; a stage line
+   (`start`/`tunnel ok`/`tls ok`/`http written`) does not satisfy the wait. If
+   the latest send line is still a stage line (in-flight retry), a bounded 20 s
+   teardown grace runs before the server process group is stopped and the port
+   release confirmed;
 6. collects `tgdiag.log`, the server log, the password-filtered serve stdout and
    the copied registry into `evidence/real-tg-recipe/`, and finally scans
    **this run's own diag block** (pre-run offset + plugin PID) for the send.
@@ -323,8 +328,15 @@ absence of a failure line alone is no longer sufficient. Possible RESULT lines:
   including the pre-fix `opencode run --standalone` shape where the server exits
   before the 5 s debounce fires (`dispose` clears the timer).
 
-The container exits non-zero on any FAIL. Duration: ~20-40 s (model turn + 15 s
-hold + shutdown), plus the one-off bundle build.
+The container exits non-zero on any FAIL. The wait never breaks on a stage
+line, so teardown cannot abort an in-flight request (`http fail: Plugin
+disposed` — the fixture bug observed on 2026-09-25, when the old wait matched
+`start` and killed the process group before the response arrived); a send with
+no terminal outcome inside the 90 s window prints an explicit
+`WARN: no terminal send outcome within 90s …` and still fails above. Duration:
+~20-40 s (model turn + 15 s hold + terminal-outcome wait + shutdown), plus the
+one-off bundle build; a slow or failed send adds up to 90 s of wait plus a 20 s
+teardown grace.
 
 Note: the positive (`200`) check reads the **proxy transport** diagnostics
 (`requestViaProxy[sendRichMessage]`); a direct-mode config (no `proxy`) emits no

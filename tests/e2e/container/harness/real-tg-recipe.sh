@@ -11,10 +11,15 @@
 # trivial session to completion. The terminal notification flows
 # session.execution.succeeded -> idle -> 5 s idle debounce -> finalizeIdle ->
 # sendMessage, so the server is kept alive well past the debounce (>= 15 s
-# after `step ended ... finish=stop`) before it is stopped. The recipe then
-# scans THIS run's own diag block (line offset captured before serve + the
-# plugin PID) and FAILS unless a send attempt is visible there; absence of a
-# failure line alone is not evidence of a send.
+# after `step ended ... finish=stop`). It then waits (bounded at 90 s) for a
+# TERMINAL send outcome in THIS run's own diag block — `http done status=…`,
+# `http fail: …` or `Telegram message send failed`; stage lines such as
+# `start`/`tunnel ok` never satisfy the wait — plus a bounded 20 s teardown
+# grace while the latest send line is still a stage line (in-flight retry),
+# before the server is stopped. The recipe then scans this run's own diag block
+# (line offset captured before serve + the plugin PID) and FAILS unless a send
+# attempt is visible there; absence of a failure line alone is not evidence of
+# a send.
 #
 # Environment:
 #   T05_PLUGIN          path to the adapted single-file bundle (inside /plugin)
@@ -153,6 +158,36 @@ run_lines() {
   fi
 }
 
+# Send diagnostics emitted by src/telegram/client.ts, scoped to THIS run's
+# block/PID by run_lines(). Stage lines prove an attempt is in flight:
+#   requestViaProxy[sendRichMessage] start / tunnel ok / tls ok /
+#     http written, waiting for response / http header (...) / http end
+# Terminal lines are the outcome of an attempt:
+#   requestViaProxy[sendRichMessage] http done status=<code>   (any HTTP status)
+#   requestViaProxy[sendRichMessage] http fail: <reason>
+#   [error] Telegram message send failed {...}
+SEND_LINE_RE='requestViaProxy\[sendRichMessage\]|Telegram message send failed'
+SEND_TERMINAL_RE='requestViaProxy\[sendRichMessage\] (http done status=|http fail:)|Telegram message send failed'
+
+# True once any terminal send outcome is visible in this run's block.
+send_terminal_seen() {
+  run_lines | grep -qE "$SEND_TERMINAL_RE"
+}
+
+# The most recent send-related line for this run ("" when none).
+last_send_line() {
+  run_lines | grep -E "$SEND_LINE_RE" | tail -1
+}
+
+# True when the most recent send line is a terminal outcome (also true when no
+# send line exists at all: there is nothing in flight to settle).
+send_settled() {
+  local last
+  last="$(last_send_line)"
+  [ -z "$last" ] && return 0
+  printf '%s\n' "$last" | grep -qE "$SEND_TERMINAL_RE"
+}
+
 SID=""
 if [ -n "$RUN_PID" ]; then
   SES_OUT=$($API session.create -d '{"title":"real-tg-smoke"}')
@@ -190,18 +225,54 @@ if [ -n "$SID" ]; then
   done
   echo "held server alive $(( $(date +%s) - TERMINAL_AT ))s after turn completion"
 
-  # Give a slow proxy a bounded window to record the attempt's outcome.
-  for i in $(seq 1 30); do
-    if run_lines | grep -qE 'requestViaProxy\[sendRichMessage\]|Telegram message send failed'; then
-      break
-    fi
+  # Wait for a TERMINAL send outcome — never break on a stage line.
+  #
+  # A `start`/`tunnel ok` line only proves the attempt is in flight; the old
+  # regex matched `start` and collapsed this window to zero, so the teardown
+  # below killed the process group mid-request (observed 2026-09-25 in the t10
+  # gate: `start` at 43.889 with no TLS completion, teardown at ~44.0, the
+  # retry died with `http fail: Plugin disposed` at 53.976 — a fixture bug, not
+  # a send failure; the request bytes had been fully written). One attempt is
+  # bounded by the 15 s request timeout and telegramWithRetry makes at most 3
+  # attempts (1 s + 2 s backoff), so 90 s covers the whole retry chain. On
+  # timeout the explicit reason is printed and the assertion below still fails
+  # — never masked.
+  SEND_WAIT_BUDGET=90
+  waited=0
+  while [ "$waited" -lt "$SEND_WAIT_BUDGET" ] && ! send_terminal_seen; do
     sleep 1
+    waited=$((waited + 1))
   done
+  if send_terminal_seen; then
+    echo "terminal send outcome observed after ${waited}s"
+  else
+    echo "WARN: no terminal send outcome within ${SEND_WAIT_BUDGET}s (send still in flight or never attempted); teardown follows"
+  fi
 else
   echo "WARN: no session created (plugin run block or session.create failed); nothing was driven"
 fi
 
 # ---- 6. stop the server cleanly (process group; verify no leftovers) --------
+# Teardown grace: even after the wait above observed a terminal line,
+# telegramWithRetry may already have started another attempt. While the LATEST
+# send line is still a stage line — e.g. `http written, waiting for response`
+# (response pending) — the request is in flight and SIGTERM would abort it
+# (`http fail: Plugin disposed`). Wait a bounded 20 s (the per-attempt timeout
+# is 15 s) for it to settle, then stop the server regardless; the diag block
+# records any state that did not settle.
+SEND_GRACE_BUDGET=20
+grace_waited=0
+while [ "$grace_waited" -lt "$SEND_GRACE_BUDGET" ] && ! send_settled; do
+  sleep 1
+  grace_waited=$((grace_waited + 1))
+done
+if [ "$grace_waited" -gt 0 ]; then
+  if send_settled; then
+    echo "teardown grace: waited ${grace_waited}s for the in-flight send to settle"
+  else
+    echo "WARN: send not settled after ${SEND_GRACE_BUDGET}s grace; stopping the server anyway"
+  fi
+fi
 if [ "$SAFE" = "1" ]; then
   touch /tmp/t05-guard-stop
   kill "$GUARD_PID" 2>/dev/null || true
