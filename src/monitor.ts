@@ -6,9 +6,10 @@ import {
   relative,
   resolve,
 } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 
 import {
   ICON_READY,
@@ -120,6 +121,15 @@ import type { FormFieldData, V2Client, V2SessionInfo } from "./v2/types";
 
 dline("MODULE LOADED");
 
+/**
+ * form 回写端点发现结果（契约 §A.1 修订，t10 实机修复）：要么是本进程自身
+ * server 的可用 loopback 端点，要么是显式失败原因（调用方 logWarn + throw，
+ * 绝不兜底猜测/降级到其它 server）。
+ */
+type FormEndpoint =
+  | { ok: true; url: string; password: string }
+  | { ok: false; reason: string };
+
 export class TelegramSessionMonitor {
   private readonly root: string;
   private readonly projectLabel: string;
@@ -127,6 +137,9 @@ export class TelegramSessionMonitor {
   private readonly sessionInfo = new Map<string, V2SessionInfo>();
   private readonly seenEventIDs = new Set<string>();
   private readonly seenWaitingRequestIDs = new Set<string>();
+  // 归属门跳过日志去重（t10）：非宿主实例每个 request_id 只记一次
+  // 「apply skipped」，避免 1s 扫描的每秒刷屏。
+  private readonly applySkippedRequestIDs = new Set<string>();
   private readonly waitingNotifyTimers = new Map<
     string,
     ReturnType<typeof setTimeout>
@@ -1580,6 +1593,11 @@ export class TelegramSessionMonitor {
    * resolved === false → 逐条串行 applySessionReply（单条异常不中断整轮，
    * 失败已由 applySessionReply logWarn，下轮 ticker 重试）。返回本轮成功
    * 应用条数。
+   *
+   * 归属门（t10 实机修复，permission/question 两条路径都走）：apply 前先
+   * client.session.get 确认本实例宿主该 session；失败 → 本轮跳过该记录
+   * （不 apply、不删除、不置终态），每 request_id 每实例只记一次 dline。
+   * 防止共享注册表下的非宿主 server 把回写打到自身并因 404 误删记录。
    */
   private async scanReplyQueue(): Promise<number> {
     if (this.disposed) return 0;
@@ -1594,6 +1612,7 @@ export class TelegramSessionMonitor {
         // null（未回复）；resolved 双路径跳过（决策 #6：TUI replied 事件可能
         // 已先置位）。
         if (record.reply == null || record.resolved) continue;
+        if (!(await this.sessionHostedByThisInstance(record))) continue;
         try {
           await this.applySessionReply(record);
           applied += 1;
@@ -1620,6 +1639,7 @@ export class TelegramSessionMonitor {
       if (record.resolved || (record.q_answers == null && record.q_reject !== true)) {
         continue;
       }
+      if (!(await this.sessionHostedByThisInstance(record))) continue;
       try {
         if (record.q_answers != null) {
           await this.applyQuestionReply(record);
@@ -1643,6 +1663,29 @@ export class TelegramSessionMonitor {
       }
     }
     return applied;
+  }
+
+  /**
+   * 归属门（t10 实机修复）：只有宿主该 session 的实例才能 apply 回写。
+   * client.session.get 成功 → true；任何 throw/失败 → 本轮跳过该记录
+   * （不 apply、不删除、不置终态；下轮重试），并按 request_id 每实例只记一次
+   * dline（info 级）避免每秒刷屏。绝不用异常结果猜测归属。
+   */
+  private async sessionHostedByThisInstance(
+    record: SessionRecord,
+  ): Promise<boolean> {
+    try {
+      await this.client.session.get({ sessionID: record.session_id });
+      return true;
+    } catch (error) {
+      if (!this.applySkippedRequestIDs.has(record.request_id)) {
+        rememberBounded(this.applySkippedRequestIDs, record.request_id);
+        dline(
+          `reply scan: apply skipped: session not hosted by this instance request=${record.request_id} session=${record.session_id} error=${errorCategory(error, { root: this.root, botToken: this.config.botToken })}`,
+        );
+      }
+      return false;
+    }
   }
 
   /**
@@ -1759,43 +1802,33 @@ export class TelegramSessionMonitor {
    *   body `{"answer":{...}}`，`authorization: Basic base64("opencode:"+password)`、
    *   `content-type: application/json`；204 = applied。
    * - cancel = DELETE http://127.0.0.1:<port>/api/session/<sid>/form/<fid>。
-   * 端口从 process.argv 的 `--port <N>` 解析；密码取
-   * OPENCODE_SERVER_PASSWORD 或 OPENCODE_PASSWORD（05 probe-a1：两者在插件
-   * 进程内均可见）。端口不可发现（run --standalone / --port 0）或密码缺失 →
-   * 记录原因日志并 throw（**显式失败、无兜底**：q_answers/q_reject 保持未
-   * 应用，下轮 ticker 重试）。404/409（FormNotFound/SessionNotFound/
-   * FormAlreadySettled）→ 幂等终态（info 日志，调用方删除记录、不重试）；
-   * 其它状态 → 原因日志 + throw（记录保留，下轮重试）。
+   * 端点发现见 resolveFormEndpoint（§A.1 修订，t10 实机修复）：argv --port →
+   * state service.json（pid 匹配）→ legacy service.json；端口/密码不可发现或
+   * url 非 loopback → 记录原因日志并 throw（**显式失败、无兜底**：
+   * q_answers/q_reject 保持未应用，下轮 ticker 重试）。404/409（FormNotFound/
+   * SessionNotFound/FormAlreadySettled）→ 幂等终态（info 日志，调用方删除
+   * 记录、不重试）；其它状态 → 原因日志 + throw（记录保留，下轮重试）。
    */
   private async postFormRequest(
     kind: "reply" | "cancel",
     record: SessionRecord,
     answer?: Record<string, unknown>,
   ): Promise<void> {
-    const port = this.formServerPort();
-    if (port === undefined) {
-      const reason =
-        "Form reply channel unavailable: server port not discoverable in process.argv (serve --port N required; run --standalone / --port 0 has no discoverable port)";
-      await this.log("warn", reason, { requestId: record.request_id });
-      throw new Error(reason);
-    }
-    const password = this.formServerPassword();
-    if (password === undefined) {
-      const reason =
-        "Form reply channel unavailable: neither OPENCODE_SERVER_PASSWORD nor OPENCODE_PASSWORD is set";
-      await this.log("warn", reason, { requestId: record.request_id });
-      throw new Error(reason);
+    const endpoint = await this.resolveFormEndpoint();
+    if (!endpoint.ok) {
+      await this.log("warn", endpoint.reason, { requestId: record.request_id });
+      throw new Error(endpoint.reason);
     }
     const formPath = `/api/session/${encodeURIComponent(record.session_id)}/form/${encodeURIComponent(record.request_id)}`;
     const url =
       kind === "reply"
-        ? `http://127.0.0.1:${port}${formPath}/reply`
-        : `http://127.0.0.1:${port}${formPath}`;
+        ? `${endpoint.url}${formPath}/reply`
+        : `${endpoint.url}${formPath}`;
     const body = kind === "reply" ? { answer: answer ?? {} } : undefined;
     const response = await fetch(url, {
       method: kind === "reply" ? "POST" : "DELETE",
       headers: {
-        authorization: `Basic ${Buffer.from(`opencode:${password}`, "utf8").toString("base64")}`,
+        authorization: `Basic ${Buffer.from(`opencode:${endpoint.password}`, "utf8").toString("base64")}`,
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -1820,22 +1853,231 @@ export class TelegramSessionMonitor {
   }
 
   /**
-   * 端口发现（§A.1 冻结限制）：serve 形态 argv 含 `--port <N>`；不可发现
-   * （run --standalone = serve --stdio --port 0）返回 undefined → 调用方显式
-   * 失败，不得兜底猜测端口。
+   * 发现本进程自身 server 的 form 回写端点（§A.1 修订，t10 实机修复；
+   * 无兜底猜测）。优先级：
+   *   (a) argv `--port N` / `--port=N`：端口存在且为正整数 → 端口 = N，
+   *       密码 = OPENCODE_SERVER_PASSWORD / OPENCODE_PASSWORD；env 密码缺失 →
+   *       显式失败（不回落 service.json——那多半属于另一个 server）；--port
+   *       存在但值 0/非法（standalone/随机端口）→ 显式失败。
+   *   (b) argv 无 --port → 读 state service.json（$XDG_STATE_HOME|~/.local/state
+   *       + /opencode/service.json；多个 service*.json 时优先 pid === 本进程，
+   *       否则默认 service.json）→ url + password；url 必须为 loopback http。
+   *   (c) 否则 legacy ~/.config/opencode/service.json → {port, password}。
+   *   (d) 均不完整 → 显式失败，原因列出全部尝试过的来源。
+   * 每次调用重新读文件（不缓存）；任何路径都绝不把密码写进日志。
    */
-  private formServerPort(): number | undefined {
-    const index = process.argv.indexOf("--port");
-    if (index === -1) return undefined;
-    const port = Number(process.argv[index + 1]);
-    return Number.isInteger(port) && port > 0 ? port : undefined;
+  private async resolveFormEndpoint(): Promise<FormEndpoint> {
+    const argvPort = this.formArgvPort();
+    if (argvPort.kind === "invalid") {
+      return {
+        ok: false,
+        reason: `Form reply channel unavailable: process.argv --port value "${argvPort.raw}" is not a usable positive integer (run --standalone / --port 0 has no discoverable endpoint)`,
+      };
+    }
+    if (argvPort.kind === "present") {
+      const password = this.formEnvPassword();
+      if (!password) {
+        return {
+          ok: false,
+          reason:
+            "Form reply channel unavailable: neither OPENCODE_SERVER_PASSWORD nor OPENCODE_PASSWORD is set (--port present in process.argv; no service.json fallback)",
+        };
+      }
+      return { ok: true, url: `http://127.0.0.1:${argvPort.port}`, password };
+    }
+    const state = await this.readStateServiceEndpoint();
+    if (state.ok) return state;
+    const legacy = await this.readLegacyServiceEndpoint();
+    if (legacy.ok) return legacy;
+    return {
+      ok: false,
+      reason: `Form reply channel unavailable: server port not discoverable (no --port in process.argv; state service.json: ${state.reason}; legacy service.json: ${legacy.reason})`,
+    };
   }
 
-  /** 密码来源（§A.1）：serve 侧 OPENCODE_SERVER_PASSWORD 或 client 侧 OPENCODE_PASSWORD。 */
-  private formServerPassword(): string | undefined {
+  /**
+   * argv 端口解析（§A.1 修订）：`--port N` 与 `--port=N` 两种形态；
+   * `--port` 出现但值缺失/0/非法 → invalid（调用方显式失败，不回落）。
+   */
+  private formArgvPort():
+    | { kind: "absent" }
+    | { kind: "present"; port: number }
+    | { kind: "invalid"; raw: string } {
+    const argv = process.argv;
+    for (let index = 0; index < argv.length; index += 1) {
+      const token = argv[index] ?? "";
+      if (token === "--port") {
+        return this.parseArgvPort(argv[index + 1]);
+      }
+      if (token.startsWith("--port=")) {
+        return this.parseArgvPort(token.slice("--port=".length));
+      }
+    }
+    return { kind: "absent" };
+  }
+
+  private parseArgvPort(
+    raw: string | undefined,
+  ): { kind: "present"; port: number } | { kind: "invalid"; raw: string } {
+    if (typeof raw === "string" && /^\d+$/.test(raw)) {
+      const port = Number(raw);
+      if (Number.isInteger(port) && port > 0 && port <= 65535) {
+        return { kind: "present", port };
+      }
+    }
+    return { kind: "invalid", raw: raw ?? "(missing value)" };
+  }
+
+  /** env 密码来源（§A.1）：serve 侧 OPENCODE_SERVER_PASSWORD 或 client 侧 OPENCODE_PASSWORD。 */
+  private formEnvPassword(): string | undefined {
     const password =
       process.env.OPENCODE_SERVER_PASSWORD ?? process.env.OPENCODE_PASSWORD;
     return password && password.length > 0 ? password : undefined;
+  }
+
+  /**
+   * state service.json 端点（§A.1 修订）：v2 `opencode serve --service` 在
+   * `$XDG_STATE_HOME|~/.local/state` + `/opencode/service.json` 注册
+   * `{url, pid, password}`。多个 `service*.json` 时优先 pid === 本进程的条目，
+   * 否则用默认 `service.json`；url 必须 loopback + http，否则拒绝（绝不把
+   * 密码发往非本机地址）。文件每次调用重新读。
+   */
+  private async readStateServiceEndpoint(): Promise<FormEndpoint> {
+    const stateHome =
+      process.env.XDG_STATE_HOME && process.env.XDG_STATE_HOME.length > 0
+        ? process.env.XDG_STATE_HOME
+        : join(this.homeDir(), ".local", "state");
+    const dir = join(stateHome, "opencode");
+    let names: string[];
+    try {
+      names = (await readdir(dir)).filter((name) =>
+        /^service.*\.json$/.test(name),
+      );
+    } catch {
+      names = [];
+    }
+    if (names.length === 0) {
+      return { ok: false, reason: `${join(dir, "service.json")} not found` };
+    }
+    let chosen: string | undefined;
+    for (const name of [...names].sort()) {
+      const entry = await this.readServiceJson(join(dir, name));
+      if (entry && entry.pid === process.pid) {
+        chosen = name;
+        break;
+      }
+    }
+    if (!chosen) {
+      if (!names.includes("service.json")) {
+        return {
+          ok: false,
+          reason: `no service*.json entry for pid ${process.pid} and no default service.json under ${dir}`,
+        };
+      }
+      chosen = "service.json";
+    }
+    const path = join(dir, chosen);
+    const entry = await this.readServiceJson(path);
+    if (!entry) {
+      return { ok: false, reason: `${path} is missing or not valid JSON` };
+    }
+    const password = typeof entry.password === "string" ? entry.password : "";
+    if (password.length === 0) {
+      return { ok: false, reason: `${path} has no password` };
+    }
+    const url =
+      typeof entry.url === "string" ? this.parseLoopbackServiceUrl(entry.url) : undefined;
+    if (!url) {
+      return {
+        ok: false,
+        reason: `${path} url is not a loopback http endpoint`,
+      };
+    }
+    return { ok: true, url, password };
+  }
+
+  /**
+   * legacy `~/.config/opencode/service.json`（§A.1 修订）：`{port, password}`
+   * 端口 + 密码对；port 必须是正整数、password 非空。loopback 不适用
+   * （url 由本插件固定按 127.0.0.1 构造）。
+   */
+  private async readLegacyServiceEndpoint(): Promise<FormEndpoint> {
+    const path = join(this.homeDir(), ".config", "opencode", "service.json");
+    const entry = await this.readServiceJson(path);
+    if (!entry) {
+      return { ok: false, reason: `${path} not found` };
+    }
+    const port = entry.port;
+    if (
+      typeof port !== "number" ||
+      !Number.isInteger(port) ||
+      port <= 0 ||
+      port > 65535
+    ) {
+      return { ok: false, reason: `${path} has no usable port` };
+    }
+    const password = typeof entry.password === "string" ? entry.password : "";
+    if (password.length === 0) {
+      return { ok: false, reason: `${path} has no password` };
+    }
+    return { ok: true, url: `http://127.0.0.1:${port}`, password };
+  }
+
+  /**
+   * `~` 的解析（state/legacy service.json 路径用）：优先运行时 `$HOME`，
+   * 缺失才回落 os.homedir()。bun 的 os.homedir() 在进程启动后缓存，不随
+   * env 变化（Node 是动态读取），所以这里显式读 env，保证行为与 `~` 一致且
+   * 可测试。不涉及端点发现的任何降级。
+   */
+  private homeDir(): string {
+    const envHome = process.env.HOME;
+    return envHome && envHome.length > 0 ? envHome : homedir();
+  }
+
+  /**
+   * 解析并校验 service.json 的 url：仅接受 `http:` + loopback 主机
+   * （127.0.0.1 / localhost / [::1]）、无凭据、无路径/查询串；返回 origin。
+   * 任何不合规都返回 undefined（调用方显式失败，不把密码发往别处）。
+   */
+  private parseLoopbackServiceUrl(raw: string): string | undefined {
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      return undefined;
+    }
+    if (parsed.protocol !== "http:") return undefined;
+    const host = parsed.hostname;
+    if (host !== "127.0.0.1" && host !== "localhost" && host !== "[::1]") {
+      return undefined;
+    }
+    if (parsed.username !== "" || parsed.password !== "") return undefined;
+    if (parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "") {
+      return undefined;
+    }
+    return parsed.origin;
+  }
+
+  /** 读 service.json 原样对象（不校验）；缺失/非 JSON 对象 → undefined。 */
+  private async readServiceJson(
+    path: string,
+  ): Promise<
+    { pid?: unknown; url?: unknown; port?: unknown; password?: unknown } | undefined
+  > {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as {
+          pid?: unknown;
+          url?: unknown;
+          port?: unknown;
+          password?: unknown;
+        };
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**

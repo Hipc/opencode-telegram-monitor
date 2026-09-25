@@ -13,7 +13,8 @@ is installed on the host and no local opencode directory is touched.
 | `harness/` | container e2e scenario + mechanism-validation double + real-TG recipe scripts |
 | `harness/fake-telegram.mjs` | fake Telegram Bot API endpoint for the duplicate-record scenario (CONNECT + TLS, request log) |
 | `harness/dupe-scenario.sh` | t09 duplicate-record / message_id regression scenario |
-| `assert/` | node assertion suites over the collected evidence (`assert/dupe.mjs` = t09 regression) |
+| `harness/t10-cross-scenario.sh` | t10 cross-process ownership gate + state `service.json` discovery scenario |
+| `assert/` | node assertion suites over the collected evidence (`assert/dupe.mjs` = t09 regression, `assert/t10-cross.mjs` = t10 gate/discovery) |
 | `evidence/` | recorded outputs of the green runs in this round |
 
 Requirements: docker with `hipc/opencode2:latest` (opencode v2.0.15) and
@@ -201,6 +202,39 @@ duplicated request_id 16× in the observation window, leaves the copies
 `--plugin <bundle>` runs the scenario against a provided bundle instead of
 building the worktree (used for the pre-fix negative control).
 
+## 2c. Cross-process ownership gate + state service.json discovery (t10)
+
+```sh
+tests/e2e/container/run.sh t10-cross                # ~2 min, container-only
+tests/e2e/container/run.sh assert-t10-cross         # 15 assertions (positive)
+T10_CROSS_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t10-cross-prefix \
+T05_PLUGIN_SRC=<base-worktree> tests/e2e/container/run.sh t10-cross
+T10_CROSS_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t10-cross-prefix \
+  tests/e2e/container/run.sh assert-t10-cross --negative-control
+```
+
+Reproduces the field incident "TG question submit never reached the TUI": two
+real servers share one `~/.otg` registry and project root —
+**A** = `opencode serve --service` (the field daemon shape: no `--port` in argv,
+no `OPENCODE_SERVER_PASSWORD` in env; it registers
+`$XDG_STATE_HOME/opencode/service.json` with `{url,pid,password}`) and
+**B** = plain `serve --port <dynamic>` with its own password env but separate
+session storage (it does not host the session). The form is created on A;
+`q_answers` is injected while A is SIGSTOPped so B's skip is deterministic;
+A resumes and must apply.
+
+Assertions: A discovered itself through the state `service.json` (pid match)
+and emitted exactly one `form.replied`; B logged
+`apply skipped: session not hosted by this instance` and performed no apply,
+no terminal 404 removal and no record deletion; the record survived B's skip
+window and was removed only after the owner applied.
+
+The negative control runs the same scenario against the pre-fix bundle and
+asserts the field signature instead: B classified its self-POST 404 as terminal
+and deleted the record while A was frozen; A never emitted `form.replied`.
+Evidence: `evidence/t10-cross/` (positive) and `evidence/t10-cross-prefix/`
+(negative control).
+
 ### Bundle build
 
 ```sh
@@ -339,6 +373,10 @@ built from this worktree).
 - **Subagent lineage / parentID** — **done** (see §1b): observable and
   consumed by `src/**` since `401e7c1` (F1); contract revision r2 closes the
   §9 item.
+- **Cross-process gate + service.json discovery (t10)** — **done** (see §2c):
+  positive run 15/15 (A applied exactly once, B skipped, no record loss) and
+  the pre-fix negative control reproduces the field signature; recorded in
+  `evidence/t10-cross/` and `evidence/t10-cross-prefix/`.
 - **Real-TG smoke execution** — **pending** (final verification phase, real
   credentials): the `--run` recipe is now serve-based and fails unless this
   run's own diag block shows a send attempt (it no longer runs
@@ -357,6 +395,9 @@ subagent-lineage probe run · `evidence/harness/` green-run against the adapted
 plugin (20 checks green — catalog 22, form phase included; H3.6/H3.7 run only
 with the settled-reply flags) ·
 `evidence/harness-resolved-reply/` settled-request capture (H3.6/H3.7) ·
+`evidence/t10-cross/` cross-process gate + service.json discovery (positive) ·
+`evidence/t10-cross-prefix/` same scenario against the pre-fix bundle
+(negative control) ·
 `evidence/real-tg-recipe/` read-only mount check ·
 `evidence/real-tg-sendpath-check/` synthetic-credential send-path mechanism
 check (serve-based recipe; `RESULT: FAIL ... rejected (401)` by design — the

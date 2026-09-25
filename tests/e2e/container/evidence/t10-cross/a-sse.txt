@@ -1,0 +1,18 @@
+data: {"id":"evt_0d8ee2864001bktJKapeeABM0U","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d8ee28c2001gQIIr8civTaOwE","created":1790345881794,"type":"session.created","location":{"directory":"/tmp/home"},"data":{"sessionID":"ses_f2711d73fffeugsoYftO1lbjVH","slug":"swift-squid","version":"2.0.15","projectID":"74b23e0067970794112a980bf226755fbfff7d22","location":{"directory":"/tmp/home"},"subpath":"","title":"t10-cross"},"durable":{"aggregateID":"ses_f2711d73fffeugsoYftO1lbjVH","seq":0,"version":1}}
+
+data: {"id":"evt_0d8ee299f002yI4H5s69xarB8g","created":1790345882015,"type":"form.created","location":{"directory":"/tmp/home"},"data":{"form":{"id":"frm_0d8ee299f001Y8HTnxegnqhbBi","sessionID":"ses_f2711d73fffeugsoYftO1lbjVH","title":"t10-cross question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}}
+
+data: {"id":"evt_0d8ee2cbb001GxQiYWqjm4UzZK","created":1790345882811,"type":"models-dev.refreshed","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d8ee2d680010hd2UrohQrtcSe","created":1790345882984,"type":"integration.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d8ee2db7001XuN8SswsyzXdJJ","created":1790345883063,"type":"provider.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d8ee2dbf001kG0L2KMcG2yIVM","created":1790345883071,"type":"model.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d8ee445d001hbD5ZjO5X3uw6X","created":1790345888861,"type":"form.replied","location":{"directory":"/tmp/home"},"data":{"id":"frm_0d8ee299f001Y8HTnxegnqhbBi","sessionID":"ses_f2711d73fffeugsoYftO1lbjVH","answer":{"choice":"a"}}}
+

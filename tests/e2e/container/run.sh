@@ -11,13 +11,16 @@
 #   tests/e2e/container/run.sh dupe                     # duplicate-record / message_id regression (fake TG)
 #   tests/e2e/container/run.sh probe-lineage            # §9 subagent lineage probe
 #   tests/e2e/container/run.sh build                    # bundle src/ via otg-toolchain
+#   tests/e2e/container/run.sh t10-cross [--plugin F]   # cross-process ownership gate + service.json discovery
 #   tests/e2e/container/run.sh real-tg-recipe --check   # read-only ~/.otg mechanism check
 #   tests/e2e/container/run.sh real-tg-recipe --run     # full real-TG smoke (serve-based send path)
 #   tests/e2e/container/run.sh assert-probe-a1          # assertions over existing evidence
 #   tests/e2e/container/run.sh assert-harness           # assertions over existing evidence
 #   tests/e2e/container/run.sh assert-dupe              # duplicate-record regression assertions
+#   tests/e2e/container/run.sh assert-t10-cross         # cross-process gate/discovery assertions
+#   tests/e2e/container/run.sh assert-t10-cross --negative-control  # pre-fix bundle signature
 #   tests/e2e/container/run.sh assert-probe-lineage     # lineage evidence summary
-#   tests/e2e/container/run.sh clean                    # remove leftover t05/t09 containers
+#   tests/e2e/container/run.sh clean                    # remove leftover t05/t09/t10 containers
 #
 # Environment: T05_HARNESS_FORM_REPLY=1 adds the form closure phase,
 # T05_HARNESS_RESOLVED_REPLY=1 adds the already-settled reply capture,
@@ -284,6 +287,62 @@ assert_dupe() {
   node "$ASSERT_DIR/dupe.mjs" "$out"
 }
 
+# ---- t10 cross-process ownership gate + service.json discovery ---------------
+# Two real servers share one ~/.otg registry: A = `opencode serve --service`
+# (the field daemon shape: no --port in argv, no password env), B = plain
+# `serve --port` with its own password env but separate session storage. The
+# form is created on A; q_answers is injected while A is SIGSTOPped so B's
+# ownership-gate skip is observed deterministically, then A resumes and applies.
+scenario_t10_cross() {
+  require_image "$OPENCODE_IMAGE"
+  require_image "$TOOLCHAIN_IMAGE"
+  local plugin_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --plugin) plugin_file="$2"; shift 2 ;;
+      *) fail "t10-cross: unknown argument: $1" ;;
+    esac
+  done
+  if [ -n "$plugin_file" ] && [ "${plugin_file#/}" = "$plugin_file" ]; then
+    plugin_file="$PWD/$plugin_file"
+  fi
+  local out="${T10_CROSS_EVIDENCE_DIR:-$EVIDENCE_ROOT/t10-cross}"
+  rm -rf "$out"; mkdir -p "$out"
+  if [ -z "$plugin_file" ]; then
+    plugin_file="$(build_plugin_bundle "$out")"
+    log "t10-cross: built plugin bundle at $plugin_file"
+  elif [ ! -f "$plugin_file" ]; then
+    fail "t10-cross: --plugin file not found: $plugin_file"
+  fi
+  local name
+  name="t10-cross-$$"
+  log "t10-cross: evidence=$out plugin=$plugin_file"
+  {
+    echo "=== scenario: t10-cross (cross-process ownership gate + state service.json discovery) ==="
+    echo "=== exact command ==="
+    echo "docker run --rm --name $name \\"
+    echo "  -v $(dirname "$plugin_file"):/plugin:ro -v $HARNESS_DIR:/harness:ro -v $out:/evidence \\"
+    echo "  -e T10_PLUGIN=/plugin/$(basename "$plugin_file") \\"
+    echo "  --entrypoint sh $OPENCODE_IMAGE -c 'sh /harness/t10-cross-scenario.sh'"
+    echo "=== output follows ==="
+  } > "$out/commands.txt"
+  timeout 700 docker run --rm --name "$name" \
+    -v "$(dirname "$plugin_file"):/plugin:ro" \
+    -v "$HARNESS_DIR:/harness:ro" \
+    -v "$out:/evidence" \
+    -e T10_PLUGIN="/plugin/$(basename "$plugin_file")" \
+    --entrypoint sh "$OPENCODE_IMAGE" -c 'sh /harness/t10-cross-scenario.sh' \
+    >> "$out/commands.txt" 2>&1 || log "t10-cross container exited non-zero (evidence preserved)"
+  fix_ownership "$out"
+  log "t10-cross: evidence written to $out"
+}
+
+assert_t10_cross() {
+  local out="${T10_CROSS_EVIDENCE_DIR:-$EVIDENCE_ROOT/t10-cross}"
+  [ -d "$out" ] || fail "no t10-cross evidence at $out; run: run.sh t10-cross"
+  node "$ASSERT_DIR/t10-cross.mjs" "$out" "$@"
+}
+
 assert_harness() {
   local out="${T05_HARNESS_OUT:-$EVIDENCE_ROOT/harness}"
   [ -d "$out" ] || fail "no harness evidence at $out; run: run.sh harness"
@@ -461,11 +520,13 @@ case "${1:-}" in
   probe-a1) shift; scenario_probe_a1 "$@" ;;
   harness) shift; scenario_harness "$@" ;;
   dupe) shift; scenario_dupe "$@" ;;
+  t10-cross) shift; scenario_t10_cross "$@" ;;
   probe-lineage) shift; scenario_lineage "$@" ;;
   build) shift; scenario_build "$@" ;;
   assert-probe-a1) shift; assert_probe_a1 "$@" ;;
   assert-harness) shift; assert_harness "$@" ;;
   assert-dupe) shift; assert_dupe "$@" ;;
+  assert-t10-cross) shift; assert_t10_cross "$@" ;;
   assert-probe-lineage) shift; assert_lineage "$@" ;;
   real-tg-recipe) shift; scenario_real_tg_recipe "$@" ;;
   clean) cleanup_containers ;;

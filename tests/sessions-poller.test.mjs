@@ -15,7 +15,7 @@
 //
 // 绝不使用真实 botToken/chatId；运行必须隔离 HOME 以避免写真实 ~/.otg。
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -67,20 +67,27 @@ async function main() {
       }),
     },
     session: {
-      get: async ({ sessionID }) => ({
-        id: sessionID,
-        projectID: "proj-test",
-        cost: 0,
-        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-        time: { created: 0, updated: 0 },
-        title: "Test session",
-        location: { directory: "/tmp" },
-      }),
+      get: async ({ sessionID }) => {
+        fakeClient.sessionGetCalls.push({ sessionID });
+        if (fakeClient.sessionGetError) throw fakeClient.sessionGetError;
+        return {
+          id: sessionID,
+          projectID: "proj-test",
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          time: { created: 0, updated: 0 },
+          title: "Test session",
+          location: { directory: "/tmp" },
+        };
+      },
       create: async ({ title }) => ({ id: "ses-test", title }),
       context: async () => [],
     },
     replyCalls: [],
     replyError: undefined,
+    // t10 归属门：session.get 调用记录与可注入失败（默认成功，保持既有用例语义）。
+    sessionGetCalls: [],
+    sessionGetError: undefined,
   };
 
   // 假配置（字面值）；绝不真发。
@@ -208,15 +215,45 @@ async function main() {
   const realPassword = process.env.OPENCODE_PASSWORD;
   const realNoProxy = process.env.NO_PROXY;
   const realNoProxyLower = process.env.no_proxy;
+  const realHome = process.env.HOME;
+  const realXdgStateHome = process.env.XDG_STATE_HOME;
+  // dline 诊断文件在模块加载时固定到真实 HOME（OTG_DIR/DIAG_PATH 常量），
+  // 用例读它时必须用这个原始路径（process.env.HOME 会被下面的发现测试改写）。
+  const diagPath = join(realHome ?? homedir(), ".otg", "tgdiag.log");
 
-  // 注入端口发现（process.argv --port N）与密码（OPENCODE_SERVER_PASSWORD）。
-  // password === null → 显式不设任何密码 env（模拟缺失）。
+  // t10 端点发现测试隔离：HOME / XDG_STATE_HOME 指向测试专属目录，避免误读
+  // 真实 ~/.config/opencode/service.json 或 ~/.local/state/opencode/*。
+  const discoveryHome = join(baseDir, "discovery-home");
+  const discoveryStateHome = join(baseDir, "discovery-state");
+  const stateServiceDir = join(discoveryStateHome, "opencode");
+  const stateServicePath = join(stateServiceDir, "service.json");
+  const legacyServiceDir = join(discoveryHome, ".config", "opencode");
+  const legacyServicePath = join(legacyServiceDir, "service.json");
+
+  function writeJsonFileSync(path, value) {
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, JSON.stringify(value, null, 2));
+  }
+
+  function clearDiscoveryFiles() {
+    rmSync(stateServiceDir, { recursive: true, force: true });
+    rmSync(legacyServiceDir, { recursive: true, force: true });
+  }
+
+  // 注入 form 端点通道（§A.1 修订）。argv: "space"（默认，--port N）|
+  // "equals"（--port=N）| "none"（无 --port）。password === null → 显式不设
+  // 任何密码 env（模拟缺失）。state/legacy: service.json 对象；null = 确保
+  // 不存在（默认两者都清空，保证用例互不串扰）。文件与 env 的隔离都在本
+  // 助手内完成。
   // 同时把 127.0.0.1 加入 NO_PROXY：本机 loopback 回写绝不能被环境代理
   // 拦截（otg-toolchain 镜像内置 HTTP_PROXY；生产 opencode2 镜像的
   // NO_PROXY 已含 127.0.0.1，此处仅为测试环境隔离）。
-  function setFormChannel(port, password) {
-    if (port === undefined) {
+  function setFormChannel(port, password, options = {}) {
+    const { argv = "space", state = null, legacy = null } = options;
+    if (argv === "none" || port === undefined) {
       process.argv = [...realArgv.slice(0, 2)];
+    } else if (argv === "equals") {
+      process.argv = [...realArgv.slice(0, 2), "serve", `--port=${port}`];
     } else {
       process.argv = [...realArgv.slice(0, 2), "serve", "--port", String(port)];
     }
@@ -228,6 +265,15 @@ async function main() {
     }
     process.env.NO_PROXY = "127.0.0.1,localhost";
     process.env.no_proxy = "127.0.0.1,localhost";
+    process.env.HOME = discoveryHome;
+    process.env.XDG_STATE_HOME = discoveryStateHome;
+    clearDiscoveryFiles();
+    if (state !== null && state !== undefined) {
+      writeJsonFileSync(stateServicePath, state);
+    }
+    if (legacy !== null && legacy !== undefined) {
+      writeJsonFileSync(legacyServicePath, legacy);
+    }
   }
 
   function restoreFormChannel() {
@@ -240,6 +286,10 @@ async function main() {
     else process.env.NO_PROXY = realNoProxy;
     if (realNoProxyLower === undefined) delete process.env.no_proxy;
     else process.env.no_proxy = realNoProxyLower;
+    if (realHome === undefined) delete process.env.HOME;
+    else process.env.HOME = realHome;
+    if (realXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = realXdgStateHome;
   }
 
   // console/dline 双写的 this.log 替换为内存捕获（断言显式失败原因）。
@@ -4544,6 +4594,734 @@ ${expectedResultLine}`) ||
         restoreFetch();
         await registry.mutate((reg) => removeSessionRecord(reg, requestId));
         await monitor.dispose();
+      }
+    },
+  );
+
+  // ---- t10：form 端点发现（§A.1 修订）+ 归属门（实机事故修复）----------------
+  // 实机形态：daemon（opencode serve --service）argv 无 --port、env 无密码 →
+  // 旧发现失败；共享注册表下的非宿主 server（自带 --port + env 密码）把回写
+  // 打到自身 → 404 误删记录。这里冻结两条修复：发现优先级（argv → state
+  // service.json → legacy service.json → 显式失败）与 apply 前归属门。
+
+  function countDiagLines(fragment) {
+    const diag = existsSync(diagPath) ? readFileSync(diagPath, "utf8") : "";
+    return diag.split("\n").filter((line) => line.includes(fragment)).length;
+  }
+
+  function assertNoPasswordLeak(logs, secret) {
+    for (const entry of logs) {
+      const text = JSON.stringify(entry);
+      if (text.includes(secret)) {
+        throw new Error(`password leaked into logs: ${text}`);
+      }
+    }
+  }
+
+  // T10-ENDPOINT-1：argv `--port=N` equals 形态可发现并 204 应用（既有用例只
+  // 覆盖 `--port N` 空格形态）。
+  await runCase(
+    "T10-ENDPOINT-1 argv --port=N resolves and applies (204 deletes record)",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret", { argv: "equals" });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-eq", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        if (
+          server.requests[0].url !==
+          "/api/session/ses_testp0001/form/req-t10-eq/reply"
+        ) {
+          throw new Error(`url mismatch: ${server.requests[0].url}`);
+        }
+        if ((await findRecord("req-t10-eq")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-2：argv `--port 0` / `--port=abc` → 显式失败；即使 state /
+  // legacy service.json 均有效也绝不回落（no fallback）。
+  await runCase(
+    "T10-ENDPOINT-2 argv --port 0/invalid fails explicitly even with valid service.json files",
+    async () => {
+      const server = await startFormServer(() => 204);
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-inv", q_answers: [["A"]] }),
+          ),
+        );
+        const variants = [
+          ["space-0", 0, "space"],
+          ["equals-abc", "abc", "equals"],
+        ];
+        for (const [label, port, argv] of variants) {
+          setFormChannel(port, "test-secret", {
+            argv,
+            state: {
+              url: `http://127.0.0.1:${server.port}`,
+              pid: process.pid,
+              password: "state-secret",
+            },
+            legacy: { port: server.port, password: "legacy-secret" },
+          });
+          const monitor = makeMonitor(async () => {});
+          const logs = captureLogs(monitor);
+          const applied = await monitor.scanReplyQueue();
+          if (applied !== 0) {
+            throw new Error(`${label}: expected 0 applied, got ${applied}`);
+          }
+          if (server.requests.length !== 0) {
+            throw new Error(
+              `${label}: no HTTP request may be attempted on invalid --port`,
+            );
+          }
+          if (
+            !logs.some((entry) =>
+              entry.message.includes("is not a usable positive integer"),
+            )
+          ) {
+            throw new Error(
+              `${label}: missing explicit invalid-port reason: ${JSON.stringify(logs)}`,
+            );
+          }
+          if ((await findRecord("req-t10-inv")) === undefined) {
+            throw new Error(`${label}: record must be kept (unapplied)`);
+          }
+          await monitor.dispose();
+        }
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-inv"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-3：无 --port → state service.json（pid === 本进程）提供
+  // url + password，直接 204 应用（daemon 形态的修复路径）。
+  await runCase(
+    "T10-ENDPOINT-3 no --port: state service.json with pid match resolves url+password",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(undefined, null, {
+        argv: "none",
+        state: {
+          id: "svc-test",
+          version: "2.0.15",
+          url: `http://127.0.0.1:${server.port}`,
+          pid: process.pid,
+          password: "state-secret",
+        },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-state", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        const expectedAuth = `Basic ${Buffer.from("opencode:state-secret", "utf8").toString("base64")}`;
+        if (server.requests[0].headers.authorization !== expectedAuth) {
+          throw new Error(
+            `state service.json password must be used: ${server.requests[0].headers.authorization}`,
+          );
+        }
+        if ((await findRecord("req-t10-state")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-4：多个 service*.json → 优先 pid === 本进程的条目
+  // （即使默认 service.json 指向另一个 server）。
+  await runCase(
+    "T10-ENDPOINT-4 multiple service*.json: pid match wins over default service.json",
+    async () => {
+      const defaultServer = await startFormServer(() => 500);
+      const pidServer = await startFormServer(() => 204);
+      setFormChannel(undefined, null, { argv: "none" });
+      writeJsonFileSync(stateServicePath, {
+        url: `http://127.0.0.1:${defaultServer.port}`,
+        pid: process.pid + 1,
+        password: "default-secret",
+      });
+      writeJsonFileSync(join(stateServiceDir, "service-beta.json"), {
+        url: `http://127.0.0.1:${pidServer.port}`,
+        pid: process.pid,
+        password: "pid-secret",
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-multi", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (pidServer.requests.length !== 1 || defaultServer.requests.length !== 0) {
+          throw new Error(
+            `pid-matched entry must win: pid=${pidServer.requests.length} default=${defaultServer.requests.length}`,
+          );
+        }
+        const expectedAuth = `Basic ${Buffer.from("opencode:pid-secret", "utf8").toString("base64")}`;
+        if (pidServer.requests[0].headers.authorization !== expectedAuth) {
+          throw new Error("pid-matched password must be used");
+        }
+        if ((await findRecord("req-t10-multi")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await defaultServer.close();
+        await pidServer.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-5：无 pid 匹配 → 默认 service.json。
+  await runCase(
+    "T10-ENDPOINT-5 no pid match: default service.json is used",
+    async () => {
+      const defaultServer = await startFormServer(() => 204);
+      const otherServer = await startFormServer(() => 500);
+      setFormChannel(undefined, null, { argv: "none" });
+      writeJsonFileSync(stateServicePath, {
+        url: `http://127.0.0.1:${defaultServer.port}`,
+        pid: process.pid + 7,
+        password: "default-secret",
+      });
+      writeJsonFileSync(join(stateServiceDir, "service-beta.json"), {
+        url: `http://127.0.0.1:${otherServer.port}`,
+        pid: process.pid + 9,
+        password: "beta-secret",
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-default", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (
+          defaultServer.requests.length !== 1 ||
+          otherServer.requests.length !== 0
+        ) {
+          throw new Error(
+            `default service.json must be used: default=${defaultServer.requests.length} other=${otherServer.requests.length}`,
+          );
+        }
+        if ((await findRecord("req-t10-default")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await defaultServer.close();
+        await otherServer.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-6：state url 非 loopback / 非 http / 带凭据 → 拒绝（绝不把
+  // 密码发往别处），显式失败且密码不落日志。
+  await runCase(
+    "T10-ENDPOINT-6 non-loopback service.json url is rejected, password never logged",
+    async () => {
+      const rejected = [
+        "http://10.11.12.13:9",
+        "http://127.0.0.2:9",
+        "https://127.0.0.1:9",
+        "http://user:topsecret@127.0.0.1:9",
+      ];
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-nonloop", q_answers: [["A"]] }),
+          ),
+        );
+        for (const url of rejected) {
+          setFormChannel(undefined, null, {
+            argv: "none",
+            state: { url, pid: process.pid, password: "loopback-secret" },
+          });
+          const monitor = makeMonitor(async () => {});
+          const logs = captureLogs(monitor);
+          const applied = await monitor.scanReplyQueue();
+          if (applied !== 0) {
+            throw new Error(`${url}: expected 0 applied, got ${applied}`);
+          }
+          if (
+            !logs.some((entry) =>
+              entry.message.includes("url is not a loopback http endpoint"),
+            )
+          ) {
+            throw new Error(
+              `${url}: missing explicit non-loopback reason: ${JSON.stringify(logs)}`,
+            );
+          }
+          assertNoPasswordLeak(logs, "loopback-secret");
+          assertNoPasswordLeak(logs, "topsecret");
+          if ((await findRecord("req-t10-nonloop")) === undefined) {
+            throw new Error(`${url}: record must be kept (unapplied)`);
+          }
+          await monitor.dispose();
+        }
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) =>
+          removeSessionRecord(reg, "req-t10-nonloop"),
+        );
+      }
+    },
+  );
+
+  // T10-ENDPOINT-7：无 --port 且无 state 文件 → legacy ~/.config/opencode/
+  // service.json {port,password} 回退可用。
+  await runCase(
+    "T10-ENDPOINT-7 legacy ~/.config/opencode/service.json {port,password} fallback applies",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(undefined, null, {
+        argv: "none",
+        legacy: { port: server.port, password: "legacy-secret" },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-legacy", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        const expectedAuth = `Basic ${Buffer.from("opencode:legacy-secret", "utf8").toString("base64")}`;
+        if (server.requests[0].headers.authorization !== expectedAuth) {
+          throw new Error("legacy password must be used");
+        }
+        if ((await findRecord("req-t10-legacy")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-legacy"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-8：state 文件存在但不完整（缺 password）→ 继续尝试 legacy
+  // （发现链 (b) 不完整 → (c)）。
+  await runCase(
+    "T10-ENDPOINT-8 incomplete state service.json falls through to legacy",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(undefined, null, {
+        argv: "none",
+        state: {
+          url: `http://127.0.0.1:${server.port}`,
+          pid: process.pid,
+        },
+        legacy: { port: server.port, password: "legacy-secret" },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-fall", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        if ((await findRecord("req-t10-fall")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-fall"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-9：state service.json 每轮重新读取（首轮死端口失败保留记录，
+  // 重写为活端口后下轮成功）。
+  await runCase(
+    "T10-ENDPOINT-9 state service.json is re-read per attempt (dead port then live)",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(undefined, null, {
+        argv: "none",
+        state: {
+          url: "http://127.0.0.1:1",
+          pid: process.pid,
+          password: "state-secret",
+        },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-fresh", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        if (first !== 0) throw new Error(`expected 0 applied on dead port, got ${first}`);
+        if ((await findRecord("req-t10-fresh")) === undefined) {
+          throw new Error("record must be kept after failed fetch");
+        }
+        if (!logs.some((entry) => entry.message.includes("question apply failed"))) {
+          throw new Error(`failed fetch must be logged: ${JSON.stringify(logs)}`);
+        }
+        writeJsonFileSync(stateServicePath, {
+          url: `http://127.0.0.1:${server.port}`,
+          pid: process.pid,
+          password: "state-secret",
+        });
+        const second = await monitor.scanReplyQueue();
+        if (second !== 1) throw new Error(`expected 1 applied after rewrite, got ${second}`);
+        if ((await findRecord("req-t10-fresh")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-10：argv --port 存在但 env 密码缺失 → 显式失败，绝不回落
+  // 到有效的 state / legacy service.json。
+  await runCase(
+    "T10-ENDPOINT-10 argv port + missing env password fails, no service.json fallback",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, null, {
+        state: {
+          url: `http://127.0.0.1:${server.port}`,
+          pid: process.pid,
+          password: "state-secret",
+        },
+        legacy: { port: server.port, password: "legacy-secret" },
+      });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-nopw", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 0) throw new Error(`expected 0 applied, got ${applied}`);
+        if (server.requests.length !== 0) {
+          throw new Error("no HTTP request may be attempted without env password");
+        }
+        if (
+          !logs.some((entry) =>
+            entry.message.includes(
+              "neither OPENCODE_SERVER_PASSWORD nor OPENCODE_PASSWORD is set",
+            ),
+          )
+        ) {
+          throw new Error(`missing explicit no-password reason: ${JSON.stringify(logs)}`);
+        }
+        if ((await findRecord("req-t10-nopw")) === undefined) {
+          throw new Error("record must be kept (unapplied)");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-nopw"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-ENDPOINT-11：所有来源都缺失 → 显式失败原因列出全部尝试过的来源。
+  await runCase(
+    "T10-ENDPOINT-11 no source: failure reason names argv + state + legacy",
+    async () => {
+      setFormChannel(undefined, "test-secret", { argv: "none" });
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-none", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 0) throw new Error(`expected 0 applied, got ${applied}`);
+        const reason = logs.find((entry) =>
+          entry.message.includes("server port not discoverable"),
+        );
+        if (!reason) {
+          throw new Error(`missing explicit no-source reason: ${JSON.stringify(logs)}`);
+        }
+        for (const source of ["process.argv", "state service.json", "legacy service.json"]) {
+          if (!reason.message.includes(source)) {
+            throw new Error(`reason must name attempted source ${source}: ${reason.message}`);
+          }
+        }
+        if ((await findRecord("req-t10-none")) === undefined) {
+          throw new Error("record must be kept (unapplied)");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-none"));
+      }
+    },
+  );
+
+  // T10-GATE-1：question 路径归属门——session.get 失败 → 不 apply、不发 HTTP、
+  // 记录原样保留，且每 request_id 只记一次 skip dline（两轮扫描只 1 行）。
+  await runCase(
+    "T10-GATE-1 question gate: non-hosted session skips without apply/removal, logs once",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      fakeClient.sessionGetCalls = [];
+      fakeClient.sessionGetError = new Error("Session.NotFoundError");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-g1", q_answers: [["A"]] }),
+          ),
+        );
+        const marker = "apply skipped: session not hosted by this instance request=req-t10-g1";
+        const before = countDiagLines(marker);
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        const second = await monitor.scanReplyQueue();
+        if (first !== 0 || second !== 0) {
+          throw new Error(`expected 0 applied both rounds, got ${first}/${second}`);
+        }
+        if (server.requests.length !== 0) {
+          throw new Error("non-hosted instance must not POST the form reply");
+        }
+        if (logs.some((entry) => entry.message.includes("question apply failed"))) {
+          throw new Error("gate skip must not log an apply failure");
+        }
+        const record = await findRecord("req-t10-g1");
+        if (!record || record.q_answers == null || record.resolved !== false) {
+          throw new Error(`record must stay untouched: ${JSON.stringify(record)}`);
+        }
+        const after = countDiagLines(marker);
+        if (after - before !== 1) {
+          throw new Error(`expected exactly 1 skip dline, got ${after - before}`);
+        }
+        if (fakeClient.sessionGetCalls.length !== 2) {
+          throw new Error(
+            `gate must check ownership per round: ${fakeClient.sessionGetCalls.length}`,
+          );
+        }
+        await monitor.dispose();
+      } finally {
+        fakeClient.sessionGetError = undefined;
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-g1"));
+        await server.close();
+      }
+    },
+  );
+
+  // T10-GATE-2：permission 路径同样走归属门（非宿主不调 permission.reply、
+  // 不删除记录；404 终态逻辑只在宿主实例上生效）。
+  await runCase(
+    "T10-GATE-2 permission gate: non-hosted session skips permission.reply, record kept",
+    async () => {
+      fakeClient.replyCalls = [];
+      fakeClient.replyError = undefined;
+      fakeClient.sessionGetError = new Error("Session.NotFoundError");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({ request_id: "req-t10-g2", reply: "once" }),
+          ),
+        );
+        const marker = "apply skipped: session not hosted by this instance request=req-t10-g2";
+        const before = countDiagLines(marker);
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        const second = await monitor.scanReplyQueue();
+        if (first !== 0 || second !== 0) {
+          throw new Error(`expected 0 applied both rounds, got ${first}/${second}`);
+        }
+        if (fakeClient.replyCalls.length !== 0) {
+          throw new Error("non-hosted instance must not call permission.reply");
+        }
+        if (logs.some((entry) => entry.message.includes("Permission reply apply failed"))) {
+          throw new Error("gate skip must not log an apply failure");
+        }
+        const record = await findRecord("req-t10-g2");
+        if (!record || record.reply !== "once" || record.resolved !== false) {
+          throw new Error(`record must stay untouched: ${JSON.stringify(record)}`);
+        }
+        const after = countDiagLines(marker);
+        if (after - before !== 1) {
+          throw new Error(`expected exactly 1 skip dline, got ${after - before}`);
+        }
+        await monitor.dispose();
+      } finally {
+        fakeClient.sessionGetError = undefined;
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t10-g2"));
+      }
+    },
+  );
+
+  // T10-GATE-3：归属门通过 → 与既有语义完全一致（session.get 按记录
+  // sessionID 调用；permission.reply 透传并删除记录）。
+  await runCase(
+    "T10-GATE-3 hosted session passes the gate and applies exactly as before",
+    async () => {
+      fakeClient.replyCalls = [];
+      fakeClient.replyError = undefined;
+      fakeClient.sessionGetError = undefined;
+      fakeClient.sessionGetCalls = [];
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          makeRecord({ request_id: "req-t10-g3", reply: "always" }),
+        ),
+      );
+      const monitor = makeMonitor(async () => {});
+      captureLogs(monitor);
+      const applied = await monitor.scanReplyQueue();
+      if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+      if (fakeClient.replyCalls.length !== 1) {
+        throw new Error(`expected 1 permission.reply call, got ${fakeClient.replyCalls.length}`);
+      }
+      if (
+        fakeClient.sessionGetCalls.length !== 1 ||
+        fakeClient.sessionGetCalls[0].sessionID !== "ses_testp0001"
+      ) {
+        throw new Error(
+          `gate must query the record session: ${JSON.stringify(fakeClient.sessionGetCalls)}`,
+        );
+      }
+      if ((await findRecord("req-t10-g3")) !== undefined) {
+        throw new Error("record must be deleted after successful apply");
+      }
+      await monitor.dispose();
+    },
+  );
+
+  // T10-GATE-4：归属门的失败是「本轮跳过」而非粘滞——session.get 恢复后
+  // 下一轮正常 apply。
+  await runCase(
+    "T10-GATE-4 transient gate failure retries and applies on the next round",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      fakeClient.sessionGetError = new Error("network unreachable");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID: "req-t10-g4", q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        if (first !== 0) throw new Error(`expected 0 applied on gate failure, got ${first}`);
+        if (server.requests.length !== 0) {
+          throw new Error("no HTTP request while the gate fails");
+        }
+        if ((await findRecord("req-t10-g4")) === undefined) {
+          throw new Error("record must be kept after gate failure");
+        }
+        fakeClient.sessionGetError = undefined;
+        const second = await monitor.scanReplyQueue();
+        if (second !== 1) throw new Error(`expected 1 applied after recovery, got ${second}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        if ((await findRecord("req-t10-g4")) !== undefined) {
+          throw new Error("record must be deleted after recovery");
+        }
+        await monitor.dispose();
+      } finally {
+        fakeClient.sessionGetError = undefined;
+        restoreFormChannel();
+        await server.close();
       }
     },
   );

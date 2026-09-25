@@ -1,0 +1,18 @@
+data: {"id":"evt_0d8ef891b001CoQQdQkQ9tUF5N","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0d8ef8957001lmI74Yutlr1lJe","created":1790345972055,"type":"session.created","location":{"directory":"/tmp/home"},"data":{"sessionID":"ses_f271076aaffeGPeYlual6LXqGm","slug":"shiny-island","version":"2.0.15","projectID":"74b23e0067970794112a980bf226755fbfff7d22","location":{"directory":"/tmp/home"},"subpath":"","title":"t10-cross"},"durable":{"aggregateID":"ses_f271076aaffeGPeYlual6LXqGm","seq":0,"version":1}}
+
+data: {"id":"evt_0d8ef899d0023sISDaH7FFIfwB","created":1790345972125,"type":"form.created","location":{"directory":"/tmp/home"},"data":{"form":{"id":"frm_0d8ef899d001Ri2NU6nlZHpDPA","sessionID":"ses_f271076aaffeGPeYlual6LXqGm","title":"t10-cross question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}}
+
+data: {"id":"evt_0d8ef9421001ba5DFZjn9Kqal9","created":1790345974817,"type":"models-dev.refreshed","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d8ef946d001Kjc6JH80Uj4PEP","created":1790345974893,"type":"integration.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d8ef9493001Adm1kVOGomoNu2","created":1790345974931,"type":"provider.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+data: {"id":"evt_0d8ef9499001VRNbGF3kUWqF4A","created":1790345974937,"type":"model.updated","location":{"directory":"/tmp/home"},"data":{}}
+
+: heartbeat
+
