@@ -1,0 +1,76 @@
+cert ok: test certificate generated (not evidence)
+=== scenario: dupe (duplicate waiting records / unwrapped message_id regression) ===
+=== exact command ===
+docker run --rm --name t09-dupe-scenario-426181 --network t09-dupe-net-426181 \
+  -v <plugin-dir>:/plugin:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t09/tests/e2e/container/harness:/harness:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t09/tests/e2e/container/evidence/dupe:/evidence \
+  -e T05_PLUGIN=/plugin/plugin-under-test.ts -e T05_PORT=24207 -e T05_PASSWORD=<redacted> \
+  -e NODE_TLS_REJECT_UNAUTHORIZED=0 (fake endpoint test cert; container-local) \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /harness/dupe-scenario.sh'
+=== output follows ===
++ export HOME=/tmp/home
++ ROOT=/tmp/proj
++ mkdir -p /tmp/home/.config/opencode/plugin /tmp/home/.otg /tmp/proj
++ cd /tmp/proj
++ PLUGIN_SRC=/plugin/plugin-under-test.ts
++ cp /plugin/plugin-under-test.ts /tmp/home/.config/opencode/plugin/telegram-session-monitor.ts
++ FAKE_HOST=fake-tg
++ FAKE_PORT=8443
++ cat
++ date -u +%Y-%m-%dT%H:%M:%S.000Z
++ NOW=2026-09-25T13:11:33.000Z
++ sed s/__NOW__/2026-09-25T13:11:33.000Z/g /harness/configs/projects.dupe-seed.json
++ PORT=24207
++ set +x
++ export NODE_TLS_REJECT_UNAUTHORIZED=0
++ DIAG=/tmp/home/.otg/tgdiag.log
++ SERVER_LOG=/tmp/home/.local/share/opencode/log/opencode.log
++ SPID=13
++ API=opencode api --server http://127.0.0.1:24207
++ + setsid opencode serve --hostname 127.0.0.1seq --port 24207 1 --print-logs 60
+
++ opencode api --server http://127.0.0.1:24207 plugin.list
++ sleep 0.5
++ opencode api --server http://127.0.0.1:24207 plugin.list
++ break
++ seq 1 60
++ grep -q loading plugin.*telegram-session-monitor.ts /tmp/home/.local/share/opencode/log/opencode.log
++ sleep 0.5
++ grep -q loading plugin.*telegram-session-monitor.ts /tmp/home/.local/share/opencode/log/opencode.log
++ break
++ seq 1 60
++ grep -q MODULE LOADED /tmp/home/.otg/tgdiag.log
++ break
++ seq 1 60
++ grep -q sessions scan: starting 1s ticker /tmp/home/.otg/tgdiag.log
++ break
++ sleep 15
++ cp /tmp/home/.otg/projects.json /evidence/projects-after-dupe.json
++ cp /tmp/home/.otg/tgdiag.log /evidence/tgdiag-dupe.txt
++ cp /tmp/home/.local/share/opencode/log/opencode.log /evidence/server-log.txt
++ grep -v server password /tmp/t09-dupe-serve.log
++ kill -TERM -13
++ wait 13
++ true
++ seq 1 20
++ curl -s -o /dev/null --max-time 1 http://127.0.0.1:24207/
++ break
++ curl -s -o /dev/null --max-time 1 http://127.0.0.1:24207/
++ leftovers=
++ [ -r /proc/1/cmdline ]
++ tr \0  
++ cmd=sh -c sh /harness/dupe-scenario.sh 
++ [ -r /proc/7/cmdline ]
++ tr \0  
++ cmd=sh /harness/dupe-scenario.sh 
++ [ -n  ]
++ echo ok: serve stopped, port 24207 released, no leftover opencode serve process
++ echo RESULT: ok dupe scenario completed
++ echo --- this run's scan/send lines ---
++ grep -E MODULE LOADED|setup\(\)|sessions scan|Session record send failed|Question wizard send returned no message_id|sendMessageWithKeyboard response /tmp/home/.otg/tgdiag.log
+ok: serve stopped, port 24207 released, no leftover opencode serve process
+RESULT: ok dupe scenario completed
+--- this run's scan/send lines ---
+2026-09-25T13:11:34.246Z [13] MODULE LOADED
+2026-09-25T13:11:34.412Z [13] setup() pid=13 root=/tmp/proj
+2026-09-25T13:11:34.417Z [13] sessions scan: starting 1s ticker
+2026-09-25T13:11:35.424Z [13] sendMessageWithKeyboard response: typeof=object keys=message_id

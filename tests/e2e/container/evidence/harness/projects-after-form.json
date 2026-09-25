@@ -6,24 +6,24 @@
       "addedAt": "2026-01-01T00:00:00.000Z",
       "sessions": [
         {
-          "session_id": "ses_f2b4ef4eaffelcwqMPzfUFPJrC",
+          "session_id": "ses_f2751117fffepb77I5vpD8smS0",
           "session_name": "e2e-waiting",
           "type": "permission",
-          "message": "{\"id\":\"per_0d4b10f60001762ccmZYT6q47a\",\"sessionID\":\"ses_f2b4ef4eaffelcwqMPzfUFPJrC\",\"action\":\"shell\",\"resources\":[\"echo e2e-waiting\"]}",
+          "message": "{\"id\":\"per_0d8aef2c2001VWWrIwSEjtUmsU\",\"sessionID\":\"ses_f2751117fffepb77I5vpD8smS0\",\"action\":\"shell\",\"resources\":[\"echo e2e-waiting\"]}",
           "send": false,
           "resolved": false,
-          "request_id": "per_0d4b10f60001762ccmZYT6q47a",
-          "created_at": "2026-09-24T18:32:49.739Z"
+          "request_id": "per_0d8aef2c2001VWWrIwSEjtUmsU",
+          "created_at": "2026-09-25T13:09:00.205Z"
         },
         {
-          "session_id": "ses_f2b4ef4eaffelcwqMPzfUFPJrC",
+          "session_id": "ses_f2751117fffepb77I5vpD8smS0",
           "session_name": "e2e-waiting",
           "type": "question",
-          "message": "{\"form\":{\"id\":\"frm_0d4b11392001wUsLnkN1X3j34p\",\"sessionID\":\"ses_f2b4ef4eaffelcwqMPzfUFPJrC\",\"title\":\"e2e question\",\"fields\":[{\"key\":\"choice\",\"title\":\"Pick\",\"type\":\"string\",\"options\":[{\"value\":\"a\",\"label\":\"A\"},{\"value\":\"b\",\"label\":\"B\"}],\"custom\":true}]}}",
+          "message": "{\"form\":{\"id\":\"frm_0d8aef6f500194ir6kmffheni5\",\"sessionID\":\"ses_f2751117fffepb77I5vpD8smS0\",\"title\":\"e2e question\",\"fields\":[{\"key\":\"choice\",\"title\":\"Pick\",\"type\":\"string\",\"options\":[{\"value\":\"a\",\"label\":\"A\"},{\"value\":\"b\",\"label\":\"B\"}],\"custom\":true}]}}",
           "send": false,
           "resolved": false,
-          "request_id": "frm_0d4b11392001wUsLnkN1X3j34p",
-          "created_at": "2026-09-24T18:32:49.812Z"
+          "request_id": "frm_0d8aef6f500194ir6kmffheni5",
+          "created_at": "2026-09-25T13:09:00.279Z"
         }
       ]
     }

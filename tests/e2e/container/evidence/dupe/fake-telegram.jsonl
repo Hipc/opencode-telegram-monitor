@@ -1,0 +1,37 @@
+{"at":"2026-09-25T13:11:32.566Z","event":"listening","port":8443}
+{"at":"2026-09-25T13:11:34.425Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:34.431Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:34.432Z","method":"deleteWebhook","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:34.435Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:34.479Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:34.480Z","method":"setMyCommands","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:34.482Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:34.483Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:34.484Z","method":"getUpdates","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:35.422Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:35.424Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:35.424Z","method":"sendRichMessage","target":"api.telegram.org:443","message_id":9001,"chat_id":"100200300","html":"<p>⚠️ proj</p>\n<table bordered compact><tr><th>Type</th><td>permission</td></tr><tr><th>Session</th><td>t09 dupe permission</td></tr><tr><th>Permission</th><td>shell</td></tr><tr><th>Pattern</th><td>echo t09-dupe-marker-perm</td></tr></table>"}
+{"at":"2026-09-25T13:11:35.432Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:35.434Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:35.434Z","method":"sendRichMessage","target":"api.telegram.org:443","message_id":9002,"chat_id":"100200300","html":"<p>❓ proj</p>\n<table bordered compact><tr><th>Type</th><td>question (1 / 1)</td></tr><tr><th>Session</th><td>t09 dupe question</td></tr><tr><th>Question 1/1</th><td>t09-dupe-marker-question</td></tr><tr><th>Header</th><td>Pick</td></tr><tr><th>Option 1</th><td>A</td></tr></table>"}
+{"at":"2026-09-25T13:11:36.487Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:36.489Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:36.489Z","method":"getUpdates","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:38.493Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:38.495Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:38.495Z","method":"getUpdates","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:40.500Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:40.501Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:40.501Z","method":"getUpdates","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:42.505Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:42.506Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:42.506Z","method":"getUpdates","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:44.511Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:44.512Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:44.513Z","method":"getUpdates","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:46.516Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:46.517Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:46.517Z","method":"getUpdates","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:48.522Z","event":"connect","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:48.524Z","event":"tls_ok","target":"api.telegram.org:443"}
+{"at":"2026-09-25T13:11:48.524Z","method":"getUpdates","target":"api.telegram.org:443"}

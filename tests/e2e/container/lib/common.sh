@@ -60,14 +60,24 @@ fix_ownership() {
     chown -R "$HOST_UID_GID" /w >/dev/null
 }
 
-# Kill leftover containers from an interrupted run (only our own t05*/t05b* prefix).
+# Kill leftover containers from an interrupted run (only our own t05*/t09-*
+# prefixes) and the t09 duplicate-scenario network.
 cleanup_containers() {
   local names
   names=$(docker ps -a --filter "name=^/t05" --format '{{.Names}}' 2>/dev/null || true)
+  names="${names} $(docker ps -a --filter "name=^/t09-" --format '{{.Names}}' 2>/dev/null || true)"
+  names="$(echo "$names" | tr '\n' ' ' | tr -s ' ' | sed 's/^ //;s/ $//')"
   if [ -n "$names" ]; then
-    log "removing leftover t05* containers: $(echo "$names" | tr '\n' ' ')"
+    log "removing leftover t05*/t09-* containers: $names"
     # shellcheck disable=SC2086
     docker rm -f $names >/dev/null 2>&1 || true
+  fi
+  local nets
+  nets=$(docker network ls --filter "name=^t09-dupe-net" --format '{{.Name}}' 2>/dev/null || true)
+  if [ -n "$nets" ]; then
+    log "removing leftover t09-dupe-net* networks: $(echo "$nets" | tr '\n' ' ')"
+    # shellcheck disable=SC2086
+    docker network rm $nets >/dev/null 2>&1 || true
   fi
 }
 

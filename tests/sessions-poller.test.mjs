@@ -15,10 +15,10 @@
 //
 // 绝不使用真实 botToken/chatId；运行必须隔离 HOME 以避免写真实 ~/.otg。
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -147,6 +147,31 @@ async function main() {
       }
     }
     return undefined;
+  }
+
+  // t09-dupe-fix 回归辅助：列出全部同 request_id 副本。
+  async function findAllRecords(requestID) {
+    const reg = await registry.read();
+    const found = [];
+    for (const entry of reg.projects) {
+      for (const session of entry.sessions ?? []) {
+        if (session.request_id === requestID) found.push(session);
+      }
+    }
+    return found;
+  }
+
+  // t09-dupe-fix 回归辅助：绕过 appendSessionRecord 的 request_id 幂等（修复
+  // 目标本身），直接向注册表根条目注入重复副本——精确复现多实例重复 append
+  // 遗留的历史状态（同 request_id、send=false 多份）。
+  async function seedDuplicateRecord(record) {
+    await registry.mutate((reg) => ({
+      projects: reg.projects.map((entry) =>
+        entry.path === root
+          ? { ...entry, sessions: [...(entry.sessions ?? []), record] }
+          : entry,
+      ),
+    }));
   }
 
   // ---- ticket 04 helpers：v2 form 回写通道（契约 §A.1）----
@@ -1553,6 +1578,17 @@ async function main() {
     globalThis.fetch = async (url, options) => {
       calls.push({ url: String(url), body: JSON.parse(options.body) });
       return new Response(JSON.stringify({ ok: true, result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+  }
+  // t09-dupe-fix：可定制 result 的 fetch stub（API-305 需要真实
+  // `{message_id}` 解包形态）。telegramRequest 返回 envelope.result。
+  async function stubFetchResult(calls, result) {
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url: String(url), body: JSON.parse(options.body) });
+      return new Response(JSON.stringify({ ok: true, result }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -4333,6 +4369,182 @@ ${expectedResultLine}`) ||
         throw new Error(`req-ttl-b must stay untouched: ${JSON.stringify(b)}`);
       }
       await monitor.dispose();
+    },
+  );
+
+  // ---- t09-dupe-fix 回归（重复等待记录 → 连续重复推送事故） ----
+  // 实机事故（2026-09-25）：多实例共享同一 projects.json 时，同一等待请求被
+  // append 出多份 send=false 副本；poller 每轮发送第一份未发送副本，markSessionSent
+  // 只置位第一条（幂等 no-op）→ 其余副本保持 send=false → 每轮重复发送同一请求
+  // （实机 16 次连续推送）。修复：append 同 request_id 幂等 + mark 全副本置位 +
+  // 扫描同轮按 request_id 去重。
+
+  // API-601：同 request_id 两份 send=false 副本 → 一轮扫描恰发送 1 次；两份
+  // 副本都置 send=true（单轮自愈）；下一轮不再发送。
+  await runCase(
+    "API-601 duplicate records: one scan sends exactly once and marks every copy (self-heal)",
+    async () => {
+      const requestId = "req-601a";
+      await registry.mutate((reg) =>
+        appendSessionRecord(reg, root, makeRecord({ request_id: requestId })),
+      );
+      // 注入第二份同 request_id 副本（绕过 append 幂等，复现历史遗留状态）
+      await seedDuplicateRecord(makeRecord({ request_id: requestId }));
+      const seeded = await findAllRecords(requestId);
+      if (seeded.length !== 2 || seeded.some((r) => r.send !== false)) {
+        throw new Error(`seed must be 2 pending copies: ${JSON.stringify(seeded)}`);
+      }
+      const sent = [];
+      const monitor = makeMonitor(async (text) => {
+        sent.push(text);
+      });
+      const first = await monitor.scanSessionQueue();
+      if (first !== 1) {
+        throw new Error(`expected 1 handled on first scan, got ${first}`);
+      }
+      if (sent.length !== 1) {
+        throw new Error(
+          `expected exactly 1 send for duplicated request_id, got ${sent.length}: ${JSON.stringify(sent)}`,
+        );
+      }
+      const afterFirst = await findAllRecords(requestId);
+      if (afterFirst.length !== 2) {
+        throw new Error(`duplicate copies must survive: ${JSON.stringify(afterFirst)}`);
+      }
+      if (afterFirst.some((r) => r.send !== true)) {
+        throw new Error(
+          `every duplicate copy must be marked send=true (self-heal): ${JSON.stringify(afterFirst)}`,
+        );
+      }
+      // 下一轮：无待发送副本 → 零发送（修复前第二轮仍会重发剩余副本）
+      const second = await monitor.scanSessionQueue();
+      if (second !== 0 || sent.length !== 1) {
+        throw new Error(
+          `second scan must send nothing (handled=${second}, sends=${sent.length})`,
+        );
+      }
+      await monitor.dispose();
+      await registry.mutate((reg) => removeSessionRecord(reg, requestId));
+    },
+  );
+
+  // API-602：同 request_id 副本 + 发送失败 → 本轮恰 1 次尝试（同轮去重），
+  // send 保持 false；下一轮重试成功 → 恰 1 次尝试且两份副本一起置位；
+  // 第三轮零尝试零发送。
+  await runCase(
+    "API-602 duplicate records: failed send retries once per scan, then marks every copy",
+    async () => {
+      const requestId = "req-602a";
+      await registry.mutate((reg) =>
+        appendSessionRecord(reg, root, makeRecord({ request_id: requestId })),
+      );
+      await seedDuplicateRecord(makeRecord({ request_id: requestId }));
+      let calls = 0;
+      const monitor = makeMonitor(async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("telegram send boom");
+      });
+      const first = await monitor.scanSessionQueue();
+      if (first !== 0 || calls !== 1) {
+        throw new Error(
+          `failure round must attempt exactly once (handled=${first}, attempts=${calls})`,
+        );
+      }
+      let copies = await findAllRecords(requestId);
+      if (copies.some((r) => r.send !== false)) {
+        throw new Error(`failed send must keep every copy send=false: ${JSON.stringify(copies)}`);
+      }
+      const second = await monitor.scanSessionQueue();
+      if (second !== 1 || calls !== 2) {
+        throw new Error(
+          `retry round must attempt exactly once and succeed (handled=${second}, attempts=${calls})`,
+        );
+      }
+      copies = await findAllRecords(requestId);
+      if (copies.some((r) => r.send !== true)) {
+        throw new Error(`retry success must mark every copy: ${JSON.stringify(copies)}`);
+      }
+      const third = await monitor.scanSessionQueue();
+      if (third !== 0 || calls !== 2) {
+        throw new Error(
+          `settled request must not be retried (handled=${third}, attempts=${calls})`,
+        );
+      }
+      await monitor.dispose();
+      await registry.mutate((reg) => removeSessionRecord(reg, requestId));
+    },
+  );
+
+  // API-603 (t09-dupe-fix)：sendMessageWithKeyboard 从**已解包**响应顶层读取
+  // message_id（telegramWithRetry 返回 envelope.result）。fake fetch 返回
+  // {ok:true,result:{message_id:42}} → 真实发送路径 → q_msg_id=42 落盘，
+  // 且一次性响应形态诊断记录 typeof=object keys=message_id（修复前解析
+  // response.result.* 恒 undefined → q_msg_id 永不回写）。
+  await runCase(
+    "API-603 sendMessageWithKeyboard persists q_msg_id from unwrapped message_id + shape diagnostic",
+    async () => {
+      const requestId = "req-603a";
+      await registry.mutate((reg) =>
+        appendSessionRecord(
+          reg,
+          root,
+          questionWizardRecord(requestId, [
+            { question: "选择操作", header: "操作", options: [{ label: "A" }] },
+          ]),
+        ),
+      );
+      const fetches = [];
+      await stubFetchResult(fetches, { message_id: 42 });
+      const monitor = new TelegramSessionMonitor(
+        fakeClient,
+        fakeConfig,
+        root,
+        registry,
+      );
+      try {
+        const handled = await monitor.scanSessionQueue();
+        if (handled !== 1) {
+          throw new Error(`expected 1 handled, got ${handled}`);
+        }
+        const sendCalls = fetches.filter((call) =>
+          call.url.includes("sendRichMessage"),
+        );
+        if (sendCalls.length !== 1) {
+          throw new Error(
+            `expected 1 sendRichMessage call, got ${sendCalls.length}`,
+          );
+        }
+        if (!sendCalls[0].body.reply_markup?.inline_keyboard) {
+          throw new Error(
+            `question wizard send must keep keyboard: ${JSON.stringify(sendCalls[0].body)}`,
+          );
+        }
+        const persisted = await findRecord(requestId);
+        if (!persisted || persisted.q_msg_id !== 42) {
+          throw new Error(
+            `q_msg_id must be persisted from unwrapped {message_id:42}: ${JSON.stringify(persisted)}`,
+          );
+        }
+        if (persisted.send !== true) {
+          throw new Error(`send must be marked after wizard send: ${JSON.stringify(persisted)}`);
+        }
+        // 一次性响应形态诊断（typeof + 顶层键名，仅形态不含内容）
+        const diagPath = join(homedir(), ".otg", "tgdiag.log");
+        const diag = existsSync(diagPath) ? readFileSync(diagPath, "utf8") : "";
+        if (
+          !diag.includes(
+            "sendMessageWithKeyboard response: typeof=object keys=message_id",
+          )
+        ) {
+          throw new Error(
+            `shape diagnostic line missing in tgdiag.log (tail: ${diag.slice(-400)})`,
+          );
+        }
+      } finally {
+        restoreFetch();
+        await registry.mutate((reg) => removeSessionRecord(reg, requestId));
+        await monitor.dispose();
+      }
     },
   );
 

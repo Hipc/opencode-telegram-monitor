@@ -1,6 +1,6 @@
-Bundled 18 modules in 6ms
+Bundled 18 modules in 7ms
 
-  monitor.ts  138.50 KB  (entry point)
+  monitor.ts  138.96 KB  (entry point)
 
 build: bundled src/ -> monitor.ts (PLUGIN_VERSION 1.0.0)
-build ok: 138501 bytes
+build ok: 138957 bytes

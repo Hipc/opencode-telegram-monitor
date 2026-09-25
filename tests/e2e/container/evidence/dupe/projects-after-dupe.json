@@ -1,0 +1,42 @@
+{
+  "projects": [
+    {
+      "path": "/tmp/proj",
+      "enabled": true,
+      "addedAt": "2026-01-01T00:00:00.000Z",
+      "sessions": [
+        {
+          "session_id": "ses_t09dupe0001",
+          "session_name": "t09 dupe permission",
+          "type": "permission",
+          "message": "{\"id\":\"per_t09dupe0001\",\"sessionID\":\"ses_t09dupe0001\",\"action\":\"shell\",\"resources\":[\"echo t09-dupe-marker-perm\"]}",
+          "send": true,
+          "resolved": false,
+          "request_id": "per_t09dupe0001",
+          "created_at": "2026-09-25T13:11:33.000Z"
+        },
+        {
+          "session_id": "ses_t09dupe0001",
+          "session_name": "t09 dupe permission",
+          "type": "permission",
+          "message": "{\"id\":\"per_t09dupe0001\",\"sessionID\":\"ses_t09dupe0001\",\"action\":\"shell\",\"resources\":[\"echo t09-dupe-marker-perm\"]}",
+          "send": true,
+          "resolved": false,
+          "request_id": "per_t09dupe0001",
+          "created_at": "2026-09-25T13:11:33.000Z"
+        },
+        {
+          "session_id": "ses_t09dupe0002",
+          "session_name": "t09 dupe question",
+          "type": "question",
+          "message": "{\"form\":{\"id\":\"frm_t09dupe0002\",\"sessionID\":\"ses_t09dupe0002\",\"title\":\"t09 dupe form\",\"fields\":[{\"key\":\"q0\",\"title\":\"Pick\",\"description\":\"t09-dupe-marker-question\",\"type\":\"string\",\"options\":[{\"value\":\"a\",\"label\":\"A\"}]}]}}",
+          "send": true,
+          "resolved": false,
+          "request_id": "frm_t09dupe0002",
+          "created_at": "2026-09-25T13:11:33.000Z",
+          "q_msg_id": 9002
+        }
+      ]
+    }
+  ]
+}

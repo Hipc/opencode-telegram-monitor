@@ -285,18 +285,33 @@ export function deleteProjectByPath(
 }
 
 /**
- * 追加一条 SessionRecord 到指定路径条目（决策 #3：追加不覆盖、不去重）。
+ * 追加一条 SessionRecord 到指定路径条目（决策 #3：追加不覆盖）。
+ * **同 request_id 幂等**（t09-dupe-fix supersede §4.1「纯函数不去重」条款）：
+ * 多个 monitor 共享同一注册表时（同进程多次插件加载 / 多进程），每个实例都会
+ * 为同一等待请求 append——重复副本会让 poller 每轮重复发送同一请求（实机事故：
+ * 同 request_id 连续重复推送）。同一 request_id 在注册表**任意条目**已存在 →
+ * 返回原 registry 引用（不追加、不写盘）；不同 request_id 仍追加不覆盖
+ * （多个并发等待各自成条，互不影响）。
  * 按 normalizeRegistryPath(rootPath) 匹配条目（复用 findRegistryEntry 语义）；
  * 条目不存在 → 返回原 registry 引用（幂等：mutate 的 next === registry 短路
  * 不写盘；调用方已先 registerProject，路径不存在是防御性兜底）。
  * 返回的 registry 必须是新对象引用（mutate 依赖引用比较做幂等短路）。
- * 契约 docs/modules/sessions-relay.md §4.1（冻结）。
+ * 契约 docs/modules/sessions-relay.md §4.1（同 request_id 去重条款由
+ * t09-dupe-fix 修订，待文档回写）。
  */
 export function appendSessionRecord(
   registry: ProjectRegistry,
   rootPath: string,
   record: SessionRecord,
 ): ProjectRegistry {
+  // 全局 request_id 去重：任意条目已有同 id 副本 → 原引用（多实例重复写入
+  // 同一等待请求的幂等收敛）。请求 ID 按契约全局唯一，故跨条目检查。
+  for (const entry of registry.projects) {
+    const sessions = entry.sessions;
+    if (!sessions) continue;
+    if (sessions.some((existing) => existing.request_id === record.request_id))
+      return registry;
+  }
   const normalized = normalizeRegistryPath(rootPath);
   const index = registry.projects.findIndex(
     (entry) => normalizeRegistryPath(entry.path) === normalized,
@@ -397,11 +412,16 @@ export function removeExpiredSessionRecords(
 }
 
 /**
- * 按 request_id 全局精确标记 send=true（poller 发送成功后置位）。无匹配 →
- * undefined；已置位 → 原引用；resolved 保持不动（poller 只置 send）。
- * 契约 docs/modules/sessions-relay.md §4.2（冻结）；Round 6（§16）起仅存
- * send 一个置位方向（resolved 终态已由删除语义取代，markSessionResolved
- * 移除）。
+ * 按 request_id 全局标记 send=true（poller 发送成功后置位）。**全部同
+ * request_id 副本一起置位**（t09-dupe-fix supersede §4.2「找第一条」条款）：
+ * 跨进程竞态遗留的多份副本若只标第一条，其余副本仍 send=false → 每轮扫描
+ * 重复发送同一请求（实机事故根因）；一次全标实现单轮自愈。
+ * 三态：无匹配 → undefined；匹配且全部已 true → 原引用（幂等，不写盘）；
+ * 否则新 registry，仅把匹配副本的 send 置 true，resolved 及其它字段不动
+ * （poller 只置 send）。契约 docs/modules/sessions-relay.md §4.2（同
+ * request_id 多副本置位条款由 t09-dupe-fix 修订，待文档回写）；Round 6
+ * （§16）起仅存 send 一个置位方向（resolved 终态已由删除语义取代，
+ * markSessionResolved 移除）。
  */
 export function markSessionSent(
   registry: ProjectRegistry,
@@ -597,31 +617,34 @@ export function clearQuestionInputs(
 /**
  * 私有实现（supersede §4.2 的 markSessionFlag）：Round 6 起仅服务 send 置位，
  * 不再需要 resolved 分支（resolved 终态已由删除语义取代，见 §16）。
- * 全局 request_id 精确匹配（跨全部条目找第一条）；无匹配 → undefined；已
- * 置位 → 原引用（幂等）；否则新 registry 仅改 send=true（resolved 不动）。
+ * t09-dupe-fix：全局 request_id 匹配**全部副本**一次置位（见 markSessionSent
+ * 注释）——已 true 的副本原样保留（引用不变），只重建含变更副本的条目。
+ * 无匹配 → undefined；匹配但全部已 true → 原引用（幂等）；否则新 registry
+ * 仅改 send=true（resolved 及其它字段不动）。
  */
 function markSessionFlag(
   registry: ProjectRegistry,
   requestID: string,
 ): ProjectRegistry | undefined {
-  for (let i = 0; i < registry.projects.length; i++) {
-    const entry = registry.projects[i]!;
+  let matched = false;
+  let changed = false;
+  const projects = registry.projects.map((entry) => {
     const sessions = entry.sessions;
-    if (!sessions) continue;
-    for (let j = 0; j < sessions.length; j++) {
-      if (sessions[j]!.request_id !== requestID) continue;
-      if (sessions[j]!.send === true) return registry; // 已置位：幂等，原引用
-      const projects = registry.projects.slice();
-      projects[i] = {
-        ...entry,
-        sessions: sessions.map((record, k) =>
-          k !== j ? record : { ...record, send: true },
-        ),
-      };
-      return { projects };
-    }
-  }
-  return undefined; // 无匹配：无可标记记录，静默跳过写盘
+    if (!sessions) return entry;
+    let entryChanged = false;
+    const nextSessions = sessions.map((record) => {
+      if (record.request_id !== requestID) return record;
+      matched = true;
+      if (record.send === true) return record; // 已置位副本：原引用保留
+      entryChanged = true;
+      return { ...record, send: true };
+    });
+    if (!entryChanged) return entry;
+    changed = true;
+    return { ...entry, sessions: nextSessions };
+  });
+  if (!matched) return undefined; // 无匹配：无可标记记录，静默跳过写盘
+  return changed ? { projects } : registry; // 全已置位：幂等，原引用
 }
 
 // 跨进程写锁参数（契约 docs/modules/projects-registry.md §4.1）：

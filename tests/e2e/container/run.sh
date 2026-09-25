@@ -8,14 +8,16 @@
 # Usage:
 #   tests/e2e/container/run.sh probe-a1                 # §9/A.1 + A.6 probe
 #   tests/e2e/container/run.sh harness [--plugin FILE]  # e2e harness (stub or bundle)
+#   tests/e2e/container/run.sh dupe                     # duplicate-record / message_id regression (fake TG)
 #   tests/e2e/container/run.sh probe-lineage            # §9 subagent lineage probe
 #   tests/e2e/container/run.sh build                    # bundle src/ via otg-toolchain
 #   tests/e2e/container/run.sh real-tg-recipe --check   # read-only ~/.otg mechanism check
 #   tests/e2e/container/run.sh real-tg-recipe --run     # full real-TG smoke (serve-based send path)
 #   tests/e2e/container/run.sh assert-probe-a1          # assertions over existing evidence
 #   tests/e2e/container/run.sh assert-harness           # assertions over existing evidence
+#   tests/e2e/container/run.sh assert-dupe              # duplicate-record regression assertions
 #   tests/e2e/container/run.sh assert-probe-lineage     # lineage evidence summary
-#   tests/e2e/container/run.sh clean                    # remove leftover t05 containers
+#   tests/e2e/container/run.sh clean                    # remove leftover t05/t09 containers
 #
 # Environment: T05_HARNESS_FORM_REPLY=1 adds the form closure phase,
 # T05_HARNESS_RESOLVED_REPLY=1 adds the already-settled reply capture,
@@ -172,6 +174,114 @@ assert_probe_a1() {
   local out="$EVIDENCE_ROOT/probe-a1"
   [ -d "$out" ] || fail "no probe-a1 evidence; run: run.sh probe-a1"
   node "$ASSERT_DIR/probe-a1.mjs" "$out"
+}
+
+# ---- duplicate-record regression (t09-dupe-fix) ------------------------------
+# Runs the adapted plugin against a fake Telegram endpoint so sends succeed and
+# the assertions can count them: seeded duplicate records (same request_id,
+# both send=false) must produce exactly one send and every copy must end
+# send=true; the wizard message_id must land in q_msg_id.
+scenario_dupe() {
+  require_image "$OPENCODE_IMAGE"
+  require_image "$TOOLCHAIN_IMAGE"
+  local plugin_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --plugin) plugin_file="$2"; shift 2 ;;
+      *) fail "dupe: unknown argument: $1" ;;
+    esac
+  done
+  if [ -n "$plugin_file" ] && [ "${plugin_file#/}" = "$plugin_file" ]; then
+    plugin_file="$PWD/$plugin_file"
+  fi
+  local out="${T09_DUPE_EVIDENCE_DIR:-$EVIDENCE_ROOT/dupe}"
+  rm -rf "$out"; mkdir -p "$out"
+  local port pw name net fake cert_dir
+  port="$(free_port)"
+  pw="$(synthetic_password)"
+  name="t09-dupe-scenario-$$"
+  net="t09-dupe-net-$$"
+  fake="t09-dupe-fake-tg-$$"
+  # Test TLS material lives in a host temp dir (never in the evidence dir, so
+  # no private key can be committed).
+  cert_dir="$(mktemp -d /tmp/t09-dupe-tls.XXXXXX)"
+  log "dupe: port=$port password=<len ${#pw}> evidence=$out"
+
+  cleanup_dupe() {
+    docker rm -f "$fake" >/dev/null 2>&1 || true
+    docker network rm "$net" >/dev/null 2>&1 || true
+    rm -rf "$cert_dir"
+  }
+  trap cleanup_dupe EXIT
+
+  # Test certificate for api.telegram.org (opencode2 ships openssl; toolchain
+  # does not). The scenario container opts into it via NODE_TLS_REJECT_UNAUTHORIZED.
+  docker run --rm --name "t09-dupe-cert-$$" \
+    -v "$cert_dir:/tls" --entrypoint sh "$OPENCODE_IMAGE" -c '
+      set -e
+      openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout /tls/key.pem -out /tls/cert.pem \
+        -subj "/CN=api.telegram.org" -days 2 \
+        -addext "subjectAltName=DNS:api.telegram.org" >/dev/null 2>&1
+      echo "cert ok: test certificate generated (not evidence)"
+    ' >> "$out/commands.txt" 2>&1 || fail "dupe: test certificate generation failed"
+
+  if [ -z "$plugin_file" ]; then
+    plugin_file="$(build_plugin_bundle "$out")"
+    log "dupe: built plugin bundle at $plugin_file"
+  elif [ ! -f "$plugin_file" ]; then
+    fail "dupe: --plugin file not found: $plugin_file"
+  else
+    log "dupe: using provided plugin bundle $plugin_file"
+  fi
+
+  docker network create "$net" >/dev/null
+  docker run --rm -d --name "$fake" --network "$net" --network-alias fake-tg \
+    -v "$HARNESS_DIR:/harness:ro" \
+    -v "$out:/evidence" \
+    -v "$cert_dir:/tls:ro" \
+    -e T09_FAKE_TG_PORT=8443 \
+    -e T09_FAKE_TG_CERT=/tls/cert.pem \
+    -e T09_FAKE_TG_KEY=/tls/key.pem \
+    -e T09_FAKE_TG_LOG=/evidence/fake-telegram.jsonl \
+    "$TOOLCHAIN_IMAGE" node /harness/fake-telegram.mjs > /dev/null
+  for i in $(seq 1 30); do
+    grep -q '"event":"listening"' "$out/fake-telegram.jsonl" 2>/dev/null && break
+    sleep 0.5
+  done
+
+  {
+    echo "=== scenario: dupe (duplicate waiting records / unwrapped message_id regression) ==="
+    echo "=== exact command ==="
+    echo "docker run --rm --name $name --network $net \\"
+    echo "  -v <plugin-dir>:/plugin:ro -v $HARNESS_DIR:/harness:ro -v $out:/evidence \\"
+    echo "  -e T05_PLUGIN=/plugin/$(basename "$plugin_file") -e T05_PORT=$port -e T05_PASSWORD=<redacted> \\"
+    echo "  -e NODE_TLS_REJECT_UNAUTHORIZED=0 (fake endpoint test cert; container-local) \\"
+    echo "  --entrypoint sh $OPENCODE_IMAGE -c 'sh /harness/dupe-scenario.sh'"
+    echo "=== output follows ==="
+  } >> "$out/commands.txt"
+  timeout 600 docker run --rm --name "$name" --network "$net" \
+    -v "$(dirname "$plugin_file"):/plugin:ro" \
+    -v "$HARNESS_DIR:/harness:ro" \
+    -v "$out:/evidence" \
+    -e T05_PLUGIN="/plugin/$(basename "$plugin_file")" \
+    -e T05_PORT="$port" \
+    -e T05_PASSWORD="$pw" \
+    -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
+    -e T09_DUPE_OBSERVE_SECONDS="${T09_DUPE_OBSERVE_SECONDS:-15}" \
+    --entrypoint sh "$OPENCODE_IMAGE" -c 'sh /harness/dupe-scenario.sh' \
+    >> "$out/commands.txt" 2>&1 || log "dupe scenario container exited non-zero (evidence preserved)"
+
+  cleanup_dupe
+  trap - EXIT
+  fix_ownership "$out"
+  log "dupe: evidence written to $out"
+}
+
+assert_dupe() {
+  local out="${T09_DUPE_EVIDENCE_DIR:-$EVIDENCE_ROOT/dupe}"
+  [ -d "$out" ] || fail "no dupe evidence at $out; run: run.sh dupe"
+  node "$ASSERT_DIR/dupe.mjs" "$out"
 }
 
 assert_harness() {
@@ -350,10 +460,12 @@ scenario_real_tg_recipe() {
 case "${1:-}" in
   probe-a1) shift; scenario_probe_a1 "$@" ;;
   harness) shift; scenario_harness "$@" ;;
+  dupe) shift; scenario_dupe "$@" ;;
   probe-lineage) shift; scenario_lineage "$@" ;;
   build) shift; scenario_build "$@" ;;
   assert-probe-a1) shift; assert_probe_a1 "$@" ;;
   assert-harness) shift; assert_harness "$@" ;;
+  assert-dupe) shift; assert_dupe "$@" ;;
   assert-probe-lineage) shift; assert_lineage "$@" ;;
   real-tg-recipe) shift; scenario_real_tg_recipe "$@" ;;
   clean) cleanup_containers ;;

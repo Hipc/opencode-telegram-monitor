@@ -33,6 +33,11 @@ export default {
       );
     }
 
+    // 多实例诊断（t09-dupe-fix）：每次 setup 激活记录 pid + root——同一进程
+    // 多次插件加载或多进程共享同一注册表时，重复等待记录的来源可据此定位。
+    // 纯诊断，无行为变化（dline 自带 [pid] 前缀，此处再显式记录便于 grep）。
+    dline(`setup() pid=${process.pid} root=${root}`);
+
     const otgDir = OTG_DIR;
     const configPath = join(otgDir, "telegram.json");
 

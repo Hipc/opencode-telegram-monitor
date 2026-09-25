@@ -1,12 +1,12 @@
 === scenario: harness (lifecycle / waiting records / permission write-back closure) ===
 === plugin under test ===
-/home/hipc/work/git-clone/opencode-telegram-monitor-v2-t07/tests/e2e/container/evidence/harness-resolved-reply/plugin-under-test.ts
+/home/hipc/work/git-clone/opencode-telegram-monitor-v2-t09/tests/e2e/container/evidence/harness-resolved-reply/plugin-under-test.ts
 === exact command ===
-docker run --rm --name t05-harness-1764407 \
-  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t07/tests/e2e/container/evidence/harness-resolved-reply:/plugin:ro \
-  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t07/tests/e2e/container/harness:/harness:ro \
-  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t07/tests/e2e/container/evidence/harness-resolved-reply:/evidence \
-  -e T05_PLUGIN=/plugin/plugin-under-test.ts -e T05_PORT=29172 -e T05_PASSWORD=<redacted> \
+docker run --rm --name t05-harness-420547 \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t09/tests/e2e/container/evidence/harness-resolved-reply:/plugin:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t09/tests/e2e/container/harness:/harness:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t09/tests/e2e/container/evidence/harness-resolved-reply:/evidence \
+  -e T05_PLUGIN=/plugin/plugin-under-test.ts -e T05_PORT=32005 -e T05_PASSWORD=<redacted> \
   -e T05_HARNESS_FORM_REPLY=1 -e T05_HARNESS_MODEL=0 \
   -e T05_HARNESS_RESOLVED_REPLY=1 \
   -e T05_HARNESS_REPLY_ERROR_PROBE=1 \
@@ -22,18 +22,18 @@ docker run --rm --name t05-harness-1764407 \
 + cp /harness/plugins/reply-error-probe.ts /tmp/home/.config/opencode/plugin/t05-reply-error-probe.ts
 + cp /harness/configs/telegram.synthetic.json /tmp/home/.otg/telegram.json
 + cp /harness/configs/projects.seed.json /tmp/home/.otg/projects.json
-+ PORT=29172
++ PORT=32005
 + set +x
 + PROJECTS=/tmp/home/.otg/projects.json
 + DIAG=/tmp/home/.otg/tgdiag.log
 + SERVER_LOG=/tmp/home/.local/share/opencode/log/opencode.log
 + SPID=13
-+ API=opencode api --server http://127.0.0.1:29172
-+ setsid opencode serve --port 29172 --print-logs
++ API=opencode api --server http://127.0.0.1:32005
++ setsid opencode serve --port 32005 --print-logs
 + seq 1 60
-+ opencode api --server http://127.0.0.1:29172 plugin.list
++ opencode api --server http://127.0.0.1:32005 plugin.list
 + sleep 0.5
-+ opencode api --server http://127.0.0.1:29172 plugin.list
++ opencode api --server http://127.0.0.1:32005 plugin.list
 + break
 + seq 1 60
 + grep -q loading plugin.*telegram-session-monitor.ts /tmp/home/.local/share/opencode/log/opencode.log
@@ -46,102 +46,102 @@ docker run --rm --name t05-harness-1764407 \
 + sleep 3
 + cp /tmp/home/.otg/tgdiag.log /evidence/tgdiag-after-boot.txt
 + set +x
-+ opencode api --server http://127.0.0.1:29172 session.create -d {"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}]}
-+ SESSION_OUT={"data":{"id":"ses_f2b3bd77bffeNJPwkXMBwIMKQd","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790276020358,"updated":1790276020358},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}
-+ echo {"data":{"id":"ses_f2b3bd77bffeNJPwkXMBwIMKQd","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790276020358,"updated":1790276020358},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}
-+ echo {"data":{"id":"ses_f2b3bd77bffeNJPwkXMBwIMKQd","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790276020358,"updated":1790276020358},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}
++ opencode api --server http://127.0.0.1:32005 session.create -d {"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}]}
++ SESSION_OUT={"data":{"id":"ses_f275071a5ffetTmsD5sE1ZDM3g","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790341779037,"updated":1790341779037},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f275071a5ffetTmsD5sE1ZDM3g","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790341779037,"updated":1790341779037},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f275071a5ffetTmsD5sE1ZDM3g","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790341779037,"updated":1790341779037},"title":"e2e-waiting","permissions":[{"action":"shell","resource":"*","effect":"ask"}],"location":{"directory":"/tmp/proj"}}}
 + grep -o "id":"ses_[^"]*"
-+ + cut -d" -f4
-head -1
-+ SID=ses_f2b3bd77bffeNJPwkXMBwIMKQd
-+ echo SID=ses_f2b3bd77bffeNJPwkXMBwIMKQd
-SID=ses_f2b3bd77bffeNJPwkXMBwIMKQd
++ + cut -d" -f4head
+ -1
++ SID=ses_f275071a5ffetTmsD5sE1ZDM3g
++ echo SID=ses_f275071a5ffetTmsD5sE1ZDM3g
+SID=ses_f275071a5ffetTmsD5sE1ZDM3g
 + seq 1 20
 + grep -q "type":"session.created" /evidence/sse-raw.txt
 + break
 + sleep 1
-+ opencode api --server http://127.0.0.1:29172 session.permission.create --param sessionID=ses_f2b3bd77bffeNJPwkXMBwIMKQd -d {"action":"shell","resources":["echo e2e-waiting"]}
-+ PERM_OUT={"data":{"id":"per_0d4c42cd50012xgfQHDvUX9KrW","effect":"ask"}}
-+ echo {"data":{"id":"per_0d4c42cd50012xgfQHDvUX9KrW","effect":"ask"}}
-+ echo {"data":{"id":"per_0d4c42cd50012xgfQHDvUX9KrW","effect":"ask"}}
++ opencode api --server http://127.0.0.1:32005 session.permission.create --param sessionID=ses_f275071a5ffetTmsD5sE1ZDM3g -d {"action":"shell","resources":["echo e2e-waiting"]}
++ PERM_OUT={"data":{"id":"per_0d8af92b5001wllt7j76D6wrev","effect":"ask"}}
++ echo {"data":{"id":"per_0d8af92b5001wllt7j76D6wrev","effect":"ask"}}
++ echo {"data":{"id":"per_0d8af92b5001wllt7j76D6wrev","effect":"ask"}}
 + grep -o "id":"per_[^"]*"
 + head -1
 + cut -d" -f4
-+ PERID=per_0d4c42cd50012xgfQHDvUX9KrW
-+ echo PERID=per_0d4c42cd50012xgfQHDvUX9KrW
-+ wait_for_record per_0d4c42cd50012xgfQHDvUX9KrW 40
-+ local rid=per_0d4c42cd50012xgfQHDvUX9KrW limit=40
-PERID=per_0d4c42cd50012xgfQHDvUX9KrW
++ PERID=per_0d8af92b5001wllt7j76D6wrev
++ echo PERID=per_0d8af92b5001wllt7j76D6wrev
++ wait_for_record per_0d8af92b5001wllt7j76D6wrev 40
++ local rid=per_0d8af92b5001wllt7j76D6wrev limit=40
+PERID=per_0d8af92b5001wllt7j76D6wrev
 + seq 1 40
-+ grep -q "request_id": "per_0d4c42cd50012xgfQHDvUX9KrW" /tmp/home/.otg/projects.json
++ grep -q "request_id": "per_0d8af92b5001wllt7j76D6wrev" /tmp/home/.otg/projects.json
 + sleep 1
-+ grep -q "request_id": "per_0d4c42cd50012xgfQHDvUX9KrW" /tmp/home/.otg/projects.json
++ grep -q "request_id": "per_0d8af92b5001wllt7j76D6wrev" /tmp/home/.otg/projects.json
 + return 0
 + cp /tmp/home/.otg/projects.json /evidence/projects-after-permission.json
-+ opencode api --server http://127.0.0.1:29172 session.form.create --param sessionID=ses_f2b3bd77bffeNJPwkXMBwIMKQd -d {"title":"e2e question","fields":[{"key":"choice","type":"string","title":"Pick","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}
-+ FORM_OUT={"data":{"id":"frm_0d4c43104001jTdTQDtM5cgERF","sessionID":"ses_f2b3bd77bffeNJPwkXMBwIMKQd","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
-+ echo {"data":{"id":"frm_0d4c43104001jTdTQDtM5cgERF","sessionID":"ses_f2b3bd77bffeNJPwkXMBwIMKQd","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
-+ echo {"data":{"id":"frm_0d4c43104001jTdTQDtM5cgERF","sessionID":"ses_f2b3bd77bffeNJPwkXMBwIMKQd","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
++ opencode api --server http://127.0.0.1:32005 session.form.create --param sessionID=ses_f275071a5ffetTmsD5sE1ZDM3g -d {"title":"e2e question","fields":[{"key":"choice","type":"string","title":"Pick","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}
++ FORM_OUT={"data":{"id":"frm_0d8af96f3001lZLgzLtxoONyfM","sessionID":"ses_f275071a5ffetTmsD5sE1ZDM3g","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
++ echo {"data":{"id":"frm_0d8af96f3001lZLgzLtxoONyfM","sessionID":"ses_f275071a5ffetTmsD5sE1ZDM3g","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
++ echo {"data":{"id":"frm_0d8af96f3001lZLgzLtxoONyfM","sessionID":"ses_f275071a5ffetTmsD5sE1ZDM3g","title":"e2e question","fields":[{"key":"choice","title":"Pick","type":"string","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true}]}}
 + grep -o "id":"frm_[^"]*"
 + head -1
 + cut -d" -f4
-+ FRMID=frm_0d4c43104001jTdTQDtM5cgERF
-+ echo FRMID=frm_0d4c43104001jTdTQDtM5cgERF
-+ wait_for_record frm_0d4c43104001jTdTQDtM5cgERF 40
-+ local rid=frm_0d4c43104001jTdTQDtM5cgERF limit=40
-FRMID=frm_0d4c43104001jTdTQDtM5cgERF
++ FRMID=frm_0d8af96f3001lZLgzLtxoONyfM
++ echo FRMID=frm_0d8af96f3001lZLgzLtxoONyfM
++ wait_for_record frm_0d8af96f3001lZLgzLtxoONyfM 40
++ local rid=frm_0d8af96f3001lZLgzLtxoONyfM limit=40
+FRMID=frm_0d8af96f3001lZLgzLtxoONyfM
 + seq 1 40
-+ grep -q "request_id": "frm_0d4c43104001jTdTQDtM5cgERF" /tmp/home/.otg/projects.json
++ grep -q "request_id": "frm_0d8af96f3001lZLgzLtxoONyfM" /tmp/home/.otg/projects.json
 + return 0
 + cp /tmp/home/.otg/projects.json /evidence/projects-after-form.json
-+ printf {"sessionID":"%s","permissionID":"%s","formID":"%s"}\n ses_f2b3bd77bffeNJPwkXMBwIMKQd per_0d4c42cd50012xgfQHDvUX9KrW frm_0d4c43104001jTdTQDtM5cgERF
-+ inject_json_field per_0d4c42cd50012xgfQHDvUX9KrW reply "once"
-+ local rid=per_0d4c42cd50012xgfQHDvUX9KrW field=reply value="once"
++ printf {"sessionID":"%s","permissionID":"%s","formID":"%s"}\n ses_f275071a5ffetTmsD5sE1ZDM3g per_0d8af92b5001wllt7j76D6wrev frm_0d8af96f3001lZLgzLtxoONyfM
++ inject_json_field per_0d8af92b5001wllt7j76D6wrev reply "once"
++ local rid=per_0d8af92b5001wllt7j76D6wrev field=reply value="once"
 + seq 1 10
-+ grep -q "request_id": "per_0d4c42cd50012xgfQHDvUX9KrW" /tmp/home/.otg/projects.json
-+ sed -i s|^\([[:space:]]*\)"request_id": "per_0d4c42cd50012xgfQHDvUX9KrW",$|\1"request_id": "per_0d4c42cd50012xgfQHDvUX9KrW",\n\1"reply": "once",| /tmp/home/.otg/projects.json
++ grep -q "request_id": "per_0d8af92b5001wllt7j76D6wrev" /tmp/home/.otg/projects.json
++ sed -i s|^\([[:space:]]*\)"request_id": "per_0d8af92b5001wllt7j76D6wrev",$|\1"request_id": "per_0d8af92b5001wllt7j76D6wrev",\n\1"reply": "once",| /tmp/home/.otg/projects.json
 + grep -qF "reply": "once" /tmp/home/.otg/projects.json
 + return 0
-+ echo injected reply for per_0d4c42cd50012xgfQHDvUX9KrW
-+ wait_for_record_gone per_0d4c42cd50012xgfQHDvUX9KrW 30
-+ local rid=per_0d4c42cd50012xgfQHDvUX9KrW limit=30
-injected reply for per_0d4c42cd50012xgfQHDvUX9KrW
++ echo injected reply for per_0d8af92b5001wllt7j76D6wrev
++ wait_for_record_gone per_0d8af92b5001wllt7j76D6wrev 30
++ local rid=per_0d8af92b5001wllt7j76D6wrev limit=30
+injected reply for per_0d8af92b5001wllt7j76D6wrev
 + seq 1 30
-+ grep -q "request_id": "per_0d4c42cd50012xgfQHDvUX9KrW" /tmp/home/.otg/projects.json
++ grep -q "request_id": "per_0d8af92b5001wllt7j76D6wrev" /tmp/home/.otg/projects.json
 + sleep 1
-+ grep -q "request_id": "per_0d4c42cd50012xgfQHDvUX9KrW" /tmp/home/.otg/projects.json
++ grep -q "request_id": "per_0d8af92b5001wllt7j76D6wrev" /tmp/home/.otg/projects.json
 + return 0
 + cp /tmp/home/.otg/projects.json /evidence/projects-after-reply.json
 + [ 1 = 1 ]
-+ inject_json_field frm_0d4c43104001jTdTQDtM5cgERF q_answers [["A"]]
-+ local rid=frm_0d4c43104001jTdTQDtM5cgERF field=q_answers value=[["A"]]
++ inject_json_field frm_0d8af96f3001lZLgzLtxoONyfM q_answers [["A"]]
++ local rid=frm_0d8af96f3001lZLgzLtxoONyfM field=q_answers value=[["A"]]
 + seq 1 10
-+ grep -q "request_id": "frm_0d4c43104001jTdTQDtM5cgERF" /tmp/home/.otg/projects.json
-+ sed -i s|^\([[:space:]]*\)"request_id": "frm_0d4c43104001jTdTQDtM5cgERF",$|\1"request_id": "frm_0d4c43104001jTdTQDtM5cgERF",\n\1"q_answers": [["A"]],| /tmp/home/.otg/projects.json
++ grep -q "request_id": "frm_0d8af96f3001lZLgzLtxoONyfM" /tmp/home/.otg/projects.json
++ sed -i s|^\([[:space:]]*\)"request_id": "frm_0d8af96f3001lZLgzLtxoONyfM",$|\1"request_id": "frm_0d8af96f3001lZLgzLtxoONyfM",\n\1"q_answers": [["A"]],| /tmp/home/.otg/projects.json
 + grep -qF "q_answers": [["A"]] /tmp/home/.otg/projects.json
 + return 0
-+ echo injected q_answers for frm_0d4c43104001jTdTQDtM5cgERF
-+ wait_for_record_gone frm_0d4c43104001jTdTQDtM5cgERF 30
-+ local rid=frm_0d4c43104001jTdTQDtM5cgERF limit=30
-injected q_answers for frm_0d4c43104001jTdTQDtM5cgERF
++ echo injected q_answers for frm_0d8af96f3001lZLgzLtxoONyfM
++ wait_for_record_gone frm_0d8af96f3001lZLgzLtxoONyfM 30
++ local rid=frm_0d8af96f3001lZLgzLtxoONyfM limit=30
+injected q_answers for frm_0d8af96f3001lZLgzLtxoONyfM
 + seq 1 30
-+ grep -q "request_id": "frm_0d4c43104001jTdTQDtM5cgERF" /tmp/home/.otg/projects.json
++ grep -q "request_id": "frm_0d8af96f3001lZLgzLtxoONyfM" /tmp/home/.otg/projects.json
 + sleep 1
-+ grep -q "request_id": "frm_0d4c43104001jTdTQDtM5cgERF" /tmp/home/.otg/projects.json
++ grep -q "request_id": "frm_0d8af96f3001lZLgzLtxoONyfM" /tmp/home/.otg/projects.json
 + return 0
 + cp /tmp/home/.otg/projects.json /evidence/projects-after-form-reply.json
-+ opencode api --server http://127.0.0.1:29172 session.create -d {"title":"e2e-lifecycle"}
-+ LIFE_OUT={"data":{"id":"ses_f2b3bc6dcffeQVpZAMFDxJrPb7","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790276024613,"updated":1790276024613},"title":"e2e-lifecycle","location":{"directory":"/tmp/proj"}}}
-+ echo {"data":{"id":"ses_f2b3bc6dcffeQVpZAMFDxJrPb7","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790276024613,"updated":1790276024613},"title":"e2e-lifecycle","location":{"directory":"/tmp/proj"}}}
-+ echo {"data":{"id":"ses_f2b3bc6dcffeQVpZAMFDxJrPb7","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790276024613,"updated":1790276024613},"title":"e2e-lifecycle","location":{"directory":"/tmp/proj"}}}
++ opencode api --server http://127.0.0.1:32005 session.create -d {"title":"e2e-lifecycle"}
++ LIFE_OUT={"data":{"id":"ses_f275060d7ffegxI4FFAuO7g5BR","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790341783338,"updated":1790341783338},"title":"e2e-lifecycle","location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f275060d7ffegxI4FFAuO7g5BR","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790341783338,"updated":1790341783338},"title":"e2e-lifecycle","location":{"directory":"/tmp/proj"}}}
++ echo {"data":{"id":"ses_f275060d7ffegxI4FFAuO7g5BR","projectID":"fc7c709a6433baa7d396e4abfd89e4b0068b1441","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790341783338,"updated":1790341783338},"title":"e2e-lifecycle","location":{"directory":"/tmp/proj"}}}
 + grep -o "id":"ses_[^"]*"
 + head -1
 + cut -d" -f4
-+ BID=ses_f2b3bc6dcffeQVpZAMFDxJrPb7
-+ echo BID=ses_f2b3bc6dcffeQVpZAMFDxJrPb7
-+ opencode api --server http://127.0.0.1:29172 session.switchModel --param sessionID=ses_f2b3bc6dcffeQVpZAMFDxJrPb7 -d {"model":{"id":"definitely-not-a-model","providerID":"opencode"}}
-BID=ses_f2b3bc6dcffeQVpZAMFDxJrPb7
-+ timeout 90 opencode api --server http://127.0.0.1:29172 session.prompt --param sessionID=ses_f2b3bc6dcffeQVpZAMFDxJrPb7 -d {"text":"hello"}
++ BID=ses_f275060d7ffegxI4FFAuO7g5BR
++ echo BID=ses_f275060d7ffegxI4FFAuO7g5BR
++ opencode api --server http://127.0.0.1:32005 session.switchModel --param sessionID=ses_f275060d7ffegxI4FFAuO7g5BR -d {"model":{"id":"definitely-not-a-model","providerID":"opencode"}}
+BID=ses_f275060d7ffegxI4FFAuO7g5BR
++ timeout 90 opencode api --server http://127.0.0.1:32005 session.prompt --param sessionID=ses_f275060d7ffegxI4FFAuO7g5BR -d {"text":"hello"}
 + seq 1 120
 + grep -qE terminal notification attempt failed|Telegram message send failed /tmp/home/.otg/tgdiag.log
 + sleep 1
@@ -161,15 +161,15 @@ BID=ses_f2b3bc6dcffeQVpZAMFDxJrPb7
 + [ 0 = 1 ]
 + [ 1 = 1 ]
 + cp /evidence/projects-after-permission.json /tmp/home/.otg/projects.json
-+ inject_json_field per_0d4c42cd50012xgfQHDvUX9KrW reply "once"
-+ local rid=per_0d4c42cd50012xgfQHDvUX9KrW field=reply value="once"
++ inject_json_field per_0d8af92b5001wllt7j76D6wrev reply "once"
++ local rid=per_0d8af92b5001wllt7j76D6wrev field=reply value="once"
 + seq 1 10
-+ grep -q "request_id": "per_0d4c42cd50012xgfQHDvUX9KrW" /tmp/home/.otg/projects.json
-+ sed -i s|^\([[:space:]]*\)"request_id": "per_0d4c42cd50012xgfQHDvUX9KrW",$|\1"request_id": "per_0d4c42cd50012xgfQHDvUX9KrW",\n\1"reply": "once",| /tmp/home/.otg/projects.json
++ grep -q "request_id": "per_0d8af92b5001wllt7j76D6wrev" /tmp/home/.otg/projects.json
++ sed -i s|^\([[:space:]]*\)"request_id": "per_0d8af92b5001wllt7j76D6wrev",$|\1"request_id": "per_0d8af92b5001wllt7j76D6wrev",\n\1"reply": "once",| /tmp/home/.otg/projects.json
 + grep -qF "reply": "once" /tmp/home/.otg/projects.json
 + return 0
-+ echo P2c: re-injected reply for already-settled per_0d4c42cd50012xgfQHDvUX9KrW
-P2c: re-injected reply for already-settled per_0d4c42cd50012xgfQHDvUX9KrW
++ echo P2c: re-injected reply for already-settled per_0d8af92b5001wllt7j76D6wrev
+P2c: re-injected reply for already-settled per_0d8af92b5001wllt7j76D6wrev
 + seq 1 15
 + grep -qE Permission request no longer exists|Permission reply apply failed /tmp/home/.otg/tgdiag.log
 + sleep 1
@@ -180,21 +180,21 @@ P2c: re-injected reply for already-settled per_0d4c42cd50012xgfQHDvUX9KrW
 + cp /tmp/home/.otg/projects.json /evidence/projects-after-resolved-reply.json
 + set +x
 + cat /evidence/api-resolved-reply-http.status
-P2c: raw HTTP status 404
---- plugin loader lines ---
 + echo P2c: raw HTTP status 404
 + echo --- plugin loader lines ---
 + grep -E loading plugin|failed to load plugin|configured plugin /tmp/home/.local/share/opencode/log/opencode.log
+P2c: raw HTTP status 404
+--- plugin loader lines ---
+timestamp=2026-09-25T13:09:35.444Z level=INFO run=cdfa961d msg="loading plugin" id=/tmp/home/.config/opencode/plugin/t05-reply-error-probe.ts entrypoint=file:///tmp/home/.config/opencode/plugin/t05-reply-error-probe.ts http.span=58 role=server
+timestamp=2026-09-25T13:09:35.448Z level=INFO run=cdfa961d msg="loading plugin" id=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts entrypoint=file:///tmp/home/.config/opencode/plugin/telegram-session-monitor.ts http.span=62 role=server
 + cp /tmp/home/.local/share/opencode/log/opencode.log /evidence/server-log.txt
-timestamp=2026-09-24T18:53:36.788Z level=INFO run=80343185 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/t05-reply-error-probe.ts entrypoint=file:///tmp/home/.config/opencode/plugin/t05-reply-error-probe.ts http.span=60 role=server
-timestamp=2026-09-24T18:53:36.792Z level=INFO run=80343185 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts entrypoint=file:///tmp/home/.config/opencode/plugin/telegram-session-monitor.ts http.span=64 role=server
 + cp /tmp/home/.otg/projects.json /evidence/projects-final.json
 + kill -TERM 64
 + kill -TERM -13
 + sleep 1
---- evidence ---
 + echo --- evidence ---
 + wc -l /tmp/home/.otg/tgdiag.log /evidence/sse-raw.txt
-  20 /tmp/home/.otg/tgdiag.log
+--- evidence ---
+  21 /tmp/home/.otg/tgdiag.log
   28 /evidence/sse-raw.txt
-  48 total
+  49 total

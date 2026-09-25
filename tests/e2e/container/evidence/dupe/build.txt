@@ -1,4 +1,4 @@
-Bundled 18 modules in 5ms
+Bundled 18 modules in 6ms
 
   monitor.ts  138.96 KB  (entry point)
 

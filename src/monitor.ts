@@ -1891,9 +1891,11 @@ export class TelegramSessionMonitor {
    * 扫描一轮 sessions 队列（可测试入口，契约 sessions-relay.md §6.3；
    * setInterval 只负责周期调用本方法，测试直接调用即可驱动）：
    * registry.read()（不加锁，最终一致）→ 遍历全部条目的 sessions →
-   * 筛选 send === false && resolved === false → 逐条串行经 sendMessage 发送
-   * → 成功置 send=true（markSessionSent）；失败保留 send=false 下轮重试；
-   * resolved=true 为终态不补发（决策 #6）。返回本轮处理条数。
+   * 筛选 send === false && resolved === false → 同轮按 request_id 去重
+   * （t09-dupe-fix：历史重复副本只处理一次，配合 markSessionSent 全量置位
+   * 自愈）→ 逐条串行经 sendMessage 发送 → 成功置 send=true（markSessionSent）；
+   * 失败保留 send=false 下轮重试；resolved=true 为终态不补发（决策 #6）。
+   * 返回本轮处理条数。
    */
   private async scanSessionQueue(): Promise<number> {
     if (this.disposed) return 0;
@@ -1912,6 +1914,11 @@ export class TelegramSessionMonitor {
     }
     const registry = await this.registry.read();
     let handled = 0;
+    // 同轮 request_id 去重（t09-dupe-fix）：registry 快照在 mark 之后已过期
+    // ——同 request_id 的历史副本（多实例重复 append 遗留）在本轮快照里仍为
+    // send=false；markSessionSent 虽已把全部副本置位，快照里后出现的副本若
+    // 不跳过会在同一轮再次发送。Set 按轮隔离（发送失败不置位，下一轮仍重试）。
+    const scannedRequestIDs = new Set<string>();
     for (const entry of registry.projects) {
       const sessions = entry.sessions;
       if (!sessions) continue;
@@ -1929,6 +1936,10 @@ export class TelegramSessionMonitor {
           record.q_reject === true
         )
           continue;
+        // 同轮已处理过该 request_id（历史重复副本）→ 跳过；发送成功时
+        // markSessionSent 已置位全部副本，下一轮自然不再命中。
+        if (scannedRequestIDs.has(record.request_id)) continue;
+        scannedRequestIDs.add(record.request_id);
         try {
           const text = this.formatSessionRecordMessage(record, projectLabel);
           if (record.type === "permission") {
@@ -3565,33 +3576,32 @@ export class TelegramSessionMonitor {
     replyMarkup: TelegramInlineKeyboard,
   ): Promise<number | undefined> {
     if (this.abortController.signal.aborted) return undefined;
-    const response = await telegramWithRetry<{
-      result?: {
-        message_id?: number;
-        message?: { message_id?: number };
-        messageId?: number;
-      };
-    }>("sendRichMessage", {
-      chat_id: this.config.chatId,
-      rich_message: { html: limitMessage(text) },
-      reply_markup: replyMarkup,
-    }, { config: this.config, signal: this.abortController.signal });
-    // 契约 §14.8.3：三形态防御解析（官方/非官方通道响应键名形态不同；实机
-    // 观察 sendRichMessage 无 result.message_id 导致 q_msg_id 缺失）。既有
-    // 调用点（permission 键盘发送）忽略返回值，兼容。
-    const messageID =
-      response?.result?.message_id ??
-      response?.result?.message?.message_id ??
-      (response as { result?: { messageId?: number } } | undefined)?.result
-        ?.messageId ??
-      undefined;
-    // 首次发送成功时记录响应键名形态（仅键名、不含任何内容，天然脱敏）
-    // 供诊断响应形态演进。
+    const response = await telegramWithRetry<{ message_id?: number }>(
+      "sendRichMessage",
+      {
+        chat_id: this.config.chatId,
+        rich_message: { html: limitMessage(text) },
+        reply_markup: replyMarkup,
+      },
+      { config: this.config, signal: this.abortController.signal },
+    );
+    // 契约 §14.8.3（t09-dupe-fix 修订）：telegramWithRetry/telegramRequest 返回
+    // **已解包**的 `envelope.result`（src/telegram/client.ts requestDirect/
+    // requestViaProxy 均 `return envelope.result`），故 message_id 在响应顶层。
+    // 实机正控 tests/e2e/real-keyboard-channel.test.mjs 断言 `result?.message_id`
+    // 为 number 并通过；原 `response?.result?.message_id` 形态恒为 undefined，
+    // 导致 q_msg_id 永不回写、向导编辑退化为发新消息。只保留真实形态，不再
+    // 保留未证实的 `result.*` / `messageId` 变体。
+    const messageID = response?.message_id;
+    // 首次发送成功时记录响应形态（typeof + 顶层键名，仅形态、不含任何内容，
+    // 天然脱敏）供诊断响应形态演进。
     if (!this.sendRichMessageKeysLogged) {
       this.sendRichMessageKeysLogged = true;
       dline(
-        "sendMessageWithKeyboard response keys: " +
-          Object.keys(response?.result ?? {}).join(","),
+        "sendMessageWithKeyboard response: typeof=" +
+          typeof response +
+          " keys=" +
+          Object.keys(response ?? {}).join(","),
       );
     }
     return messageID;

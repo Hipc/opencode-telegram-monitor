@@ -3,8 +3,9 @@
 // 纯函数测试：SessionRecord 承载（sessions-relay.md §3/§4，REG-101；Round 2
 // 扩展 §13.1/§13.2，REG-201；Round 6 扩展 §16，REG-401~403）。
 // 覆盖：parse/serialize 白名单往返保留全字段、旧文件无 sessions 键、非数组丢弃、
-// 损坏记录容错、append 追加不覆盖、mark* 按 request_id 精确匹配（无匹配
-// undefined / 已置位幂等原引用 / 两字段互不联动）、既有 parse 语义保持、
+// 损坏记录容错、append 追加不覆盖 + 同 request_id 全局幂等（t09-dupe-fix）、
+// mark* 按 request_id 精确匹配（无匹配 undefined / 已置位幂等原引用 / 两字段
+// 互不联动 / 全部同 request_id 副本一起置位，t09-dupe-fix）、既有 parse 语义保持、
 // mutate 集成（写盘 + undefined 不写盘）、reply 字段四态往返与容错、
 // setSessionReply 三态（写入/无匹配 undefined/幂等原引用/send、resolved 不受影响）、
 // Round 6 删除三函数（removeSessionRecord / removeSessionRecordsForSession /
@@ -242,8 +243,8 @@ await runCase("REG-101 invalid records dropped without throwing", async (baseDir
   );
 });
 
-// REG-101: appendSessionRecord 按 path 定位条目追加，追加不覆盖、不去重；
-// 无 sessions 键的条目从空数组起步。
+// REG-101: appendSessionRecord 按 path 定位条目追加，追加不覆盖；同 request_id
+// 全局幂等（t09-dupe-fix supersede「不去重」）；无 sessions 键的条目从空数组起步。
 await runCase("REG-101 appendSessionRecord appends without overwrite", async (baseDir) => {
   const p = join(baseDir, "p");
   const reg = regWith([
@@ -270,15 +271,20 @@ await runCase("REG-101 appendSessionRecord appends without overwrite", async (ba
       sessions[2].request_id === "req-3",
     "append must not overwrite or reorder",
   );
-  // 同一 request_id 重复 append 不去重（去重是写入端 seenWaitingRequestIDs 的职责）
+  // 同一 request_id 重复 append → 原引用（t09-dupe-fix：同 request_id 全局
+  // 幂等，多实例重复写入同一等待请求不再产生重复副本）
   const dup = appendSessionRecord(
     next2,
     p,
     makeRecord({ request_id: "req-3" }),
   );
   assert(
-    dup.projects[0].sessions.length === 4,
-    "append must not deduplicate",
+    dup === next2,
+    "same request_id append must return the original registry reference",
+  );
+  assert(
+    dup.projects[0].sessions.length === 3,
+    "same request_id append must not add a duplicate copy",
   );
   // 无 sessions 键的条目追加
   const regNoSessions = regWith([
@@ -424,6 +430,144 @@ await runCase("REG-101 markSessionSent matches by request_id", async (baseDir) =
     sentAfterResolved.projects[0].sessions[0].send === true &&
       sentAfterResolved.projects[0].sessions[0].resolved === true,
     "markSessionSent must not clear resolved",
+  );
+});
+
+// REG-404 (t09-dupe-fix): appendSessionRecord 同 request_id 全局幂等——任意条目
+// 已存在同 id 副本 → 原 registry 引用（不追加、不写盘）；不同 request_id 仍
+// 追加不覆盖。
+await runCase("REG-404 appendSessionRecord is idempotent by request_id (global)", async (baseDir) => {
+  const p = join(baseDir, "p");
+  const q = join(baseDir, "q");
+  const reg = regWith([
+    {
+      path: p,
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [makeRecord({ request_id: "req-dup" })],
+    },
+    {
+      path: q,
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [makeRecord({ request_id: "req-other" })],
+    },
+  ]);
+  // 同条目同 id → 原引用
+  const same = appendSessionRecord(
+    reg,
+    p,
+    makeRecord({ request_id: "req-dup" }),
+  );
+  assert(
+    same === reg,
+    "same-entry duplicate append must return the original registry",
+  );
+  // 跨条目同 id → 原引用（请求 ID 全局唯一，去重同样全局）
+  const cross = appendSessionRecord(
+    reg,
+    q,
+    makeRecord({ request_id: "req-dup" }),
+  );
+  assert(
+    cross === reg,
+    "cross-entry duplicate append must return the original registry",
+  );
+  // 不同 id → 正常追加（追加不覆盖语义保持）
+  const fresh = appendSessionRecord(
+    reg,
+    p,
+    makeRecord({ request_id: "req-fresh" }),
+  );
+  assert(fresh !== reg, "new request_id must append (new registry object)");
+  assert(
+    fresh.projects[0].sessions.length === 2 &&
+      fresh.projects[0].sessions[1].request_id === "req-fresh",
+    "new request_id must be appended to the target entry",
+  );
+});
+
+// REG-404 (集成): mutate(appendSessionRecord) 同 request_id 重复写入零写盘
+// （文件内容不变）——多实例重复 append 的幂等收敛。
+await runCase("REG-404 mutate integration: duplicate append is a no-op on disk", async (baseDir) => {
+  const filePath = join(baseDir, "projects.json");
+  const store = new ProjectRegistryStore(filePath);
+  await store.ensureDir();
+  const p = join(baseDir, "project", "demo");
+  await store.mutate((reg) => registerProject(reg, p));
+  const record = makeRecord({ request_id: "req-int-dup" });
+  await store.mutate((reg) => appendSessionRecord(reg, p, record));
+  const before = JSON.stringify(await store.read());
+  const again = await store.mutate((reg) =>
+    appendSessionRecord(reg, p, record),
+  );
+  assert(
+    again !== undefined,
+    "duplicate append mutate must succeed (idempotent)",
+  );
+  assert(
+    JSON.stringify(await store.read()) === before,
+    "duplicate append must not change the file",
+  );
+  const sessions = (await store.read()).projects[0].sessions;
+  assert(
+    sessions.length === 1,
+    `expected 1 record after duplicate append, got ${sessions.length}`,
+  );
+});
+
+// REG-405 (t09-dupe-fix): markSessionSent 一次置位全部同 request_id 副本——
+// 混合状态（已 true / false 副本跨条目）→ 新 registry 且全部 true（单轮自愈）；
+// 全部已 true → 原引用；无匹配 → undefined；resolved 与其它记录不动。
+await runCase("REG-405 markSessionSent marks every duplicate copy in one call", async (baseDir) => {
+  const p = join(baseDir, "p");
+  const q = join(baseDir, "q");
+  const reg = regWith([
+    {
+      path: p,
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [
+        makeRecord({ request_id: "req-dup", send: true, resolved: false }),
+        makeRecord({ request_id: "req-dup", send: false, resolved: true }),
+        makeRecord({ request_id: "req-neighbor" }),
+      ],
+    },
+    {
+      path: q,
+      enabled: true,
+      addedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [makeRecord({ request_id: "req-dup", send: false })],
+    },
+  ]);
+  assert(
+    markSessionSent(reg, "req-missing") === undefined,
+    "no match must return undefined",
+  );
+  const next = markSessionSent(reg, "req-dup");
+  assert(next !== reg, "mixed duplicate state must return a new registry");
+  for (const [entryIdx, recIdx] of [
+    [0, 0],
+    [0, 1],
+    [1, 0],
+  ]) {
+    assert(
+      next.projects[entryIdx].sessions[recIdx].send === true,
+      `duplicate copy ${entryIdx}/${recIdx} must be marked send=true`,
+    );
+  }
+  assert(
+    next.projects[0].sessions[1].resolved === true,
+    "resolved must stay untouched by markSessionSent",
+  );
+  assert(
+    next.projects[0].sessions[2].send === false,
+    "neighbor record must stay untouched",
+  );
+  // 全部已 true → 原引用（幂等零写盘）
+  assert(
+    markSessionSent(next, "req-dup") === next,
+    "all-copies-already-true must return the same reference",
   );
 });
 

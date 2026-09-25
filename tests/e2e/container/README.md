@@ -11,18 +11,22 @@ is installed on the host and no local opencode directory is touched.
 | `probe-a1/` | §9/A.1 + A.6 supplementary probe (form reply channel, natural question flow) |
 | `probe-lineage/` | §9 supplementary probe (subagent lineage / parentID observability) |
 | `harness/` | container e2e scenario + mechanism-validation double + real-TG recipe scripts |
-| `assert/` | node assertion suites over the collected evidence |
+| `harness/fake-telegram.mjs` | fake Telegram Bot API endpoint for the duplicate-record scenario (CONNECT + TLS, request log) |
+| `harness/dupe-scenario.sh` | t09 duplicate-record / message_id regression scenario |
+| `assert/` | node assertion suites over the collected evidence (`assert/dupe.mjs` = t09 regression) |
 | `evidence/` | recorded outputs of the green runs in this round |
 
 Requirements: docker with `hipc/opencode2:latest` (opencode v2.0.15) and
 `otg-toolchain:latest` (node+bun for the bundle build); `node` on the host for
 the assertion scripts.
 
-Resource discipline: every container runs `--rm` with a unique `t05`/`t05b-`
-name, no ports are published (the serve port lives in the container network
-namespace and is picked dynamically, checked against the host listener table),
-and the runner stops what it starts. `run.sh clean` removes leftover `t05*`
-containers if a run is interrupted.
+Resource discipline: every container runs `--rm` with a unique `t05`/`t05b-`/
+`t09-` name, no ports are published (the serve port lives in the container
+network namespace and is picked dynamically, checked against the host listener
+table), and the runner stops what it starts (the t09 scenario also removes its
+`t09-dupe-net-*` network and its host-side temp TLS dir). `run.sh clean` removes
+leftover `t05*`/`t09-*` containers and `t09-dupe-net-*` networks if a run is
+interrupted.
 
 ---
 
@@ -159,6 +163,43 @@ therefore asserts "the request was tracked and no apply failure was logged";
 the positive closure evidence is H3.1 (record deleted) plus H3.2/H3.2a
 (`permission.replied` on the wire with the injected decision). The earlier
 stub-era regex expected a stub-only diag marker and was fixed here.
+
+## 2b. Duplicate-record / message_id regression (t09-dupe-fix)
+
+```sh
+tests/e2e/container/run.sh dupe          # ~60 s, container-only
+tests/e2e/container/run.sh assert-dupe   # 12 assertions over the evidence
+```
+
+Reproduces the field incident "trigger one question → continuous repeated
+Telegram messages": multiple plugin monitors sharing one `projects.json`
+append duplicate SessionRecords for the same `request_id` (all `send=false`);
+the poller then re-sends a leftover copy on every scan.
+
+The scenario seeds two permission copies (same `request_id`, both `send=false`)
+plus one question record directly in the seeded registry and points the plugin
+at a **fake Telegram endpoint** (`harness/fake-telegram.mjs`: a plain-HTTP
+CONNECT that answers `200 Connection established` and terminates TLS on the
+same socket with a throwaway test cert for `api.telegram.org`, replying with
+Telegram envelopes `{"ok":true,"result":…}` and logging every request to
+`evidence/dupe/fake-telegram.jsonl`). No real bot token and no real Telegram
+traffic are involved; the scenario container opts into the test cert via
+`NODE_TLS_REJECT_UNAUTHORIZED=0` (container-local only — never product code).
+
+Assertions (`assert/dupe.mjs`): exactly one `sendRichMessage` per request_id
+over many scan rounds (D1.1); every duplicate copy ends `send=true`
+(single-round self-heal, D1.3); the wizard send's `message_id` is persisted as
+`q_msg_id` (unwrapped-response parse, D2.2); shape diagnostic
+`sendMessageWithKeyboard response: typeof=object keys=message_id` (D3.1);
+`setup() pid=… root=…` activation line (D4.1); no
+"Question wizard send returned no message_id" warn (D3.2).
+
+Negative control: the same scenario against the pre-fix bundle sends the
+duplicated request_id 16× in the observation window, leaves the copies
+`[true,false]` and persists no `q_msg_id` — the exact field signature.
+
+`--plugin <bundle>` runs the scenario against a provided bundle instead of
+building the worktree (used for the pre-fix negative control).
 
 ### Bundle build
 
