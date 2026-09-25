@@ -985,6 +985,71 @@ await runCase("REG-301 invalid q_* values drop the record without throwing", asy
   assert(sessions[0].q_msg_id === 7, "valid q_msg_id not preserved");
 });
 
+// ---- t13 (REG-302, §14.4): host_pid 归属印章往返与严格校验 -------------------
+
+// REG-302: host_pid 往返——正整数保留；缺失键不新增（旧记录 → 过渡归属门）；
+// 非法值（非正整数）丢弃整条记录，不抛错、合法记录保留。
+await runCase("REG-302 host_pid round-trip and strict validation", async (baseDir) => {
+  const stamped = makeRecord({ request_id: "req-hp-1", host_pid: 4242 });
+  const legacy = makeRecord({ request_id: "req-hp-legacy" });
+  const parsed = parseRegistry(
+    JSON.stringify({
+      projects: [
+        {
+          path: join(baseDir, "p"),
+          enabled: true,
+          addedAt: "2026-01-01T00:00:00.000Z",
+          sessions: [stamped, legacy],
+        },
+      ],
+    }),
+  );
+  assert(parsed !== undefined, "parse failed");
+  const sessions = parsed.projects[0].sessions;
+  assert(sessions.length === 2, `expected 2 records, got ${sessions.length}`);
+  assert(sessions[0].host_pid === 4242, "host_pid must round-trip");
+  assert(
+    !("host_pid" in sessions[1]),
+    "legacy record must not gain a host_pid key",
+  );
+  const reparsed = parseRegistry(serializeRegistry(parsed));
+  assert(reparsed !== undefined, "re-parse failed");
+  assert(
+    reparsed.projects[0].sessions[0].host_pid === 4242 &&
+      !("host_pid" in reparsed.projects[0].sessions[1]),
+    "host_pid must survive a second round-trip and stay absent for legacy",
+  );
+
+  const bad = [
+    { request_id: "req-bad-hp-1", host_pid: "4242" },
+    { request_id: "req-bad-hp-2", host_pid: 0 },
+    { request_id: "req-bad-hp-3", host_pid: -1 },
+    { request_id: "req-bad-hp-4", host_pid: 1.5 },
+    { request_id: "req-bad-hp-5", host_pid: null },
+    { request_id: "req-bad-hp-6", host_pid: true },
+  ];
+  const badParsed = parseRegistry(
+    JSON.stringify({
+      projects: [
+        {
+          path: join(baseDir, "p"),
+          enabled: true,
+          addedAt: "2026-01-01T00:00:00.000Z",
+          sessions: [stamped, ...bad.map((o) => makeRecord(o))],
+        },
+      ],
+    }),
+  );
+  assert(badParsed !== undefined, "parse threw/failed on invalid host_pid");
+  const survivors = badParsed.projects[0].sessions;
+  assert(
+    survivors.length === 1 && survivors[0].request_id === "req-hp-1",
+    `invalid host_pid must drop the record; survivors=${JSON.stringify(
+      survivors.map((r) => r.request_id),
+    )}`,
+  );
+});
+
 // REG-301: 5 个 q_* 纯函数三态——全局 request_id 精确匹配（跨条目第二条目）；
 // 无匹配（含前缀不匹配）undefined；写入只改目标字段（send/resolved/reply
 // 及其它 q_* 不动）；幂等（同值/同引用）返回原引用。

@@ -1,0 +1,49 @@
+=== scenario: t13-probe (shared-storage two-server topology, P1-P5) ===
+=== exact command ===
+docker run --rm --name t13-probe-1961102 \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/t13-probe:/t13-probe:ro -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/evidence/t13-probe:/evidence \
+  -e T13_PLUGIN=/t13-probe/plugin.ts \
+  --entrypoint sh hipc/opencode2:latest -c 'sh /t13-probe/scenario.sh'
+=== output follows ===
+t13-probe: starting server A (opencode serve --service, shared HOME/XDG)
+t13-probe: A pid=10
+t13-probe: A endpoint discovered from service.json (password never printed)
+t13-probe: probe plugin active on A
+t13-probe: starting server B (plain serve --port <dynamic>, SAME HOME/XDG)
+t13-probe: B pid=61
+t13-probe: probe plugin active on B
+t13-probe: session ses_f261e84e7ffeH964u2sPBUVXzZ created on A
+t13-probe: permission per_0d9e17b64001o5D0GYbowgnFnw created on A
+t13-probe: form1 frm_0d9e17bac001DiCsLnqkWUGBK5 (string+options) created on A
+t13-probe: form2 frm_0d9e17bf50018E9oWWK7dw12th (multiselect) created on A
+t13-probe: p2-get-a-pending status=200
+t13-probe: p2-get-b-pending status=404
+t13-probe: p2-list-a-pending status=200
+t13-probe: p2-list-b-pending status=200
+t13-probe: p2-reply-b-pending status=404
+t13-probe: p2-get-a-after-breply status=200
+t13-probe: p2-reply-a status=204
+t13-probe: p2-get-a-settled status=200
+t13-probe: p2-get-b-settled status=404
+t13-probe: p2-reply-a-again status=409
+t13-probe: p2-reply-b-again status=404
+t13-probe: p5-get-a-multiselect status=200
+t13-probe: p2-get-b-multiselect status=404
+t13-probe: p2-cancel-b-pending status=404
+t13-probe: p2-get-a-after-bcancel status=200
+t13-probe: p2-cancel-a status=204
+t13-probe: p2-cancel-a-again status=409
+t13-probe: p2-get-b-multiselect-settled status=404
+t13-probe: p3-perm-get-a-pending status=200
+t13-probe: p3-perm-get-b-pending status=404
+t13-probe: p3-perm-list-a-pending status=200
+t13-probe: p3-perm-list-b-pending status=200
+t13-probe: p3-perm-reply-b-pending status=404
+t13-probe: p3-perm-get-a-after-breply status=200
+t13-probe: p3-perm-reply-a status=204
+t13-probe: p3-perm-reply-b-settled status=404
+t13-probe: p4-http-session-a status=200
+t13-probe: p4-http-session-b status=200
+t13-probe: p4-http-session-list-a status=200
+t13-probe: p4-http-session-list-b status=200
+t13-probe: done

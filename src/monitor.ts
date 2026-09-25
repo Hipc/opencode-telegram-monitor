@@ -1048,6 +1048,10 @@ export class TelegramSessionMonitor {
       resolved: false,
       request_id: waiting.requestID,
       created_at: new Date().toISOString(),
+      // t13 归属印章：只有宿主该 session 的进程会收到 asked 事件
+      //（t13-probe P1），故创建进程的 pid 即回写宿主。回写消费端据此
+      // 判定归属（见 waitingRecordOwnedByThisInstance）。
+      host_pid: process.pid,
     };
     const next = await this.registry.mutate((reg) =>
       appendSessionRecord(reg, this.root, record),
@@ -1630,10 +1634,13 @@ export class TelegramSessionMonitor {
    * 失败已由 applySessionReply logWarn，下轮 ticker 重试）。返回本轮成功
    * 应用条数。
    *
-   * 归属门（t10 实机修复，permission/question 两条路径都走）：apply 前先
-   * client.session.get 确认本实例宿主该 session；失败 → 本轮跳过该记录
-   * （不 apply、不删除、不置终态），每 request_id 每实例只记一次 dline。
-   * 防止共享注册表下的非宿主 server 把回写打到自身并因 404 误删记录。
+   * 归属门（t13 supersede t10 的 session.get 门，permission/question 两条路径
+   * 都走）：apply 前先按记录 host_pid 确认归属 —— 只有创建该记录的进程（=宿主
+   * 该 session 的进程）才能 apply；非本实例 → 本轮跳过该记录（不 apply、不删除、
+   * 不置终态），每 request_id 每实例只记一次 dline。共享存储拓扑下
+   * client.session.get 在非宿主同样成功（t13-probe P4 载荷完全一致），旧门会
+   * fail open；host_pid 由创建端写入（persistWaitingRecord），是唯一可靠信号。
+   * 缺失 host_pid 的旧版本记录走 sessionHostedByThisInstance 过渡门。
    */
   private async scanReplyQueue(): Promise<number> {
     if (this.disposed) return 0;
@@ -1648,7 +1655,7 @@ export class TelegramSessionMonitor {
         // null（未回复）；resolved 双路径跳过（决策 #6：TUI replied 事件可能
         // 已先置位）。
         if (record.reply == null || record.resolved) continue;
-        if (!(await this.sessionHostedByThisInstance(record))) continue;
+        if (!(await this.waitingRecordOwnedByThisInstance(record))) continue;
         try {
           await this.applySessionReply(record);
           applied += 1;
@@ -1675,7 +1682,7 @@ export class TelegramSessionMonitor {
       if (record.resolved || (record.q_answers == null && record.q_reject !== true)) {
         continue;
       }
-      if (!(await this.sessionHostedByThisInstance(record))) continue;
+      if (!(await this.waitingRecordOwnedByThisInstance(record))) continue;
       try {
         if (record.q_answers != null) {
           await this.applyQuestionReply(record);
@@ -1702,10 +1709,39 @@ export class TelegramSessionMonitor {
   }
 
   /**
-   * 归属门（t10 实机修复）：只有宿主该 session 的实例才能 apply 回写。
-   * client.session.get 成功 → true；任何 throw/失败 → 本轮跳过该记录
-   * （不 apply、不删除、不置终态；下轮重试），并按 request_id 每实例只记一次
-   * dline（info 级）避免每秒刷屏。绝不用异常结果猜测归属。
+   * 归属门（t13 实机修复，共享存储拓扑；supersede t10 的 session.get 单门）：
+   * 只有创建该等待记录的实例（host_pid === process.pid）才能 apply 回写。
+   *   - host_pid === process.pid → 归本实例，apply；
+   *   - host_pid !== process.pid → 非宿主：跳过（不 apply、不删除、不置终态；
+   *     下轮重试），每 request_id 每实例只记一次 dline（info 级）避免刷屏；
+   *   - host_pid 缺失（旧版本记录）→ 过渡期沿用 session.get 归属门
+   *     （sessionHostedByThisInstance；共享存储下该门 fail open，属已知过渡限制，
+   *     待旧记录自然清空）。
+   * 绝不用异常结果猜测归属；绝不按 pid 之外的条件删除记录。
+   */
+  private async waitingRecordOwnedByThisInstance(
+    record: SessionRecord,
+  ): Promise<boolean> {
+    if (record.host_pid !== undefined) {
+      if (record.host_pid === process.pid) return true;
+      if (!this.applySkippedRequestIDs.has(record.request_id)) {
+        rememberBounded(this.applySkippedRequestIDs, record.request_id);
+        dline(
+          `reply scan: apply skipped: waiting record owned by another instance request=${record.request_id} session=${record.session_id} host_pid=${record.host_pid} pid=${process.pid}`,
+        );
+      }
+      return false;
+    }
+    return this.sessionHostedByThisInstance(record);
+  }
+
+  /**
+   * 过渡归属门（t10 实机修复，仅用于 host_pid 缺失的旧版本记录）：只有宿主该
+   * session 的实例才能 apply 回写。client.session.get 成功 → true；任何
+   * throw/失败 → 本轮跳过该记录（不 apply、不删除、不置终态；下轮重试），并按
+   * request_id 每实例只记一次 dline（info 级）避免每秒刷屏。绝不用异常结果
+   * 猜测归属。共享存储拓扑下 session.get 在非宿主同样成功（t13-probe P4），
+   * 故该门仅作旧记录过渡，新记录一律走 host_pid 门。
    */
   private async sessionHostedByThisInstance(
     record: SessionRecord,
@@ -1732,7 +1768,10 @@ export class TelegramSessionMonitor {
    * 成功（API resolve）→ mutate(removeSessionRecord)（Round 6 §16 supersede：
    * 终态 = 删除记录，不再置 resolved=true）；失败/抛错 → logWarn 不置位
    * （下轮重试）。已 resolved 记录由调用方筛选跳过（兼容历史数据）。
-   * 注：404 终态语义与回写闭环测试归 ticket 04（§3.3）。
+   * 注：404 终态语义与回写闭环测试归 ticket 04（§3.3）。t13 起本方法只对
+   * host_pid 门确认的宿主实例执行（scanReplyQueue 调用前过滤），故此处
+   * PermissionNotFound 的终态删除只可能是宿主收到真实已决响应（非宿主对
+   * pending 请求也返回 PermissionNotFoundError，但不会走到这里）。
    */
   private async applySessionReply(record: SessionRecord) {
     if (record.reply == null) return;
@@ -1841,9 +1880,13 @@ export class TelegramSessionMonitor {
    * 端点发现见 resolveFormEndpoint（§A.1 修订，t10 实机修复）：argv --port →
    * state service.json（pid 匹配）→ legacy service.json；端口/密码不可发现或
    * url 非 loopback → 记录原因日志并 throw（**显式失败、无兜底**：
-   * q_answers/q_reject 保持未应用，下轮 ticker 重试）。404/409（FormNotFound/
-   * SessionNotFound/FormAlreadySettled）→ 幂等终态（info 日志，调用方删除
-   * 记录、不重试）；其它状态 → 原因日志 + throw（记录保留，下轮重试）。
+   * q_answers/q_reject 保持未应用，下轮 ticker 重试）。
+   * 终态分类（t13 修订，t13-probe P2 实测）：409（FormAlreadySettled）是
+   * **唯一确认已决信号**（宿主已决形态）→ info 日志，调用方删除记录、不重试；
+   * 404（FormNotFound/SessionNotFound）**不再视为终态**——非宿主实例对
+   * pending form 的 get/reply/cancel 全部返回 404（与已决 409 不同），
+   * 404 无法区分「非本实例持有」与「form 不存在」，一律原因日志 + throw
+   * （记录保留，下轮重试；绝不删除共享记录）。其它状态 → 原因日志 + throw。
    */
   private async postFormRequest(
     kind: "reply" | "cancel",
@@ -1872,10 +1915,10 @@ export class TelegramSessionMonitor {
     });
     const ok = kind === "reply" ? response.status === 204 : response.ok;
     if (ok) return;
-    if (response.status === 404 || response.status === 409) {
+    if (response.status === 409) {
       await this.log(
         "info",
-        `Form ${kind} is terminal (HTTP ${response.status}); removing session record`,
+        `Form ${kind} is terminal (HTTP 409); removing session record`,
         { requestId: record.request_id, status: response.status },
       );
       return;
@@ -3020,9 +3063,11 @@ export class TelegramSessionMonitor {
           value,
         );
       } catch (error) {
-        await this.answerCallback(id, "操作失败，请重试", true).catch(
-          () => undefined,
-        );
+        if (!this.isStaleCallbackQueryError(error)) {
+          await this.answerCallback(id, "操作失败，请重试", true).catch(
+            () => undefined,
+          );
+        }
         await this.log("error", "Callback handling failed", {
           error: errorCategory(error, { root: this.root, botToken: this.config.botToken }),
         });
@@ -3047,9 +3092,11 @@ export class TelegramSessionMonitor {
       try {
         await this.handleQuestionCallback(callback, id, requestID, qAction);
       } catch (error) {
-        await this.answerCallback(id, "操作失败，请重试", true).catch(
-          () => undefined,
-        );
+        if (!this.isStaleCallbackQueryError(error)) {
+          await this.answerCallback(id, "操作失败，请重试", true).catch(
+            () => undefined,
+          );
+        }
         await this.log("error", "Question callback handling failed", {
           error: errorCategory(error, {
             root: this.root,
@@ -3714,6 +3761,16 @@ export class TelegramSessionMonitor {
       text,
       show_alert: alert,
     }, { config: this.config, signal: this.abortController.signal });
+  }
+
+  /**
+   * answerCallbackQuery 的永久失败判定（t13）：HTTP 400（"query is too old"
+   * 类）表示回调查询本身已失效，任何二次 answerCallbackQuery 都会同样失败。
+   * catch 分支据此跳过「操作失败，请重试」补发，避免单次点击放大成多次 API
+   * 调用（实机窗口 55/70 次 answerCallbackQuery 为 400 且被重试 3×）。
+   */
+  private isStaleCallbackQueryError(error: unknown): boolean {
+    return error instanceof TelegramApiError && error.errorCode === 400;
   }
 
   /**

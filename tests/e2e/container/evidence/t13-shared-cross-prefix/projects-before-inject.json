@@ -1,0 +1,41 @@
+{
+  "projects": [
+    {
+      "path": "/tmp/home",
+      "enabled": true,
+      "addedAt": "2026-01-01T00:00:00.000Z",
+      "sessions": [
+        {
+          "session_id": "ses_f261b1289ffeqQdpZWes2YJFyG",
+          "session_name": "t13-shared-cross",
+          "type": "question",
+          "message": "{\"form\":{\"id\":\"frm_0d9e4ee0300109AaV1zNWi5Ujz\",\"sessionID\":\"ses_f261b1289ffeqQdpZWes2YJFyG\",\"title\":\"t13 string form\",\"fields\":[{\"key\":\"choice\",\"title\":\"Pick\",\"type\":\"string\",\"options\":[{\"value\":\"a\",\"label\":\"A\"},{\"value\":\"b\",\"label\":\"B\"}],\"custom\":true}]}}",
+          "send": false,
+          "resolved": false,
+          "request_id": "frm_0d9e4ee0300109AaV1zNWi5Ujz",
+          "created_at": "2026-09-25T18:47:34.149Z"
+        },
+        {
+          "session_id": "ses_f261b1289ffeqQdpZWes2YJFyG",
+          "session_name": "t13-shared-cross",
+          "type": "question",
+          "message": "{\"form\":{\"id\":\"frm_0d9e4ee47001x76eaqibvwa2LD\",\"sessionID\":\"ses_f261b1289ffeqQdpZWes2YJFyG\",\"title\":\"t13 multiselect form\",\"fields\":[{\"key\":\"tags\",\"title\":\"Tags\",\"type\":\"multiselect\",\"options\":[{\"value\":\"x\",\"label\":\"X\"},{\"value\":\"y\",\"label\":\"Y\"}],\"custom\":false}]}}",
+          "send": false,
+          "resolved": false,
+          "request_id": "frm_0d9e4ee47001x76eaqibvwa2LD",
+          "created_at": "2026-09-25T18:47:34.216Z"
+        },
+        {
+          "session_id": "ses_f261b1289ffeqQdpZWes2YJFyG",
+          "session_name": "t13-shared-cross",
+          "type": "permission",
+          "message": "{\"id\":\"per_0d9e4edbf001RCtRzYlKibgV3D\",\"sessionID\":\"ses_f261b1289ffeqQdpZWes2YJFyG\",\"action\":\"shell\",\"resources\":[\"echo t13\"]}",
+          "send": false,
+          "resolved": false,
+          "request_id": "per_0d9e4edbf001RCtRzYlKibgV3D",
+          "created_at": "2026-09-25T18:47:35.081Z"
+        }
+      ]
+    }
+  ]
+}

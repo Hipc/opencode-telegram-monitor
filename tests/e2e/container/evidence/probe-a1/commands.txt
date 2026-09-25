@@ -1,24 +1,24 @@
 === scenario: probe-a1 (§9/A.1 form reply channel + A.6 natural question flow) ===
 === exact command ===
-docker run --rm --name t05-probe-a1-1352424 \
-  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t05/tests/e2e/container/probe-a1:/probe-a1:ro \
-  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t05/tests/e2e/container/evidence/probe-a1:/evidence \
-  -e T05_PORT=30665 -e T05_PASSWORD=<redacted> -e T05_PROBE_LOG=/evidence/probe-a1.jsonl -e T05_PROBE_REPLY=1 \
+docker run --rm --name t05-probe-a1-2029167 \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/probe-a1:/probe-a1:ro \
+  -v /home/hipc/work/git-clone/opencode-telegram-monitor-v2-t13/tests/e2e/container/evidence/probe-a1:/evidence \
+  -e T05_PORT=26552 -e T05_PASSWORD=<redacted> -e T05_PROBE_LOG=/evidence/probe-a1.jsonl -e T05_PROBE_REPLY=1 \
   --entrypoint sh hipc/opencode2:latest -c 'sh /probe-a1/scenario.sh'
 === output follows ===
 + export HOME=/tmp/home
 + mkdir -p /tmp/home/.config/opencode/plugin /tmp/home/.otg
 + cd /tmp
 + cp /probe-a1/plugin.ts /tmp/home/.config/opencode/plugin/t05-probe-a1.ts
-+ PORT=30665
++ PORT=26552
 + set +x
 + SPID=10
-+ API=opencode api --server http://127.0.0.1:30665
-+ + seq 1 60
-setsid opencode serve --port 30665 --print-logs
-+ opencode api --server http://127.0.0.1:30665 plugin.list
++ API=opencode api --server http://127.0.0.1:26552
++ + setsid opencode serve --port 26552 --print-logsseq
+ 1 60
++ opencode api --server http://127.0.0.1:26552 plugin.list
 + sleep 0.5
-+ opencode api --server http://127.0.0.1:30665 plugin.list
++ opencode api --server http://127.0.0.1:26552 plugin.list
 + break
 + seq 1 60
 + grep -q "type":"probe.setup" /evidence/probe-a1.jsonl
@@ -27,38 +27,34 @@ setsid opencode serve --port 30665 --print-logs
 + break
 + sleep 1
 + set +x
-+ opencode api --server http://127.0.0.1:30665 session.create -d {"title":"t05-a1-control"}
-+ CONTROL_OUT={"data":{"id":"ses_f2b8efda5ffekVhShKU33bDbvA","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790270571099,"updated":1790270571099},"title":"t05-a1-control","location":{"directory":"/tmp"}}}
-+ echo {"data":{"id":"ses_f2b8efda5ffekVhShKU33bDbvA","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790270571099,"updated":1790270571099},"title":"t05-a1-control","location":{"directory":"/tmp"}}}
-+ echo {"data":{"id":"ses_f2b8efda5ffekVhShKU33bDbvA","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790270571099,"updated":1790270571099},"title":"t05-a1-control","location":{"directory":"/tmp"}}}
++ opencode api --server http://127.0.0.1:26552 session.create -d {"title":"t05-a1-control"}
++ CONTROL_OUT={"data":{"id":"ses_f26125aceffew5uopnlcAZpSXg","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362625331,"updated":1790362625331},"title":"t05-a1-control","location":{"directory":"/tmp"}}}
++ echo {"data":{"id":"ses_f26125aceffew5uopnlcAZpSXg","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362625331,"updated":1790362625331},"title":"t05-a1-control","location":{"directory":"/tmp"}}}
++ echo {"data":{"id":"ses_f26125aceffew5uopnlcAZpSXg","projectID":"470c8549ef01a2a9d3c85b22965766cefc874134","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"time":{"created":1790362625331,"updated":1790362625331},"title":"t05-a1-control","location":{"directory":"/tmp"}}}
 + grep -o "id":"ses_[^"]*"
 + head -1
 + cut -d" -f4
-+ SID=ses_f2b8efda5ffekVhShKU33bDbvA
-+ echo SID=ses_f2b8efda5ffekVhShKU33bDbvA
-SID=ses_f2b8efda5ffekVhShKU33bDbvA
++ SID=ses_f26125aceffew5uopnlcAZpSXg
++ echo SID=ses_f26125aceffew5uopnlcAZpSXg
+SID=ses_f26125aceffew5uopnlcAZpSXg
 + seq 1 40
-+ grep -q ses_f2b8efda5ffekVhShKU33bDbvA /evidence/probe-a1.jsonl
++ grep -q ses_f26125aceffew5uopnlcAZpSXg /evidence/probe-a1.jsonl
 + break
-+ opencode api --server http://127.0.0.1:30665 session.form.create --param sessionID=ses_f2b8efda5ffekVhShKU33bDbvA -d {"title":"a1 control form","fields":[{"key":"choice","type":"string","title":"Pick","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true},{"key":"notes","type":"string","title":"Notes"}]}
++ opencode api --server http://127.0.0.1:26552 session.form.create --param sessionID=ses_f26125aceffew5uopnlcAZpSXg -d {"title":"a1 control form","fields":[{"key":"choice","type":"string","title":"Pick","options":[{"value":"a","label":"A"},{"value":"b","label":"B"}],"custom":true},{"key":"notes","type":"string","title":"Notes"}]}
 + grep -o "id":"frm_[^"]*" /evidence/api-form-create.json
 + head -1
 + cut -d" -f4
-+ CFID=frm_0d47102a1001g4UfzydAVnkyqh
-+ echo CFID=frm_0d47102a1001g4UfzydAVnkyqh
-CFID=frm_0d47102a1001g4UfzydAVnkyqh
++ CFID=frm_0d9eda57e001C22DgK02sRz7om
++ echo CFID=frm_0d9eda57e001C22DgK02sRz7om
+CFID=frm_0d9eda57e001C22DgK02sRz7om
 + seq 1 40
-+ grep -qE "type":"probe.reply.done","payload":\{"formID":"frm_0d47102a1001g4UfzydAVnkyqh" /evidence/probe-a1.jsonl
++ grep -qE "type":"probe.reply.done","payload":\{"formID":"frm_0d9eda57e001C22DgK02sRz7om" /evidence/probe-a1.jsonl
 + break
 + sleep 2
-+ timeout 240 opencode api --server http://127.0.0.1:30665 session.prompt --param sessionID=ses_f2b8efda5ffekVhShKU33bDbvA -d {"text":"Use the question tool to ask me which option I prefer: option A or option B. Do not use any other tool. After asking, stop.","delivery":"queue"}
-prompt_exit=0
++ timeout 240 opencode api --server http://127.0.0.1:26552 session.prompt --param sessionID=ses_f26125aceffew5uopnlcAZpSXg -d {"text":"Use the question tool to ask me which option I prefer: option A or option B. Do not use any other tool. After asking, stop.","delivery":"queue"}
 + echo prompt_exit=0
 + seq 1 180
-+ grep -qE "type":"session\.execution\.(succeeded|failed|interrupted)" /evidence/probe-a1.jsonl
-+ sleep 1
-+ grep -qE "type":"session\.execution\.(succeeded|failed|interrupted)" /evidence/probe-a1.jsonl
-+ sleep 1
+prompt_exit=0
 + grep -qE "type":"session\.execution\.(succeeded|failed|interrupted)" /evidence/probe-a1.jsonl
 + sleep 1
 + grep -qE "type":"session\.execution\.(succeeded|failed|interrupted)" /evidence/probe-a1.jsonl
@@ -75,14 +71,14 @@ prompt_exit=0
 --- plugin loader lines ---
 + echo --- plugin loader lines ---
 + grep -E loading plugin|failed to load plugin|configured plugin /tmp/home/.local/share/opencode/log/opencode.log
-timestamp=2026-09-24T17:22:49.539Z level=INFO run=baf4d67c msg="loading plugin" id=/tmp/home/.config/opencode/plugin/t05-probe-a1.ts entrypoint=file:///tmp/home/.config/opencode/plugin/t05-probe-a1.ts http.span=56 role=server
+timestamp=2026-09-25T18:57:03.762Z level=INFO run=edde9f23 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/t05-probe-a1.ts entrypoint=file:///tmp/home/.config/opencode/plugin/t05-probe-a1.ts http.span=58 role=server
 + cp /tmp/home/.local/share/opencode/log/opencode.log /evidence/server-log.txt
 + kill -TERM 59
 + kill -TERM -10
 + sleep 1
---- evidence line count ---
 + echo --- evidence line count ---
 + wc -l /evidence/probe-a1.jsonl /evidence/sse-raw.txt
-   59 /evidence/probe-a1.jsonl
-   72 /evidence/sse-raw.txt
-  131 total
+--- evidence line count ---
+   54 /evidence/probe-a1.jsonl
+   54 /evidence/sse-raw.txt
+  108 total

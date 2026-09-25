@@ -1,31 +1,31 @@
-timestamp=2026-09-25T13:11:33.677Z level=INFO run=d989a416 message="database schema bootstrap started" migrations=48 role=server
-timestamp=2026-09-25T13:11:33.686Z level=INFO run=d989a416 message="database schema bootstrap completed" migrations=48 durationMs=9 role=server
-server listening on http://127.0.0.1:24207
-timestamp=2026-09-25T13:11:34.194Z level=INFO run=d989a416 message="watcher subscribe" path=/tmp/home/.config/opencode type=directory ignores=3 http.span=15 role=server
-timestamp=2026-09-25T13:11:34.197Z level=INFO run=d989a416 message="watcher subscribe" path=/ type=entries ignores=0 http.span=18 role=server
-timestamp=2026-09-25T13:11:34.198Z level=INFO run=d989a416 message="watcher started" path=/ type=entries backend=node ignores=0 http.span=19 role=server
-timestamp=2026-09-25T13:11:34.198Z level=INFO run=d989a416 message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=19 role=server
-timestamp=2026-09-25T13:11:34.198Z level=INFO run=d989a416 message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=19 role=server
-timestamp=2026-09-25T13:11:34.198Z level=INFO run=d989a416 message="watcher subscribe" path=/tmp/proj type=entries ignores=0 http.span=19 role=server
-timestamp=2026-09-25T13:11:34.198Z level=INFO run=d989a416 message="watcher started" path=/tmp/proj type=entries backend=node ignores=0 http.span=19 role=server
-timestamp=2026-09-25T13:11:34.198Z level=INFO run=d989a416 message="watcher subscribe" path=/tmp/home type=entries ignores=0 http.span=19 role=server
-timestamp=2026-09-25T13:11:34.199Z level=INFO run=d989a416 message="watcher started" path=/tmp/home type=entries backend=node ignores=0 http.span=20 role=server
-timestamp=2026-09-25T13:11:34.218Z level=INFO run=d989a416 message="watcher started" path=/tmp/home/.config/opencode type=directory backend=inotify ignores=3 http.span=39 role=server
-timestamp=2026-09-25T13:11:34.231Z level=INFO run=d989a416 message="location services booted" directory=/tmp/proj workspaceID=undefined durationMs=51 http.span=52 role=server
-timestamp=2026-09-25T13:11:34.236Z level=INFO run=d989a416 msg="loading plugin" id=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts entrypoint=file:///tmp/home/.config/opencode/plugin/telegram-session-monitor.ts http.span=57 role=server
-timestamp=2026-09-25T13:11:34.246Z level=INFO run=d989a416 message="watcher subscribe" path=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts type=file ignores=0 http.span=67 role=server
-timestamp=2026-09-25T13:11:34.247Z level=INFO run=d989a416 message="watcher started" path=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts type=file backend=node ignores=0 http.span=68 role=server
-timestamp=2026-09-25T13:11:34.416Z level=INFO run=d989a416 message="watcher subscribe" path=/tmp/home/.config/opencode/AGENTS.md type=file ignores=0
-timestamp=2026-09-25T13:11:34.417Z level=INFO run=d989a416 message="watcher started" path=/tmp/home/.config/opencode/AGENTS.md type=file backend=node ignores=0 http.span=238 role=server
-timestamp=2026-09-25T13:11:34.417Z level=INFO run=d989a416 message="watcher subscribe" path=/tmp/proj/AGENTS.md type=file ignores=0
-timestamp=2026-09-25T13:11:34.417Z level=INFO run=d989a416 message="watcher started" path=/tmp/proj/AGENTS.md type=file backend=node ignores=0 http.span=238 role=server
-timestamp=2026-09-25T13:11:34.430Z level=INFO run=d989a416 message="watcher subscribe" path=/tmp/home/.config/opencode/skill type=file ignores=0
-timestamp=2026-09-25T13:11:34.430Z level=INFO run=d989a416 message="watcher started" path=/tmp/home/.config/opencode/skill type=file backend=node ignores=0 http.span=251 role=server
-timestamp=2026-09-25T13:11:34.433Z level=INFO run=d989a416 message="watcher subscribe" path=/tmp/home/.config/opencode/skills type=file ignores=0
-timestamp=2026-09-25T13:11:34.433Z level=INFO run=d989a416 message="watcher started" path=/tmp/home/.config/opencode/skills type=file backend=node ignores=0 http.span=254 role=server
-timestamp=2026-09-25T13:11:34.455Z level=INFO run=d989a416 message=event event.id=evt_0d8b15137001Jg9dbligUSfmxG event.created=1790341894455 event.type=provider.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=276 role=server
-timestamp=2026-09-25T13:11:34.461Z level=INFO run=d989a416 message=event event.id=evt_0d8b1513d0010z0i7xVYhavWus event.created=1790341894461 event.type=model.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=282 role=server
-timestamp=2026-09-25T13:11:34.464Z level=INFO run=d989a416 message=event event.id=evt_0d8b15140001fc5prHkZ6H6aea event.created=1790341894464 event.type=agent.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=285 role=server
-timestamp=2026-09-25T13:11:34.464Z level=INFO run=d989a416 message=event event.id=evt_0d8b1514000267WVi2no5lEJPl event.created=1790341894464 event.type=command.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=285 role=server
-timestamp=2026-09-25T13:11:36.270Z level=INFO run=d989a416 message=event event.id=evt_0d8b1584e00125BDHPVfr7By1h event.created=1790341896270 event.type=provider.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={}
-timestamp=2026-09-25T13:11:36.276Z level=INFO run=d989a416 message=event event.id=evt_0d8b15854001Tpt9UQDgOibngn event.created=1790341896276 event.type=model.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=2097 role=server
+timestamp=2026-09-25T18:57:46.711Z level=INFO run=22f446eb message="database schema bootstrap started" migrations=48 role=server
+timestamp=2026-09-25T18:57:46.719Z level=INFO run=22f446eb message="database schema bootstrap completed" migrations=48 durationMs=8 role=server
+server listening on http://127.0.0.1:31171
+timestamp=2026-09-25T18:57:47.221Z level=INFO run=22f446eb message="watcher subscribe" path=/tmp/home/.config/opencode type=directory ignores=3 http.span=22 role=server
+timestamp=2026-09-25T18:57:47.224Z level=INFO run=22f446eb message="watcher subscribe" path=/ type=entries ignores=0 http.span=25 role=server
+timestamp=2026-09-25T18:57:47.225Z level=INFO run=22f446eb message="watcher started" path=/ type=entries backend=node ignores=0 http.span=26 role=server
+timestamp=2026-09-25T18:57:47.225Z level=INFO run=22f446eb message="watcher subscribe" path=/tmp type=entries ignores=0 http.span=26 role=server
+timestamp=2026-09-25T18:57:47.225Z level=INFO run=22f446eb message="watcher started" path=/tmp type=entries backend=node ignores=0 http.span=26 role=server
+timestamp=2026-09-25T18:57:47.225Z level=INFO run=22f446eb message="watcher subscribe" path=/tmp/proj type=entries ignores=0 http.span=26 role=server
+timestamp=2026-09-25T18:57:47.225Z level=INFO run=22f446eb message="watcher started" path=/tmp/proj type=entries backend=node ignores=0 http.span=26 role=server
+timestamp=2026-09-25T18:57:47.226Z level=INFO run=22f446eb message="watcher subscribe" path=/tmp/home type=entries ignores=0 http.span=27 role=server
+timestamp=2026-09-25T18:57:47.226Z level=INFO run=22f446eb message="watcher started" path=/tmp/home type=entries backend=node ignores=0 http.span=27 role=server
+timestamp=2026-09-25T18:57:47.247Z level=INFO run=22f446eb message="watcher started" path=/tmp/home/.config/opencode type=directory backend=inotify ignores=3 http.span=48 role=server
+timestamp=2026-09-25T18:57:47.251Z level=INFO run=22f446eb message="location services booted" directory=/tmp/proj workspaceID=undefined durationMs=51 http.span=52 role=server
+timestamp=2026-09-25T18:57:47.257Z level=INFO run=22f446eb msg="loading plugin" id=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts entrypoint=file:///tmp/home/.config/opencode/plugin/telegram-session-monitor.ts http.span=58 role=server
+timestamp=2026-09-25T18:57:47.268Z level=INFO run=22f446eb message="watcher subscribe" path=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts type=file ignores=0 http.span=69 role=server
+timestamp=2026-09-25T18:57:47.268Z level=INFO run=22f446eb message="watcher started" path=/tmp/home/.config/opencode/plugin/telegram-session-monitor.ts type=file backend=node ignores=0 http.span=69 role=server
+timestamp=2026-09-25T18:57:47.434Z level=INFO run=22f446eb message="watcher subscribe" path=/tmp/home/.config/opencode/AGENTS.md type=file ignores=0
+timestamp=2026-09-25T18:57:47.435Z level=INFO run=22f446eb message="watcher started" path=/tmp/home/.config/opencode/AGENTS.md type=file backend=node ignores=0 http.span=236 role=server
+timestamp=2026-09-25T18:57:47.435Z level=INFO run=22f446eb message="watcher subscribe" path=/tmp/proj/AGENTS.md type=file ignores=0
+timestamp=2026-09-25T18:57:47.435Z level=INFO run=22f446eb message="watcher started" path=/tmp/proj/AGENTS.md type=file backend=node ignores=0 http.span=236 role=server
+timestamp=2026-09-25T18:57:47.461Z level=INFO run=22f446eb message="watcher subscribe" path=/tmp/home/.config/opencode/skill type=file ignores=0
+timestamp=2026-09-25T18:57:47.461Z level=INFO run=22f446eb message="watcher started" path=/tmp/home/.config/opencode/skill type=file backend=node ignores=0 http.span=262 role=server
+timestamp=2026-09-25T18:57:47.464Z level=INFO run=22f446eb message="watcher subscribe" path=/tmp/home/.config/opencode/skills type=file ignores=0
+timestamp=2026-09-25T18:57:47.464Z level=INFO run=22f446eb message="watcher started" path=/tmp/home/.config/opencode/skills type=file backend=node ignores=0 http.span=265 role=server
+timestamp=2026-09-25T18:57:47.487Z level=INFO run=22f446eb message=event event.id=evt_0d9ee49df0015li4GcCHOvTr8G event.created=1790362667487 event.type=provider.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=288 role=server
+timestamp=2026-09-25T18:57:47.493Z level=INFO run=22f446eb message=event event.id=evt_0d9ee49e5001OcHszd7ArdL1O0 event.created=1790362667493 event.type=model.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=294 role=server
+timestamp=2026-09-25T18:57:47.496Z level=INFO run=22f446eb message=event event.id=evt_0d9ee49e7001f80lMXZPsBgJ1k event.created=1790362667495 event.type=agent.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=297 role=server
+timestamp=2026-09-25T18:57:47.496Z level=INFO run=22f446eb message=event event.id=evt_0d9ee49e8001icGgX6OL8KBlMf event.created=1790362667496 event.type=command.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=297 role=server
+timestamp=2026-09-25T18:57:48.315Z level=INFO run=22f446eb message=event event.id=evt_0d9ee4d1b0019sELRMUyc5wUBt event.created=1790362668315 event.type=provider.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={}
+timestamp=2026-09-25T18:57:48.321Z level=INFO run=22f446eb message=event event.id=evt_0d9ee4d21001YnYZSdF5i7hM5T event.created=1790362668321 event.type=model.updated event.location.directory=/tmp/proj event.location.workspaceID=undefined event.data={} http.span=1122 role=server

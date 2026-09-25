@@ -13,6 +13,8 @@
 #   tests/e2e/container/run.sh build                    # bundle src/ via otg-toolchain
 #   tests/e2e/container/run.sh t10-cross [--plugin F]   # cross-process ownership gate + service.json discovery
 #   tests/e2e/container/run.sh t12-ownership [--plugin F]  # multi-root event ownership in one serve process
+#   tests/e2e/container/run.sh t13-probe                # shared-storage two-server probe (P1-P5)
+#   tests/e2e/container/run.sh t13-shared-cross [--plugin F]  # shared-storage cross-apply fix scenario
 #   tests/e2e/container/run.sh real-tg-recipe --check   # read-only ~/.otg mechanism check
 #   tests/e2e/container/run.sh real-tg-recipe --run     # full real-TG smoke (serve-based send path)
 #   tests/e2e/container/run.sh assert-probe-a1          # assertions over existing evidence
@@ -22,8 +24,11 @@
 #   tests/e2e/container/run.sh assert-t10-cross --negative-control  # pre-fix bundle signature
 #   tests/e2e/container/run.sh assert-t12-ownership     # multi-root ownership assertions
 #   tests/e2e/container/run.sh assert-t12-ownership --negative-control  # pre-fix bundle signature
+#   tests/e2e/container/run.sh assert-t13-probe         # shared-storage probe summary (P1-P5)
+#   tests/e2e/container/run.sh assert-t13-shared-cross  # shared-storage fix assertions
+#   tests/e2e/container/run.sh assert-t13-shared-cross --negative-control  # pre-fix bundle signature
 #   tests/e2e/container/run.sh assert-probe-lineage     # lineage evidence summary
-#   tests/e2e/container/run.sh clean                    # remove leftover t05/t09/t10 containers
+#   tests/e2e/container/run.sh clean                    # remove leftover t05/t09/t10/t12/t13 containers
 #
 # Environment: T05_HARNESS_FORM_REPLY=1 adds the form closure phase,
 # T05_HARNESS_RESOLVED_REPLY=1 adds the already-settled reply capture,
@@ -450,6 +455,105 @@ assert_t12_ownership() {
   node "$ASSERT_DIR/t12-ownership.mjs" "$out" "$@"
 }
 
+# ---- t13 shared-storage two-server probe (P1-P5) ----------------------------
+# Both servers share ONE HOME/XDG (the field topology: shared ~/.otg +
+# ~/.local/share/opencode). The probe plugin (t13-probe/plugin.ts) records every
+# event per pid; the scenario drives the v2 HTTP API directly to answer P1-P5.
+scenario_t13_probe() {
+  require_image "$OPENCODE_IMAGE"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --plugin) fail "t13-probe: the probe plugin is fixed (tests/e2e/container/t13-probe/plugin.ts)" ;;
+      *) fail "t13-probe: unknown argument: $1" ;;
+    esac
+  done
+  local out="${T13_PROBE_EVIDENCE_DIR:-$EVIDENCE_ROOT/t13-probe}"
+  rm -rf "$out"; mkdir -p "$out"
+  local name="t13-probe-$$"
+  log "t13-probe: evidence=$out"
+  {
+    echo "=== scenario: t13-probe (shared-storage two-server topology, P1-P5) ==="
+    echo "=== exact command ==="
+    echo "docker run --rm --name $name \\"
+    echo "  -v $CONTAINER_DIR/t13-probe:/t13-probe:ro -v $out:/evidence \\"
+    echo "  -e T13_PLUGIN=/t13-probe/plugin.ts \\"
+    echo "  --entrypoint sh $OPENCODE_IMAGE -c 'sh /t13-probe/scenario.sh'"
+    echo "=== output follows ==="
+  } > "$out/commands.txt"
+  timeout 900 docker run --rm --name "$name" \
+    -v "$CONTAINER_DIR/t13-probe:/t13-probe:ro" \
+    -v "$out:/evidence" \
+    -e T13_PLUGIN=/t13-probe/plugin.ts \
+    --entrypoint sh "$OPENCODE_IMAGE" -c 'sh /t13-probe/scenario.sh' \
+    >> "$out/commands.txt" 2>&1 || log "t13-probe container exited non-zero (evidence preserved)"
+  fix_ownership "$out"
+  log "t13-probe: evidence written to $out"
+}
+
+assert_t13_probe() {
+  local out="${T13_PROBE_EVIDENCE_DIR:-$EVIDENCE_ROOT/t13-probe}"
+  [ -d "$out" ] || fail "no t13-probe evidence at $out; run: run.sh t13-probe"
+  node "$ASSERT_DIR/t13-probe.mjs" "$out"
+}
+
+# ---- t13 shared-storage cross-server apply (the incident fix) ---------------
+# The user's exact topology: A = `serve --service` (hosts the session), B =
+# plain `serve --port`, SAME HOME/XDG storage. A pending permission + two forms
+# are created on A; A is SIGSTOPped; the TG-side terminal fields are injected
+# into the shared registry; B's reply scan must NOT apply to itself and must NOT
+# delete the shared records; after A resumes, A applies exactly once and the
+# records are removed. --plugin runs a provided bundle (pre-fix negative
+# control: B classifies its self-POST 404 as terminal and deletes the records
+# while A is frozen — the field signature).
+scenario_t13_shared_cross() {
+  require_image "$OPENCODE_IMAGE"
+  require_image "$TOOLCHAIN_IMAGE"
+  local plugin_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --plugin) plugin_file="$2"; shift 2 ;;
+      *) fail "t13-shared-cross: unknown argument: $1" ;;
+    esac
+  done
+  if [ -n "$plugin_file" ] && [ "${plugin_file#/}" = "$plugin_file" ]; then
+    plugin_file="$PWD/$plugin_file"
+  fi
+  local out="${T13_SHARED_CROSS_EVIDENCE_DIR:-$EVIDENCE_ROOT/t13-shared-cross}"
+  rm -rf "$out"; mkdir -p "$out"
+  if [ -z "$plugin_file" ]; then
+    plugin_file="$(build_plugin_bundle "$out")"
+    log "t13-shared-cross: built plugin bundle at $plugin_file"
+  elif [ ! -f "$plugin_file" ]; then
+    fail "t13-shared-cross: --plugin file not found: $plugin_file"
+  fi
+  local name="t13-shared-cross-$$"
+  log "t13-shared-cross: evidence=$out plugin=$plugin_file"
+  {
+    echo "=== scenario: t13-shared-cross (shared-storage two-server apply routing) ==="
+    echo "=== exact command ==="
+    echo "docker run --rm --name $name \\"
+    echo "  -v $(dirname "$plugin_file"):/plugin:ro -v $HARNESS_DIR:/harness:ro -v $out:/evidence \\"
+    echo "  -e T13_PLUGIN=/plugin/$(basename "$plugin_file") \\"
+    echo "  --entrypoint sh $OPENCODE_IMAGE -c 'sh /harness/t13-shared-cross-scenario.sh'"
+    echo "=== output follows ==="
+  } > "$out/commands.txt"
+  timeout 900 docker run --rm --name "$name" \
+    -v "$(dirname "$plugin_file"):/plugin:ro" \
+    -v "$HARNESS_DIR:/harness:ro" \
+    -v "$out:/evidence" \
+    -e T13_PLUGIN="/plugin/$(basename "$plugin_file")" \
+    --entrypoint sh "$OPENCODE_IMAGE" -c 'sh /harness/t13-shared-cross-scenario.sh' \
+    >> "$out/commands.txt" 2>&1 || log "t13-shared-cross container exited non-zero (evidence preserved)"
+  fix_ownership "$out"
+  log "t13-shared-cross: evidence written to $out"
+}
+
+assert_t13_shared_cross() {
+  local out="${T13_SHARED_CROSS_EVIDENCE_DIR:-$EVIDENCE_ROOT/t13-shared-cross}"
+  [ -d "$out" ] || fail "no t13-shared-cross evidence at $out; run: run.sh t13-shared-cross"
+  node "$ASSERT_DIR/t13-shared-cross.mjs" "$out" "$@"
+}
+
 assert_harness() {
   local out="${T05_HARNESS_OUT:-$EVIDENCE_ROOT/harness}"
   [ -d "$out" ] || fail "no harness evidence at $out; run: run.sh harness"
@@ -629,6 +733,8 @@ case "${1:-}" in
   dupe) shift; scenario_dupe "$@" ;;
   t10-cross) shift; scenario_t10_cross "$@" ;;
   t12-ownership) shift; scenario_t12_ownership "$@" ;;
+  t13-probe) shift; scenario_t13_probe "$@" ;;
+  t13-shared-cross) shift; scenario_t13_shared_cross "$@" ;;
   probe-lineage) shift; scenario_lineage "$@" ;;
   build) shift; scenario_build "$@" ;;
   assert-probe-a1) shift; assert_probe_a1 "$@" ;;
@@ -636,11 +742,13 @@ case "${1:-}" in
   assert-dupe) shift; assert_dupe "$@" ;;
   assert-t10-cross) shift; assert_t10_cross "$@" ;;
   assert-t12-ownership) shift; assert_t12_ownership "$@" ;;
+  assert-t13-probe) shift; assert_t13_probe "$@" ;;
+  assert-t13-shared-cross) shift; assert_t13_shared_cross "$@" ;;
   assert-probe-lineage) shift; assert_lineage "$@" ;;
   real-tg-recipe) shift; scenario_real_tg_recipe "$@" ;;
   clean) cleanup_containers ;;
   *)
-    sed -n '2,26p' "${BASH_SOURCE[0]}"
+    sed -n '2,31p' "${BASH_SOURCE[0]}"
     exit 1
     ;;
 esac

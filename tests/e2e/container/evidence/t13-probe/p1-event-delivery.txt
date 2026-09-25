@@ -1,0 +1,31 @@
+aPid=10 bPid=61
+sessionID=ses_f261e84e7ffeH964u2sPBUVXzZ permissionID=per_0d9e17b64001o5D0GYbowgnFnw form1=frm_0d9e17bac001DiCsLnqkWUGBK5 form2=frm_0d9e17bf50018E9oWWK7dw12th
+--- A lines mentioning session/form/permission ids ---
+{"ts":1790361828126,"seq":15,"pid":10,"plugin":"t13-probe","type":"probe.event"
+{"ts":1790361828197,"seq":16,"pid":10,"plugin":"t13-probe","type":"probe.event"
+{"ts":1790361828269,"seq":17,"pid":10,"plugin":"t13-probe","type":"probe.event"
+{"ts":1790361828342,"seq":18,"pid":10,"plugin":"t13-probe","type":"probe.event"
+--- B lines mentioning session/form/permission ids ---
+--- distinct event types per pid ---
+pid=10
+      1 agent.updated
+      1 command.updated
+      2 integration.updated
+      2 model.updated
+      1 models-dev.refreshed
+      1 plugin.updated
+      2 provider.updated
+      1 reference.updated
+      1 skill.updated
+      1 websearch.updated
+pid=61
+      1 agent.updated
+      1 command.updated
+      2 integration.updated
+      2 model.updated
+      1 models-dev.refreshed
+      1 plugin.updated
+      2 provider.updated
+      1 reference.updated
+      1 skill.updated
+      1 websearch.updated

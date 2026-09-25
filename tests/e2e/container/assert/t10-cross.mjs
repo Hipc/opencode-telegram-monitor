@@ -173,12 +173,15 @@ if (negative) {
       /b_server_password_env=present/.test(bEndpoint),
     "B could resolve its own endpoint (argv --port + env password) - the gate is what stops it",
   );
+  // t13: records created by the fixed plugin carry host_pid, so the skip
+  // message names the stamp; the legacy session.get message is kept as the
+  // transitional fallback for records without a stamp.
+  const bSkipNew = `apply skipped: waiting record owned by another instance request=${formID}`;
+  const bSkipLegacy = `apply skipped: session not hosted by this instance request=${formID}`;
   check(
     "N2.2",
-    bDiag.includes(
-      `apply skipped: session not hosted by this instance request=${formID}`,
-    ),
-    "B skipped the record via the session.get ownership gate",
+    bDiag.includes(bSkipNew) || bDiag.includes(bSkipLegacy),
+    "B skipped the record via the ownership gate (host stamp, legacy session.get fallback accepted)",
   );
   check(
     "N2.3",

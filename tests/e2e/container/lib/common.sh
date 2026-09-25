@@ -68,9 +68,10 @@ cleanup_containers() {
   names="${names} $(docker ps -a --filter "name=^/t09-" --format '{{.Names}}' 2>/dev/null || true)"
   names="${names} $(docker ps -a --filter "name=^/t10-" --format '{{.Names}}' 2>/dev/null || true)"
   names="${names} $(docker ps -a --filter "name=^/t12-" --format '{{.Names}}' 2>/dev/null || true)"
+  names="${names} $(docker ps -a --filter "name=^/t13-" --format '{{.Names}}' 2>/dev/null || true)"
   names="$(echo "$names" | tr '\n' ' ' | tr -s ' ' | sed 's/^ //;s/ $//')"
   if [ -n "$names" ]; then
-    log "removing leftover t05*/t09-*/t10-*/t12-* containers: $names"
+    log "removing leftover t05*/t09-*/t10-*/t12-*/t13-* containers: $names"
     # shellcheck disable=SC2086
     docker rm -f $names >/dev/null 2>&1 || true
   fi

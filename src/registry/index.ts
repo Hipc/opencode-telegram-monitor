@@ -22,6 +22,9 @@ export type RegistryEntry = {
 // 等待状态落盘记录（契约 docs/modules/sessions-relay.md §2 冻结；Round 2 扩展
 // §13.1；Round 4 扩展 §14.1.1；Round 6 §16 起 resolved 不再由回写置位——
 // 终态 = 删除记录（removeSessionRecord），resolved 字段仅历史数据/解析兼容）。
+// t13 扩展 §14.4：host_pid = 创建该记录的进程 pid（收到 asked 事件的宿主，
+// t13-probe P1 证明只有宿主进程收到 session 事件）；回写消费端据此判定归属，
+// 缺失 = 旧版本记录（过渡期走 session.get 归属门）。
 // message 为完整事件 payload 的 JSON 字符串；send 为 poller 发送置位；
 // reply 为可选字段：null/缺失 = 未回复；三值 = 用户选定回复（透传不映射）。
 // q_* 为 question 向导可选字段（§14.1.1）：写入端初始不设置任何 q_* 键；
@@ -35,6 +38,7 @@ export type SessionRecord = {
   resolved: boolean; // 初始 false；replied/rejected 置 true；终态（不再改回）
   request_id: string; // 内部匹配键：asked 事件 properties.id；replied 匹配键
   created_at: string; // ISO 8601 字符串（new Date().toISOString()），本轮仅预留不消费
+  host_pid?: number; // t13：创建记录（=宿主该 session）的进程 pid；旧版本记录缺失
   reply?: "once" | "always" | "reject" | null; // Round 2：null/缺失=未回复；三值=用户选定回复（透传不映射）
   q_draft?: Array<Array<string>>; // 向导草稿：长度=questions 数；每题=已选 label 数组；未答=空数组
   q_stage?: number; // 向导当前题索引 0-based；=questions.length 表示总结阶段
@@ -111,12 +115,14 @@ function isStringMatrix(value: unknown): value is Array<Array<string>> {
 
 /**
  * 严格校验单条 SessionRecord（契约 sessions-relay.md §3.2，Round 2 扩展 §13.1，
- * Round 4 扩展 §14.1.2）：
+ * Round 4 扩展 §14.1.2，t13 扩展 §14.4 host_pid）：
  * 8 基础字段类型必须正确，不允许从默认值推断（如把非 boolean 的 send 按
  * truthy 处理）；任一字段不符 → undefined（调用方丢弃该记录，不抛错、不影响
  * 其它记录）。可选 reply 字段四态：键缺失 → 构造记录不含该键（serialize 自动
  * 省略，旧文件往返不新增键）；显式 null → null；三合法值 → 原样保留；其它
  * 任何值 → 丢弃整条记录（严格白名单风格，不抛错）。
+ * 可选 host_pid（t13）：键缺失 → 不含该键（旧版本记录 = 过渡期 session.get
+ * 归属门）；正整数 → 原样保留；其它 → 丢弃整条记录。
  * q_* 6 字段（§14.1.2）：键缺失 → 构造记录不含该键；q_input 显式 null → null；
  * 合法值 → 原样保留；其它任何值 → 丢弃整条记录。q_stage 只做 typeof number
  * （不校验范围/整数性——由回调状态重建处钳制）。
@@ -149,6 +155,18 @@ function parseSessionRecord(value: unknown): SessionRecord | undefined {
       reply = rec.reply;
     } else {
       return undefined; // 非法 reply 值：丢弃整条记录，不抛错、不影响其它记录
+    }
+  }
+  let host_pid: number | undefined;
+  if ("host_pid" in rec) {
+    if (
+      typeof rec.host_pid === "number" &&
+      Number.isInteger(rec.host_pid) &&
+      rec.host_pid > 0
+    ) {
+      host_pid = rec.host_pid;
+    } else {
+      return undefined; // 非法 host_pid：丢弃整条记录（严格白名单，同其它可选字段）
     }
   }
   let q_draft: Array<Array<string>> | undefined;
@@ -192,6 +210,7 @@ function parseSessionRecord(value: unknown): SessionRecord | undefined {
     request_id: rec.request_id,
     created_at: rec.created_at,
   };
+  if (host_pid !== undefined) record.host_pid = host_pid;
   if (reply !== undefined) record.reply = reply;
   if (q_draft !== undefined) record.q_draft = q_draft;
   if (q_stage !== undefined) record.q_stage = q_stage;

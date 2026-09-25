@@ -10,12 +10,14 @@ is installed on the host and no local opencode directory is touched.
 | `lib/common.sh` | docker/port/ownership helpers |
 | `probe-a1/` | §9/A.1 + A.6 supplementary probe (form reply channel, natural question flow) |
 | `probe-lineage/` | §9 supplementary probe (subagent lineage / parentID observability) |
+| `t13-probe/` | shared-storage two-server probe P1-P5 (event delivery, form/permission route semantics, session.get diff, multiselect) |
 | `harness/` | container e2e scenario + mechanism-validation double + real-TG recipe scripts |
 | `harness/fake-telegram.mjs` | fake Telegram Bot API endpoint for the duplicate-record scenario (CONNECT + TLS, request log) |
 | `harness/dupe-scenario.sh` | t09 duplicate-record / message_id regression scenario |
 | `harness/t10-cross-scenario.sh` | t10 cross-process ownership gate + state `service.json` discovery scenario |
 | `harness/t12-ownership-scenario.sh` | t12 multi-root event ownership in one serve process (field: N notifications, N labels) |
-| `assert/` | node assertion suites over the collected evidence (`assert/dupe.mjs` = t09 regression, `assert/t10-cross.mjs` = t10 gate/discovery, `assert/t12-ownership.mjs` = t12 ownership) |
+| `harness/t13-shared-cross-scenario.sh` | t13 shared-storage two-server apply routing (host stamp / 404 deletion) scenario |
+| `assert/` | node assertion suites over the collected evidence (`assert/dupe.mjs` = t09 regression, `assert/t10-cross.mjs` = t10 gate/discovery, `assert/t12-ownership.mjs` = t12 ownership, `assert/t13-probe.mjs` = P1-P5, `assert/t13-shared-cross.mjs` = t13 apply routing) |
 | `evidence/` | recorded outputs of the green runs in this round |
 
 Requirements: docker with `hipc/opencode2:latest` (opencode v2.0.15) and
@@ -23,12 +25,13 @@ Requirements: docker with `hipc/opencode2:latest` (opencode v2.0.15) and
 the assertion scripts.
 
 Resource discipline: every container runs `--rm` with a unique `t05`/`t05b-`/
-`t09-` name, no ports are published (the serve port lives in the container
-network namespace and is picked dynamically, checked against the host listener
-table), and the runner stops what it starts (the t09 scenario also removes its
-`t09-dupe-net-*` network and its host-side temp TLS dir). `run.sh clean` removes
-leftover `t05*`/`t09-*` containers and `t09-dupe-net-*` networks if a run is
-interrupted.
+`t09-`/`t10-`/`t12-`/`t13-` name, no ports are published (the serve port lives in
+the container network namespace and is picked dynamically, checked against the
+host listener table), and the runner stops what it starts (the t09 scenario also
+removes its `t09-dupe-net-*` network and its host-side temp TLS dir).
+`run.sh clean` removes leftover
+`t05*`/`t09-*`/`t10-*`/`t12-*`/`t13-*` containers and `t09-dupe-net-*` networks
+if a run is interrupted.
 
 ---
 
@@ -273,6 +276,63 @@ process-wide seen-event set is the defense for that swap window.
 Evidence: `evidence/t12-ownership/` (positive) and
 `evidence/t12-ownership-prefix/` (negative control).
 
+## 2e. Shared-storage two-server probe (t13, P1-P5)
+
+```sh
+tests/e2e/container/run.sh t13-probe                 # ~1 min, container-only
+tests/e2e/container/run.sh assert-t13-probe          # P1-P5 evidence checks
+```
+
+Reproduces the field topology "two servers share ONE HOME/XDG storage": A =
+`opencode serve --service` (hosts the session) and B = plain `serve --port`, both
+loading the probe plugin (`t13-probe/plugin.ts`) from the same config dir. The
+scenario drives the v2 HTTP API directly. Findings and the fix-facing verdict:
+**`t13-probe/VERDICT.md`**; raw evidence in `evidence/t13-probe/`.
+
+Result summary (all 17 checks green):
+
+- **P1**: only the host process receives the session's events
+  (`session.created` / `permission.asked` / `form.created`); the non-host B,
+  with the same root activated, receives none — a creation-time `host_pid` stamp
+  is a reliable host determination.
+- **P2**: non-owner B gets **404 FormNotFoundError** for pending form
+  get/reply/cancel; owner A gets 200/204 and **409 FormAlreadySettledError**
+  once settled. 404 is ambiguous and must never be treated as settled.
+- **P3**: non-owner B gets **404 PermissionNotFoundError** for
+  `permission.get`/`reply`; owner A gets 200/204.
+- **P4**: `session.get` payloads are **byte-identical** from A and B — the t10
+  `session.get` gate fails open in shared storage.
+- **P5**: `type:"multiselect"` round-trips unchanged in `form.created` and
+  `form.get` (the wizard `multiple` mapping is correct).
+
+## 2f. Shared-storage cross-server apply routing (t13 fix)
+
+```sh
+tests/e2e/container/run.sh t13-shared-cross          # ~2.5 min, container-only
+tests/e2e/container/run.sh assert-t13-shared-cross   # 17 assertions (positive)
+T13_SHARED_CROSS_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t13-shared-cross-prefix \
+T05_PLUGIN_SRC=<base-worktree> tests/e2e/container/run.sh t13-shared-cross
+T13_SHARED_CROSS_EVIDENCE_DIR=$PWD/tests/e2e/container/evidence/t13-shared-cross-prefix \
+  tests/e2e/container/run.sh assert-t13-shared-cross --negative-control
+```
+
+The user's exact failure topology: A = `serve --service` hosts a session with a
+pending permission + two pending forms (string + multiselect); B = plain
+`serve --port` shares the same HOME/XDG and the same root. A is SIGSTOPped, the
+TG-side terminal fields (`reply:"once"`, `q_answers`, `q_reject`) are injected
+into the shared registry, and B's reply scan runs.
+
+Assertions (positive): every record carries `host_pid` = A's pid; B logs
+`apply skipped: waiting record owned by another instance` for all three and
+deletes nothing while A is frozen; after A resumes, A applies exactly once
+(`form.replied` / `form.cancelled` / `permission.replied` on A's event stream)
+and removes all three records. The negative control runs the same topology
+against the pre-fix bundle and asserts the field signature: B classifies its
+self-POST/self-DELETE 404 as terminal and deletes all three shared records while
+A is frozen; A never emits a settle event. Evidence:
+`evidence/t13-shared-cross/` (positive) and `evidence/t13-shared-cross-prefix/`
+(negative control).
+
 ### Bundle build
 ```sh
 tests/e2e/container/run.sh build   # copies the worktree into otg-toolchain and runs node scripts/build.mjs
@@ -426,6 +486,12 @@ built from this worktree).
   positive run 15/15 (A applied exactly once, B skipped, no record loss) and
   the pre-fix negative control reproduces the field signature; recorded in
   `evidence/t10-cross/` and `evidence/t10-cross-prefix/`.
+- **Shared-storage topology + apply routing (t13)** — **done** (see §2e/§2f):
+  P1-P5 probe 17/17 (`evidence/t13-probe/`, verdict in
+  `t13-probe/VERDICT.md`); the fixed plugin run 17/17 (B skips via the
+  `host_pid` stamp, A applies exactly once, all records removed) and the
+  pre-fix negative control reproduces the field deletion signature
+  (`evidence/t13-shared-cross/`, `evidence/t13-shared-cross-prefix/`).
 - **Real-TG smoke execution** — **pending** (final verification phase, real
   credentials): the `--run` recipe is now serve-based and fails unless this
   run's own diag block shows a send attempt (it no longer runs
@@ -440,13 +506,16 @@ built from this worktree).
 ## 5. Evidence layout
 
 `evidence/probe-a1/` form-channel probe run · `evidence/probe-lineage/`
-subagent-lineage probe run · `evidence/harness/` green-run against the adapted
-plugin (20 checks green — catalog 22, form phase included; H3.6/H3.7 run only
+subagent-lineage probe run · `evidence/t13-probe/` shared-storage two-server
+probe (P1-P5) · `evidence/harness/` green-run against the adapted plugin
+(20 checks green — catalog 22, form phase included; H3.6/H3.7 run only
 with the settled-reply flags) ·
 `evidence/harness-resolved-reply/` settled-request capture (H3.6/H3.7) ·
 `evidence/t10-cross/` cross-process gate + service.json discovery (positive) ·
 `evidence/t10-cross-prefix/` same scenario against the pre-fix bundle
-(negative control) ·
+(negative control) · `evidence/t13-shared-cross/` shared-storage apply routing
+(positive) · `evidence/t13-shared-cross-prefix/` same scenario against the
+pre-fix bundle (negative control) ·
 `evidence/real-tg-recipe/` read-only mount check ·
 `evidence/real-tg-sendpath-check/` synthetic-credential send-path mechanism
 check (serve-based recipe; `RESULT: FAIL ... rejected (401)` by design — the

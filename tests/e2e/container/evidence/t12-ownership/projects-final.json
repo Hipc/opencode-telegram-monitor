@@ -1,6 +1,6 @@
 {
   "projects": [
-    { "path": "/tmp/projA", "enabled": true, "addedAt": "2026-09-25T16:16:40.000Z" },
-    { "path": "/tmp/projB", "enabled": true, "addedAt": "2026-09-25T16:16:40.000Z" }
+    { "path": "/tmp/projA", "enabled": true, "addedAt": "2026-09-25T18:59:37.000Z" },
+    { "path": "/tmp/projB", "enabled": true, "addedAt": "2026-09-25T18:59:37.000Z" }
   ]
 }

@@ -1,28 +1,28 @@
-data: {"id":"evt_0d95acbc5001gE2QQs8fcSJ9fD","type":"server.connected","data":{}}
+data: {"id":"evt_0d9effda10015LKxOzBAdGZTCs","type":"server.connected","data":{}}
 
 : heartbeat
 
-data: {"id":"evt_0d95acc7e001Vosd0joBCmogZU","created":1790353001598,"type":"models-dev.refreshed","location":{"directory":"/tmp/projA"},"data":{}}
+data: {"id":"evt_0d9f001f7001ucGp4be46U25uh","created":1790362780151,"type":"models-dev.refreshed","location":{"directory":"/tmp/projA"},"data":{}}
 
-data: {"id":"evt_0d95accc2001pvofRs6Ti7hSzM","created":1790353001666,"type":"integration.updated","location":{"directory":"/tmp/projA"},"data":{}}
+data: {"id":"evt_0d9f002360011RUzifo8cZoizx","created":1790362780214,"type":"integration.updated","location":{"directory":"/tmp/projA"},"data":{}}
 
-data: {"id":"evt_0d95acce7001wbFF1zawPSvg4H","created":1790353001703,"type":"provider.updated","location":{"directory":"/tmp/projA"},"data":{}}
+data: {"id":"evt_0d9f00258001DS7cKqjtsNUK06","created":1790362780248,"type":"provider.updated","location":{"directory":"/tmp/projA"},"data":{}}
 
-data: {"id":"evt_0d95accec001w8zh4eMESk8fo6","created":1790353001708,"type":"model.updated","location":{"directory":"/tmp/projA"},"data":{}}
+data: {"id":"evt_0d9f0025d001ISB7ZhV4xG0xtA","created":1790362780253,"type":"model.updated","location":{"directory":"/tmp/projA"},"data":{}}
 
-data: {"id":"evt_0d95acff7001lMawbKr0IGB2yn","created":1790353002487,"type":"session.created","location":{"directory":"/tmp/projA"},"data":{"sessionID":"ses_f26a5300bffey1BO4KDPY7CqCZ","slug":"curious-wolf","version":"2.0.15","projectID":"affbf5d3af4840c3f258c9a0e6e0cc2b5a2e1a66","location":{"directory":"/tmp/projA"},"subpath":"","title":"t12-ownership"},"durable":{"aggregateID":"ses_f26a5300bffey1BO4KDPY7CqCZ","seq":0,"version":1}}
+data: {"id":"evt_0d9f0026e001vg2jWw0dc5SL5H","created":1790362780270,"type":"session.created","location":{"directory":"/tmp/projA"},"data":{"sessionID":"ses_f260ffd93ffeFzL928vsfZtU7V","slug":"eager-comet","version":"2.0.15","projectID":"affbf5d3af4840c3f258c9a0e6e0cc2b5a2e1a66","location":{"directory":"/tmp/projA"},"subpath":"","title":"t12-ownership"},"durable":{"aggregateID":"ses_f260ffd93ffeFzL928vsfZtU7V","seq":0,"version":1}}
 
-data: {"id":"evt_0d95ad049001Aw7RUWz9rgGv1P","created":1790353002569,"type":"session.model.selected","location":{"directory":"/tmp/projA"},"data":{"sessionID":"ses_f26a5300bffey1BO4KDPY7CqCZ","model":{"id":"definitely-not-a-model","providerID":"opencode"}},"durable":{"aggregateID":"ses_f26a5300bffey1BO4KDPY7CqCZ","seq":1,"version":1}}
+data: {"id":"evt_0d9f002c50018Uzrb1xYzoGRCD","created":1790362780357,"type":"session.model.selected","location":{"directory":"/tmp/projA"},"data":{"sessionID":"ses_f260ffd93ffeFzL928vsfZtU7V","model":{"id":"definitely-not-a-model","providerID":"opencode"}},"durable":{"aggregateID":"ses_f260ffd93ffeFzL928vsfZtU7V","seq":1,"version":1}}
 
-data: {"id":"evt_0d95ad090001RI2bNPYcuPaWpR","created":1790353002640,"type":"session.inbox.enqueued","location":{"directory":"/tmp/projA"},"data":{"inboxID":"msg_0d95ad08f001bip68DhTL5xnQ1","sessionID":"ses_f26a5300bffey1BO4KDPY7CqCZ","item":{"type":"user","payload":{"text":"hello"},"delivery":"steer"}},"durable":{"aggregateID":"ses_f26a5300bffey1BO4KDPY7CqCZ","seq":2,"version":1}}
+data: {"id":"evt_0d9f00309001WVa6S1imgqCdPx","created":1790362780425,"type":"session.inbox.enqueued","location":{"directory":"/tmp/projA"},"data":{"inboxID":"msg_0d9f003080016S8lcMPxv8xRHU","sessionID":"ses_f260ffd93ffeFzL928vsfZtU7V","item":{"type":"user","payload":{"text":"hello"},"delivery":"steer"}},"durable":{"aggregateID":"ses_f260ffd93ffeFzL928vsfZtU7V","seq":2,"version":1}}
 
-data: {"id":"evt_0d95ad09300116IbERYgDFKITs","created":1790353002643,"type":"session.execution.started","data":{"sessionID":"ses_f26a5300bffey1BO4KDPY7CqCZ"},"durable":{"aggregateID":"ses_f26a5300bffey1BO4KDPY7CqCZ","seq":3,"version":1}}
+data: {"id":"evt_0d9f0030c0017i7SRAmJGkm7HH","created":1790362780428,"type":"session.execution.started","data":{"sessionID":"ses_f260ffd93ffeFzL928vsfZtU7V"},"durable":{"aggregateID":"ses_f260ffd93ffeFzL928vsfZtU7V","seq":3,"version":1}}
 
-data: {"id":"evt_0d95ad0a5001FwIbIbxh4dds32","created":1790353002661,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/tmp/projA"},"data":{"sessionID":"ses_f26a5300bffey1BO4KDPY7CqCZ","delta":{"core/environment":"bc8b9f67cdcccda7745972086134685f7802f67f835e1a1b38c05ab380c17ba8","core/date":"8652ede0af6d1b21e25507db627105f1c9c8fc8fb72156123605e42fce9be918","core/codemode":"9bbeb19ab2fa0ee4cafd3d2e36b9cfb6c72f8148481e8c67444eb0c9d38b5a22","core/skill-guidance":"8394362d28c82fa4d13c7a9f5568c05680f6687e07db8f426a0e3c92f3027dc9"}},"durable":{"aggregateID":"ses_f26a5300bffey1BO4KDPY7CqCZ","seq":4,"version":2}}
+data: {"id":"evt_0d9f0031d001xyorS2O8SjP45H","created":1790362780445,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/tmp/projA"},"data":{"sessionID":"ses_f260ffd93ffeFzL928vsfZtU7V","delta":{"core/environment":"afcc2898da680181c0e75a0c087a96233a16c3d83d4049c4639e6a544c33eb75","core/date":"8652ede0af6d1b21e25507db627105f1c9c8fc8fb72156123605e42fce9be918","core/codemode":"9bbeb19ab2fa0ee4cafd3d2e36b9cfb6c72f8148481e8c67444eb0c9d38b5a22","core/skill-guidance":"8394362d28c82fa4d13c7a9f5568c05680f6687e07db8f426a0e3c92f3027dc9"}},"durable":{"aggregateID":"ses_f260ffd93ffeFzL928vsfZtU7V","seq":4,"version":2}}
 
-data: {"id":"evt_0d95ad0a7001KEitWbogMiBimn","created":1790353002663,"type":"session.inbox.delivered","location":{"directory":"/tmp/projA"},"data":{"sessionID":"ses_f26a5300bffey1BO4KDPY7CqCZ","inboxID":"msg_0d95ad08f001bip68DhTL5xnQ1"},"durable":{"aggregateID":"ses_f26a5300bffey1BO4KDPY7CqCZ","seq":5,"version":1}}
+data: {"id":"evt_0d9f0031f001HBw2S0pZUaAjIf","created":1790362780447,"type":"session.inbox.delivered","location":{"directory":"/tmp/projA"},"data":{"sessionID":"ses_f260ffd93ffeFzL928vsfZtU7V","inboxID":"msg_0d9f003080016S8lcMPxv8xRHU"},"durable":{"aggregateID":"ses_f260ffd93ffeFzL928vsfZtU7V","seq":5,"version":1}}
 
-data: {"id":"evt_0d95ad0aa0019V0GY7kAnmmHfi","created":1790353002666,"type":"session.execution.failed","data":{"sessionID":"ses_f26a5300bffey1BO4KDPY7CqCZ","error":{"type":"provider.no-route","message":"Model unavailable: opencode/definitely-not-a-model"}},"durable":{"aggregateID":"ses_f26a5300bffey1BO4KDPY7CqCZ","seq":6,"version":1}}
+data: {"id":"evt_0d9f00322001qM4O35bSh5gwiq","created":1790362780450,"type":"session.execution.failed","data":{"sessionID":"ses_f260ffd93ffeFzL928vsfZtU7V","error":{"type":"provider.no-route","message":"Model unavailable: opencode/definitely-not-a-model"}},"durable":{"aggregateID":"ses_f260ffd93ffeFzL928vsfZtU7V","seq":6,"version":1}}
 
 : heartbeat
 

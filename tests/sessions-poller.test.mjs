@@ -698,6 +698,12 @@ async function main() {
       if (!persisted || persisted.type !== "permission" || persisted.resolved !== false) {
         throw new Error(`permission record not persisted after window: ${JSON.stringify(persisted)}`);
       }
+      // t13 印章：permission/question 两条写盘路径都携带创建进程 pid。
+      if (persisted.host_pid !== process.pid) {
+        throw new Error(
+          `permission record must carry host_pid=${process.pid}: ${JSON.stringify(persisted)}`,
+        );
+      }
       // 内存等待投影：summary = "<action> permission"、toolCallID = data.source.id（§2.5）。
       const waiting = monitor.sessions
         .get(id)
@@ -771,6 +777,12 @@ async function main() {
       const persisted = await findRecord("req-form-1");
       if (!persisted || persisted.type !== "question") {
         throw new Error(`form record not persisted: ${JSON.stringify(persisted)}`);
+      }
+      // t13 印章：落盘记录必须携带创建进程 pid（回写归属门的唯一可靠信号）。
+      if (persisted.host_pid !== process.pid) {
+        throw new Error(
+          `persisted record must carry host_pid=${process.pid}: ${JSON.stringify(persisted)}`,
+        );
       }
       const payload = JSON.parse(persisted.message);
       if (
@@ -1082,41 +1094,41 @@ async function main() {
     },
   );
 
-  // API-406：404/409 → 幂等终态（删除记录、不重试）。
+  // API-406（t13 修订）：409 是唯一确认已决信号 → 幂等终态（删除记录、不重试）。
+  // 404 不再视为终态（t13-probe P2：非宿主对 pending form 的 reply/cancel 也返回
+  // 404；只有已决 409 可判定），保留记录下轮重试——见 T13-404。
   await runCase(
-    "API-406 form reply 409/404 are idempotent terminal: delete record, no retry",
+    "API-406 form reply 409 is idempotent terminal: delete record, no retry",
     async () => {
-      for (const terminalStatus of [409, 404]) {
-        const server = await startFormServer(() => terminalStatus);
-        setFormChannel(server.port, "test-secret");
-        try {
-          const requestID = `req-h3-${terminalStatus}`;
-          await registry.mutate((reg) =>
-            appendSessionRecord(
-              reg,
-              root,
-              formRecord({ requestID, q_answers: [["A"]] }),
-            ),
-          );
-          const monitor = makeMonitor(async () => {});
-          captureLogs(monitor);
-          const applied = await monitor.scanReplyQueue();
-          if (applied !== 1) {
-            throw new Error(`${terminalStatus} must count as terminal apply, got ${applied}`);
-          }
-          if ((await findRecord(requestID)) !== undefined) {
-            throw new Error(`${terminalStatus} terminal must delete the record`);
-          }
-          const callsAfter = server.requests.length;
-          const again = await monitor.scanReplyQueue();
-          if (again !== 0 || server.requests.length !== callsAfter) {
-            throw new Error(`${terminalStatus} terminal must not retry`);
-          }
-          await monitor.dispose();
-        } finally {
-          restoreFormChannel();
-          await server.close();
+      const server = await startFormServer(() => 409);
+      setFormChannel(server.port, "test-secret");
+      try {
+        const requestID = "req-h3-409";
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({ requestID, q_answers: [["A"]] }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) {
+          throw new Error(`409 must count as terminal apply, got ${applied}`);
         }
+        if ((await findRecord(requestID)) !== undefined) {
+          throw new Error("409 terminal must delete the record");
+        }
+        const callsAfter = server.requests.length;
+        const again = await monitor.scanReplyQueue();
+        if (again !== 0 || server.requests.length !== callsAfter) {
+          throw new Error("409 terminal must not retry");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
       }
     },
   );
@@ -5325,6 +5337,370 @@ ${expectedResultLine}`) ||
         fakeClient.sessionGetError = undefined;
         restoreFormChannel();
         await server.close();
+      }
+    },
+  );
+
+  // ---- t13：共享存储跨实例回写归属（host_pid 印章）+ 404 终态修订 -------------
+  // 实机事故：两个 server 共享 HOME/XDG，非宿主 B 的 session.get 门 fail open
+  // （t13-probe P4：A/B session.get 载荷完全一致），B 把回写打到自身 → 404 →
+  // 删除共享记录。修复：等待记录创建时写入 host_pid（创建进程 = 收到 asked
+  // 事件的宿主，t13-probe P1：只有宿主进程收到 session 事件）；回写前只有
+  // host_pid === process.pid 的实例才 apply；404 一律不再视为终态（P2：非宿主
+  // pending 与宿主已决形态都可能 404；409 FormAlreadySettled 是唯一确认已决
+  // 信号）。
+
+  // T13-STAMP-1：host_pid === 本进程 → question 记录正常 apply（204）并删除；
+  // 印章命中时不再调用 session.get 过渡门。
+  await runCase(
+    "T13-STAMP-1 question record stamped with this pid applies; stamp short-circuits session.get",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      fakeClient.sessionGetCalls = [];
+      fakeClient.sessionGetError = undefined;
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({
+              requestID: "req-t13-s1",
+              q_answers: [["A"]],
+              host_pid: process.pid,
+            }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (server.requests.length !== 1) {
+          throw new Error(`expected exactly 1 request, got ${server.requests.length}`);
+        }
+        if (fakeClient.sessionGetCalls.length !== 0) {
+          throw new Error(
+            `stamp match must not call session.get: ${JSON.stringify(fakeClient.sessionGetCalls)}`,
+          );
+        }
+        if ((await findRecord("req-t13-s1")) !== undefined) {
+          throw new Error("record must be deleted after 204");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await server.close();
+      }
+    },
+  );
+
+  // T13-STAMP-2：host_pid !== 本进程 → 非宿主跳过：零 HTTP、零删除、记录原样；
+  // 两轮扫描只记 1 行 skip dline；不产生 apply failure 日志；session.get 不参与。
+  await runCase(
+    "T13-STAMP-2 question record stamped with another pid skips without apply/removal, logs once",
+    async () => {
+      const server = await startFormServer(() => 204);
+      setFormChannel(server.port, "test-secret");
+      fakeClient.sessionGetCalls = [];
+      fakeClient.sessionGetError = undefined;
+      const otherPid = process.pid + 1;
+      const marker = "apply skipped: waiting record owned by another instance request=req-t13-s2";
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({
+              requestID: "req-t13-s2",
+              q_answers: [["A"]],
+              host_pid: otherPid,
+            }),
+          ),
+        );
+        const before = countDiagLines(marker);
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        const second = await monitor.scanReplyQueue();
+        if (first !== 0 || second !== 0) {
+          throw new Error(`expected 0 applied both rounds, got ${first}/${second}`);
+        }
+        if (server.requests.length !== 0) {
+          throw new Error("non-owner instance must not send the form request");
+        }
+        if (fakeClient.sessionGetCalls.length !== 0) {
+          throw new Error("stamp mismatch must not fall back to session.get");
+        }
+        if (logs.some((entry) => entry.message.includes("question apply failed"))) {
+          throw new Error("gate skip must not log an apply failure");
+        }
+        const record = await findRecord("req-t13-s2");
+        if (!record || record.q_answers == null || record.resolved !== false) {
+          throw new Error(`record must stay untouched: ${JSON.stringify(record)}`);
+        }
+        const after = countDiagLines(marker);
+        if (after - before !== 1) {
+          throw new Error(`expected exactly 1 skip dline, got ${after - before}`);
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-s2"));
+        await server.close();
+      }
+    },
+  );
+
+  // T13-STAMP-3：permission 记录 host_pid !== 本进程 → 非宿主不调
+  // permission.reply、不删除记录（同一归属门覆盖 permission 路径）。
+  await runCase(
+    "T13-STAMP-3 permission record stamped with another pid skips permission.reply and keeps record",
+    async () => {
+      fakeClient.replyCalls = [];
+      fakeClient.replyError = undefined;
+      const otherPid = process.pid + 2;
+      const marker = "apply skipped: waiting record owned by another instance request=req-t13-s3";
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({
+              request_id: "req-t13-s3",
+              reply: "once",
+              host_pid: otherPid,
+            }),
+          ),
+        );
+        const before = countDiagLines(marker);
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        const second = await monitor.scanReplyQueue();
+        if (first !== 0 || second !== 0) {
+          throw new Error(`expected 0 applied both rounds, got ${first}/${second}`);
+        }
+        if (fakeClient.replyCalls.length !== 0) {
+          throw new Error("non-owner instance must not call permission.reply");
+        }
+        const record = await findRecord("req-t13-s3");
+        if (!record || record.reply !== "once" || record.resolved !== false) {
+          throw new Error(`record must stay untouched: ${JSON.stringify(record)}`);
+        }
+        const after = countDiagLines(marker);
+        if (after - before !== 1) {
+          throw new Error(`expected exactly 1 skip dline, got ${after - before}`);
+        }
+        await monitor.dispose();
+      } finally {
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-s3"));
+      }
+    },
+  );
+
+  // T13-STAMP-4：permission 记录 host_pid === 本进程 → 正常 apply + 删除；
+  // 印章命中时不再调用 session.get 过渡门。
+  await runCase(
+    "T13-STAMP-4 permission record stamped with this pid applies and deletes; no session.get",
+    async () => {
+      fakeClient.replyCalls = [];
+      fakeClient.replyError = undefined;
+      fakeClient.sessionGetCalls = [];
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({
+              request_id: "req-t13-s4",
+              reply: "always",
+              host_pid: process.pid,
+            }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const applied = await monitor.scanReplyQueue();
+        if (applied !== 1) throw new Error(`expected 1 applied, got ${applied}`);
+        if (fakeClient.replyCalls.length !== 1) {
+          throw new Error(`expected 1 permission.reply call, got ${fakeClient.replyCalls.length}`);
+        }
+        if (fakeClient.sessionGetCalls.length !== 0) {
+          throw new Error("stamp match must not call session.get");
+        }
+        if ((await findRecord("req-t13-s4")) !== undefined) {
+          throw new Error("record must be deleted after successful apply");
+        }
+        await monitor.dispose();
+      } finally {
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-s4"));
+      }
+    },
+  );
+
+  // T13-404：404 不是终态——reply 每轮重试且记录保留（绝不删除共享记录）；
+  // 换 409（唯一确认已决信号）后才删除。
+  await runCase(
+    "T13-404 form reply 404 keeps record and retries; 409 then deletes",
+    async () => {
+      let status = 404;
+      const server = await startFormServer(() => status);
+      setFormChannel(server.port, "test-secret");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({
+              requestID: "req-t13-404",
+              q_answers: [["A"]],
+              host_pid: process.pid,
+            }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        const logs = captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        if (first !== 0) throw new Error(`expected 0 applied on 404, got ${first}`);
+        if ((await findRecord("req-t13-404")) === undefined) {
+          throw new Error("404 must keep the record");
+        }
+        if (!logs.some((entry) => entry.message.includes("Form reply rejected with HTTP 404"))) {
+          throw new Error(`404 reason must be logged: ${JSON.stringify(logs)}`);
+        }
+        const second = await monitor.scanReplyQueue();
+        if (second !== 0 || server.requests.length !== 2) {
+          throw new Error(
+            `404 must retry every round (applied=${second}, requests=${server.requests.length})`,
+          );
+        }
+        if ((await findRecord("req-t13-404")) === undefined) {
+          throw new Error("retried 404 must still keep the record");
+        }
+        status = 409;
+        const third = await monitor.scanReplyQueue();
+        if (third !== 1) throw new Error(`expected 1 applied on 409, got ${third}`);
+        if ((await findRecord("req-t13-404")) !== undefined) {
+          throw new Error("409 terminal must delete the record");
+        }
+        const callsAfter = server.requests.length;
+        const fourth = await monitor.scanReplyQueue();
+        if (fourth !== 0 || server.requests.length !== callsAfter) {
+          throw new Error("deleted record must not be retried");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-404"));
+        await server.close();
+      }
+    },
+  );
+
+  // T13-404-CANCEL：cancel（q_reject）404 同样保留记录重试；409 删除。
+  await runCase(
+    "T13-404-CANCEL form cancel 404 keeps record and retries; 409 then deletes",
+    async () => {
+      let status = 404;
+      const server = await startFormServer(() => status);
+      setFormChannel(server.port, "test-secret");
+      try {
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            formRecord({
+              requestID: "req-t13-404c",
+              q_reject: true,
+              host_pid: process.pid,
+            }),
+          ),
+        );
+        const monitor = makeMonitor(async () => {});
+        captureLogs(monitor);
+        const first = await monitor.scanReplyQueue();
+        if (first !== 0) throw new Error(`expected 0 applied on 404, got ${first}`);
+        if ((await findRecord("req-t13-404c")) === undefined) {
+          throw new Error("cancel 404 must keep the record");
+        }
+        status = 409;
+        const second = await monitor.scanReplyQueue();
+        if (second !== 1) throw new Error(`expected 1 applied on 409, got ${second}`);
+        if ((await findRecord("req-t13-404c")) !== undefined) {
+          throw new Error("cancel 409 terminal must delete the record");
+        }
+        await monitor.dispose();
+      } finally {
+        restoreFormChannel();
+        await registry.mutate((reg) => removeSessionRecord(reg, "req-t13-404c"));
+        await server.close();
+      }
+    },
+  );
+
+  // T13-CB-400：answerCallbackQuery 返回 400（query too old 类）→ 恰好 1 次
+  // 尝试（不重试、不再补发「操作失败」弹窗）；业务副作用（reply 落盘）保留。
+  await runCase(
+    "T13-CB-400 stale callback query answers once, no retry, no fallback answer",
+    async () => {
+      const fetches = [];
+      globalThis.fetch = async (url, options) => {
+        fetches.push({ url: String(url), body: JSON.parse(options.body) });
+        if (String(url).includes("answerCallbackQuery")) {
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              error_code: 400,
+              description:
+                "Bad Request: query is too old and response timeout expired or query ID is invalid",
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify({ ok: true, result: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      };
+      try {
+        const requestId = "req-cb-400";
+        await registry.mutate((reg) =>
+          appendSessionRecord(
+            reg,
+            root,
+            makeRecord({ request_id: requestId, type: "permission" }),
+          ),
+        );
+        const monitor = new TelegramSessionMonitor(
+          fakeClient,
+          fakeConfig,
+          root,
+          registry,
+        );
+        await monitor.handleCallback({
+          id: "cb-400",
+          from: { id: 123 },
+          message: { message_id: 7, chat: { id: 123 }, text: "ORIGINAL" },
+          data: `otg:perm:${requestId}:once`,
+        });
+        const answerCalls = fetches.filter((call) =>
+          call.url.includes("answerCallbackQuery"),
+        );
+        if (answerCalls.length !== 1) {
+          throw new Error(
+            `400 must not be retried nor answered twice: attempts=${answerCalls.length}`,
+          );
+        }
+        const persisted = await findRecord(requestId);
+        if (!persisted || persisted.reply !== "once") {
+          throw new Error(
+            `reply write must survive the answer failure: ${JSON.stringify(persisted)}`,
+          );
+        }
+        await monitor.dispose();
+        await registry.mutate((reg) => removeSessionRecord(reg, requestId));
+      } finally {
+        restoreFetch();
       }
     },
   );

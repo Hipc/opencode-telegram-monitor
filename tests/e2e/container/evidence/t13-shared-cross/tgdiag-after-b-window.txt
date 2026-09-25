@@ -1,0 +1,35 @@
+2026-09-25T18:53:55.808Z [11] MODULE LOADED
+2026-09-25T18:53:55.944Z [11] setup() pid=11 root=/tmp/home
+2026-09-25T18:53:55.947Z [11] initialize() called
+2026-09-25T18:53:55.947Z [11] runTelegram() started
+2026-09-25T18:53:55.947Z [11] reply scan: starting 1s ticker
+2026-09-25T18:53:55.948Z [11] poller lock acquired
+2026-09-25T18:53:55.949Z [11] sessions scan: starting 1s ticker
+2026-09-25T18:53:55.949Z [11] deleteWebhook: calling
+2026-09-25T18:53:56.440Z [11] scheduleWaitingNotify(per_0d9eac357001COpP1eOVTwe7Qt) type=permission
+2026-09-25T18:53:57.422Z [11] [error] Telegram initialization failed; continuing to poll {"error":"TelegramApiError(401)"}
+2026-09-25T18:53:57.422Z [11] init failed: TelegramApiError(401); continuing to poll
+2026-09-25T18:53:57.422Z [11] poll loop: starting
+2026-09-25T18:53:57.422Z [11] getUpdates: calling
+2026-09-25T18:53:58.380Z [139] MODULE LOADED
+2026-09-25T18:53:58.397Z [11] [error] Telegram rejected the configured bot token
+2026-09-25T18:53:58.547Z [139] setup() pid=139 root=/tmp/home
+2026-09-25T18:53:58.550Z [139] initialize() called
+2026-09-25T18:53:58.550Z [139] runTelegram() started
+2026-09-25T18:53:58.550Z [139] reply scan: starting 1s ticker
+2026-09-25T18:53:58.551Z [139] poller lock acquired
+2026-09-25T18:53:58.551Z [139] sessions scan: starting 1s ticker
+2026-09-25T18:53:58.551Z [139] deleteWebhook: calling
+2026-09-25T18:53:59.294Z [139] [error] Telegram initialization failed; continuing to poll {"error":"TelegramApiError(401)"}
+2026-09-25T18:53:59.294Z [139] init failed: TelegramApiError(401); continuing to poll
+2026-09-25T18:53:59.294Z [139] poll loop: starting
+2026-09-25T18:53:59.294Z [139] getUpdates: calling
+2026-09-25T18:53:59.355Z [11] self-update: skipped (not an npm cache install)
+2026-09-25T18:53:59.722Z [139] [warn] Session record send failed; will retry on next scan {"requestId":"frm_0d9eac39d0015up4Ew3EYyIktT","error":"TelegramApiError(401)"}
+2026-09-25T18:54:00.000Z [139] [warn] Session record send failed; will retry on next scan {"requestId":"frm_0d9eac3e40013vS5SVODLOEQYZ","error":"TelegramApiError(401)"}
+2026-09-25T18:54:00.279Z [139] [warn] Session record send failed; will retry on next scan {"requestId":"per_0d9eac357001COpP1eOVTwe7Qt","error":"TelegramApiError(401)"}
+2026-09-25T18:54:00.335Z [139] [error] Telegram rejected the configured bot token
+2026-09-25T18:54:00.960Z [139] reply scan: apply skipped: waiting record owned by another instance request=frm_0d9eac39d0015up4Ew3EYyIktT session=ses_f26153cf3ffebvbwElUkPjcZM6 host_pid=11 pid=139
+2026-09-25T18:54:00.960Z [139] reply scan: apply skipped: waiting record owned by another instance request=frm_0d9eac3e40013vS5SVODLOEQYZ session=ses_f26153cf3ffebvbwElUkPjcZM6 host_pid=11 pid=139
+2026-09-25T18:54:00.960Z [139] reply scan: apply skipped: waiting record owned by another instance request=per_0d9eac357001COpP1eOVTwe7Qt session=ses_f26153cf3ffebvbwElUkPjcZM6 host_pid=11 pid=139
+2026-09-25T18:54:01.958Z [139] self-update: skipped (not an npm cache install)
