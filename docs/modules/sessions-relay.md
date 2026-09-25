@@ -131,9 +131,17 @@ export function appendSessionRecord(
   不写盘；调用方 1.2 已保证先 `registerProject`，路径不存在是防御性兜底）。
 - 条目存在 → 返回**新 registry**：`sessions: [...(entry.sessions ?? []), record]`
   （**追加不覆盖**，决策 #3；多个并发权限各自追加）。
-- **纯函数不去重**：同一 `request_id` 重复 append 会追加两条——去重是写入端职责
+- **纯函数不去重**（**t09-dupe-fix supersede：改为按 `request_id` 全局幂等，见下方注**）：
+  同一 `request_id` 重复 append 会追加两条——去重是写入端职责
   （`seenWaitingRequestIDs`，决策 #3）。
 - 返回的 registry 必须是新对象引用（`mutate` 依赖引用比较做幂等短路）。
+
+> **t09-dupe-fix supersede（2026-09-25，commit `8c80737`；实机事故：触发一个 question 后连续
+> 重复推送）**：append **按 `request_id` 全局幂等**——注册表**任意条目**已存在同 id 副本 →
+> 返回**原 registry 引用**（不追加、不写盘）；不同 `request_id` 仍追加不覆盖。事故根因：多实例
+> （同进程多次激活 / 多进程共享 `projects.json`）各自 append 同一等待请求产生重复副本，poller
+> 每轮重复发送；写入端 `seenWaitingRequestIDs` 只覆盖单实例、无法收敛跨实例重复，故幂等下沉到
+> registry 纯函数。条目不存在 → 原引用兜底、返回新引用约定均不变。
 
 ### 4.2 `markSessionResolved` / `markSessionSent`
 
@@ -152,7 +160,8 @@ export function markSessionSent(
 统一语义（两函数结构相同，只差置位字段）：
 
 - 在**全部条目**的 `sessions` 中按 `record.request_id === requestID` 精确匹配
-  （请求 ID 全局唯一，跨条目全局找第一条；顺序 = `projects` 数组序 + `sessions` 数组序）。
+  （请求 ID 全局唯一；顺序 = `projects` 数组序 + `sessions` 数组序）。
+  **t09-dupe-fix supersede：不再「跨条目全局找第一条」——匹配全部副本，见下方注。**
 - **无匹配 → 返回 `undefined`**：消费方把它透传给 `mutate`，触发 projects-registry.md §4
   步骤 2 的「不写盘、不抛错、返回 undefined」路径（无匹配就是没有可标记的记录，
   静默跳过写盘）。
@@ -166,6 +175,13 @@ export function markSessionSent(
 
 > 冻结理由：函数内不隐含「置位前检查对方字段」（如 resolved 时同时置 send 是**禁止**的），
 > 两个字段各自独立、只由各自置位方消费，避免并发窗口下语义纠缠。
+
+> **t09-dupe-fix supersede（2026-09-25，commit `8c80737`）**：`markSessionSent` 一次调用把
+> **全部同 request_id 副本**的 `send` 置 true（跨全部条目全量匹配；已 true 的副本原引用保留，
+> 只重建含变更副本的条目）——历史重复副本单轮自愈。三态其余不变：无匹配 → `undefined`；
+> 匹配且**全部已 true** → 原 registry 引用（幂等短路不写盘）；否则新 registry 仅改匹配副本的
+> `send`。只标第一条的旧行为会让其余副本保持 send=false → 每轮扫描重复发送（实机事故根因
+> 之一）。`markSessionResolved` 已在 Round 6 删除（§16.3），不涉及。
 
 ## 5. Phase 1.2 写入端契约（monitor 写入路径）
 
@@ -247,12 +263,23 @@ export function markSessionSent(
   **（Round 2.1 supersede：permission 记录的「message 节选」改为结构化字段行，见 §13.11；
   question 记录仍为原文节选，本条对 question 保持有效。）**
 
+> **t09-dupe-fix supersede（2026-09-25，commit `8c80737`）**：扫描轮内按 `request_id` 去重——
+> 同一轮 `registry.read()` 快照里同 request_id 的重复副本只处理一次（首个命中进入发送，其余跳过）。
+> 原因：快照在 `markSessionSent` 之后已过期，历史重复副本在本轮仍为 `send=false`，不去重会在
+> 同一轮重复发送；`markSessionSent` 全量置位后下一轮自然不再命中。发送失败仍不置位、下轮重试
+> （去重 Set 按轮隔离，失败请求下一轮重新进入）。筛选条件、发送链与置位时机均不变。
+
 ### 6.3 可测试入口（冻结）
 
 扫描发送逻辑必须抽为**可独立调用的私有方法**（如 `scanSessionQueue()`，返回本轮处理条数
 或 Promise<void>），`setInterval` 只负责周期调用它。`tests/sessions-poller.test.mjs`
 **不依赖真实 interval 时钟**，直接调用该方法（或 stub `sendMessage` 后驱动 ticker），
 用 `monitor.sendMessage = async (text) => …` 打桩断言次数/内容/抛错重试。
+
+> **t09-dupe-fix 补充（2026-09-25，commit `8c80737`）**：`scanSessionQueue()` 内部维护每轮
+> `request_id` 去重 Set（见 §6.2 注）；测试可直接构造同 request_id 多副本，断言「一轮扫描恰
+> 发送一次 + 全部副本 send=true」与「发送失败时本轮恰一次尝试、下轮重试」（API-601/602）。
+> 可测试入口形态与调用方式不变。
 
 ### 6.4 扫描端禁区（冻结）
 
@@ -368,6 +395,10 @@ export function markSessionSent(
 | 本文件 §13.6 消费端 apply 成功置位 / §14.8.2 404 终态 | permission apply 成功、question apply 成功与 404 终态 → `markSessionResolved` 置 resolved=true | **Round 6 supersede**：成功路径与 404 终态改为**删除记录**——`applySessionReply` 成功 → `removeSessionRecord`；`markQuestionResolved`（方法名保留）内部改调 `removeSessionRecord`（§16.4） |
 | 本文件 §10「不做 sessions 清理」 | 不做 sessions 清理/去重/过期回收（`created_at` 仅预留，决策 #13） | **Round 6 supersede**：三条删除路径落地（① resolved/终态删除 ② 会话终结清理 ③ TTL 兜底），`created_at` 由 `SESSIONS_RECORD_TTL_MS` 兜底正式消费（§16；§10 原文已行内标注） |
 | 本文件 §8/§13.9/§14.5/§14.8.7/§14.9.5/§15.5 测试编号 | API-001~208 / API-301~304 / REG-101~301 / REDACT / REAL-RICH-EDIT / LOCK / BUILD | **Round 6 改判 + 新增**：API-004（a/b/c/d，终态 = 删除）、API-103/104、API-205-1~3、API-206-1~4 改判（终态断言 resolved=true → 记录删除）；新增 API-501~503 / API-504/504b / REG-401~403（§16.7） |
+| 本文件 §4.1 `appendSessionRecord` 契约 | 追加不覆盖、**纯函数不去重**（去重归写入端 `seenWaitingRequestIDs`） | **t09-dupe-fix supersede**：append **按 `request_id` 全局幂等**——任意条目已有同 id 副本 → 原 registry 引用、不写盘；不同 id 仍追加（§4.1 行内注） |
+| 本文件 §4.2 `markSessionSent` 契约 | 跨条目全局匹配**第一条**；已置位 → 原引用 | **t09-dupe-fix supersede**：一次置位**全部同 request_id 副本**（已 true 副本原引用保留），单轮自愈历史重复副本；三态（无匹配 undefined / 全已 true 原引用 / 变更新引用）不变（§4.2 行内注） |
+| 本文件 §6.2/§6.3 扫描语义 | 每轮逐条处理筛选命中的记录（同 request_id 重复副本各发一次） | **t09-dupe-fix 追加**：轮内按 `request_id` 去重，重复副本一轮只处理一次（快照过期保护）；发送失败仍不置位、下轮重试（§6.2/§6.3 行内注） |
+| 本文件 §14.8.3 message_id 解析 | 三形态防御解析（`result?.message_id ?? result?.message?.message_id ?? result?.messageId`）+ 旧键名诊断 | **t09-dupe-fix supersede**：`telegramRequest/telegramWithRetry` 返回已解包 `envelope.result`，正确解析 = 顶层 `response?.message_id`；旧三形态与旧诊断作废，新诊断 `typeof=… keys=…`（§14.8.3 行内注） |
 
 ## 12. 变更记录
 
@@ -453,6 +484,14 @@ export function markSessionSent(
   removeExpiredSessionRecords，仅 poller.lock 持有者执行，无过期零写盘）——同时清理历史遗留
   resolved=true 记录（不做迁移）；测试编号 API-004/103/104/205/206 改判（终态 = 删除）、
   API-501~503 / API-504/504b / REG-401~403 新增（§16.7）。supersede 记录见 §11。
+- 2026-09-25 修订（t09-dupe-fix / v2 适配实机修复轮，见 §4.1/§4.2/§6.2/§6.3/§14.8.3 行内注）：
+  实机事故「触发一个 question 后连续重复推送」——① `appendSessionRecord` 改**按 `request_id` 全局
+  幂等**（任意条目已有同 id → 原引用不写盘；不同 id 仍追加不覆盖）；② `markSessionSent` 改**一次
+  置位全部同 request_id 副本**（单轮自愈历史重复副本；全已 true → 原引用）；③ `scanSessionQueue`
+  轮内按 `request_id` 去重（快照过期保护，发送失败仍下轮重试）；④ `sendMessageWithKeyboard` 改读
+  **已解包响应顶层** `response?.message_id`（旧三形态防御解析与旧键名诊断作废，新诊断 typeof +
+  顶层键名）。commit `8c807377`；测试 REG-404/405、API-601/602/603；容器 dupe 场景（假 TG 端点 +
+  负控：修复前同一请求 16 次重复发送、副本 `[true,false]`、无 q_msg_id 持久化）。supersede 记录见 §11。
 
 ## 13. Round 2 扩展：TG 审批按钮 + reply 回写应用（冻结 2026-09-02）
 
@@ -1041,6 +1080,7 @@ export function buildQuestionKeyboard(
 - 实现：`const response = await telegramWithRetry<{ result?: { message_id?: number } }>("sendRichMessage", {…}, ctx)` → `return response?.result?.message_id`。
   **（Round 2 修订：§14.8.3 supersede 此返回解析**——防御三形态
   `result?.message_id ?? result?.message?.message_id ?? result?.messageId` + 首次 dline 键名诊断；语义不变）
+  **（t09-dupe-fix 再修订：三形态解析亦作废，改读已解包响应顶层 `response?.message_id`，见 §14.8.3 行内注）**
 - 既有调用点（permission 键盘发送）忽略返回值，兼容；测试 stub 同步改为可返回 message_id。
 
 #### 14.2.3 questionEntryID / qShortMap（1.2，冻结）
@@ -1329,10 +1369,11 @@ private questionApplyChannel?: 1 | 2 | 3 | undefined; // 实例级缓存：某�
 
 #### 14.8.3 sendRichMessage message_id 防御解析（修订 §14.2.2 sendMessageWithKeyboard 扩展，Phase 2.1 冻结）
 
-- 实机观察：非官方通道 `sendRichMessage` 响应**无 `result.message_id`**（键名形态与官方
-  sendMessage 不同），导致所有记录 q_msg_id 缺失 → 自定义输入路径无法编辑原消息（回调路径
-  靠 `callback.message.message_id` 兜底才正常）。
-- **防御解析（冻结，替换 §14.2.2 的 `return response?.result?.message_id`）**：
+- 实机观察（**t09-dupe-fix 作废**：该「无 `result.message_id`」结论是解析路径错误造成的——响应
+  顶层即 message_id，见本节末注）：非官方通道 `sendRichMessage` 响应**无 `result.message_id`**
+  （键名形态与官方 sendMessage 不同），导致所有记录 q_msg_id 缺失 → 自定义输入路径无法编辑原消息
+  （回调路径靠 `callback.message.message_id` 兜底才正常）。
+- **防御解析（冻结，替换 §14.2.2 的 `return response?.result?.message_id`；t09-dupe-fix 作废，勿实现）**：
   ```ts
   const messageID =
     response?.result?.message_id ??
@@ -1341,11 +1382,23 @@ private questionApplyChannel?: 1 | 2 | 3 | undefined; // 实例级缓存：某�
     undefined;
   return messageID;
   ```
-- **首次诊断（冻结）**：实例级 flag（如 `sendRichMessageKeysLogged`），首次发送成功时
+- **首次诊断（冻结）**（**t09-dupe-fix 作废**：诊断行改为 typeof + 顶层键名，见本节末注）：实例级
+  flag（如 `sendRichMessageKeysLogged`），首次发送成功时
   `dline("sendMessageWithKeyboard response keys: " + Object.keys(response?.result ?? {}).join(","))`
   ——仅键名、不含任何消息内容，天然脱敏；供后续诊断响应形态演进。
 - 语义不变：`Promise<number | undefined>`；无则 undefined（§14.2.2 步骤 4 的 logWarn 与
   回调兜底不变）；既有调用点忽略返回值兼容。
+
+> **t09-dupe-fix supersede（2026-09-25，commit `8c80737`；实机事故）**：本节三形态防御解析与旧
+> 键名诊断**全部作废**。`telegramRequest`/`telegramWithRetry` 返回的是**已解包的
+> `envelope.result`**（`src/telegram/client.ts` 的 `requestDirect`/`requestViaProxy` 均
+> `return envelope.result`），因此 `message_id` 在响应**顶层**：正确解析 = `response?.message_id`。
+> 原 `response?.result?.message_id` 形态恒为 `undefined` → `q_msg_id` 永不回写、向导编辑退化为
+> 发新消息（事故不可诊断的原因之一）；实机正控 `tests/e2e/real-keyboard-channel.test.mjs`
+> 断言 `result?.message_id` 为 number 且通过。首次诊断行同步改为
+> `sendMessageWithKeyboard response: typeof=… keys=…`（typeof + 顶层键名，仅形态、天然脱敏）；
+> 旧 `sendMessageWithKeyboard response keys: …` 作废。仅保留已验证形态，不再保留未证实的
+> `result.*` / `messageId` 变体。`Promise<number | undefined>` 返回语义与调用点兼容性不变。
 
 #### 14.8.4 Custom 恒显示（supersede §14.2.1 custom 行条件 + §14.3.1 custom 防御 + §14.3.3 文案行，Phase 2.2 冻结）
 
@@ -1894,8 +1947,8 @@ export function removeSessionRecord(
   parse 容错一致；无 sessions 键的条目不参与匹配也不被触碰）。
 - **不区分 resolved/send/reply/q_\* 状态**：删除的就是整条记录，无字段保留（resolved=true 的
   历史终态记录同样可删）。
-- `markSessionSent` 与 send 置位语义**零变化**（私有 `markSessionFlag` 只服务 send 置位，
-  resolved 分支删除）。
+- `markSessionSent` 相对 Round 6 **零变化**（私有 `markSessionFlag` 只服务 send 置位，
+  resolved 分支删除）；**t09-dupe-fix 再修订：一次置位全部同 request_id 副本，见 §4.2 行内注**。
 
 #### 16.3.2 `removeSessionRecordsForSession`（新增，冻结）
 

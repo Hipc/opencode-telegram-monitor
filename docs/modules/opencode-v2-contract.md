@@ -20,6 +20,13 @@
 > probe `4dddc8e`）；src 已消费（F1，`401e7c1`）；§2.1/§3.1 记录子会话
 > `parentID?/agent?/model?` 实测形状，§3.3 冻结 resolved-reply 分类规则（F2，`401e7c1`）。
 > 契约以本修订 commit 定版。
+>
+> **修订 3（2026-09-25，r3）**：实机事故修复（t09）——「触发一个 question 后连续重复推送」，
+> 落地 commit `8c807377`：等待记录按 `request_id` 幂等（append 去重 / `markSessionSent`
+> 全副本置位 / 扫描轮内去重）+ `sendMessageWithKeyboard` 改读**已解包响应顶层**
+> `message_id`（relay `sessions-relay.md` §4.1/§4.2/§6.2/§14.8.3 行内 supersede）；
+> §1.3 补多激活语义与 `setup()` pid/root 诊断行；§5.1 补双目录加载字段证据
+> （本地 v2 实测 `~/.config/opencode/plugins/` 复数路径）。契约以本修订 commit 定版。
 
 ---
 
@@ -88,12 +95,21 @@ export default {
 - 入口不得有其它命名导出（v1 事故纪律保留：`bundle-smoke` 断言 default 为含
   `id: string` + `setup: function` 的对象、且无其它导出）。
 
-### 1.3 一次激活一次 setup；模块状态在 reload 后重置
+### 1.3 一次激活一次 setup（同一进程可多次激活）；模块状态在 reload 后重置
 
 - `[observed]` `setup` 每次激活恰一次（`load`/`api`/`variants` 全部场景）。
 - `[observed]` `opencode reload` 序列：`probe.dispose` → `probe.event-stream.ended` →
   **新 `probe.setup`（同 pid）**，新激活的模块级状态（seq 计数）从 1 重新开始——
   **插件模块被重新 import**（`evidence/api/events.jsonl` 搜 `probe.dispose`/`probe.setup`）。
+- `[observed]` **多激活（field，t09，2026-09-25）**：本地 v2 同一进程内可多次加载同一插件
+  （日志 `msg="loading plugin" id=/home/hipc/.config/opencode/plugins/monitor.ts` 单进程反复
+  出现 ~6 次），每次加载对应一次 `setup` 激活；多进程共享 `~/.otg/projects.json` 亦同。
+  **冻结要求**：等待记录的写入与发送必须跨激活/跨实例幂等——`appendSessionRecord` 按
+  `request_id` 全局幂等、`markSessionSent` 一次置位全部副本、`scanSessionQueue` 轮内去重
+  （`sessions-relay.md` §4.1/§4.2/§6.2 行内 supersede；commit `8c807377`）。
+- **激活诊断（t09 新增，冻结）**：每次 `setup` 激活写一行
+  `setup() pid=<pid> root=<client.location.directory>`（`dline`，纯诊断、无行为变化）——
+  多加载/多进程重复记录的来源可据此定位（容器断言 D4.1）。
 
 **冻结推论：所有可变状态必须挂在 `TelegramSessionMonitor` 实例上**，禁止模块级可变状态
 （常驻心跳用实例字段管理，dispose 清理）。v1 `monitor.dispose()` 已覆盖 timers/intervals/
@@ -391,6 +407,11 @@ reply API（§3、§7）。
 | `"plugin": ["/abs/plugin-package"]`（绝对**目录**，`package.json` + `index.ts`） | **加载成功**：`loading plugin id=/abs/plugin-package entrypoint=file:///abs/plugin-package/index.ts`（`evidence/package-dir/`）。 |
 | `<configDir>/plugin/*.ts` 自动发现（无需配置项） | **加载成功**；同时扫 `<configDir>/plugin/` 与 `<configDir>/plugins/`；该目录下**每个** `.ts`/`.js` 文件和每个子目录都当作插件（helper 放里面会被拒：`failed to load plugin ... Missing key at ["default"]`，`evidence/variants/arm-helper-in-plugin-server.txt`）。 |
 
+- `[observed]` **双目录字段证据（t09，2026-09-25）**：本地 v2 实测从
+  `<configDir>/plugins/monitor.ts`（**复数**目录）自动加载成功（日志
+  `loading plugin id=/home/hipc/.config/opencode/plugins/monitor.ts`）；探针 A2 已证
+  `<configDir>/plugin/`（单数）同样自动发现。**两目录均被扫描**；同一插件只放一处
+  （README 安装章节同口径），避免重复安装混淆。
 - 配置键：`"plugin"`（legacy，string 或 `[package, options]`）与 `"plugins"`
   （v2，string 或 `{package, options}`）都接受（A2）；裸名按包名解析。
 - TS 由二进制内嵌 Bun 编译；`./x` 与 `./x.ts` 两种相对导入都实测可用（A2，
@@ -628,6 +649,10 @@ token 聚合；无「永不填充」降级面。形状入 §2.1/§3.1。仍开�
 
 ## 变更记录
 
+- 2026-09-25 修订 3（contract revision r3，t09 实机事故修复回写）：§1.3 补多激活语义
+  （同进程多次加载/激活）与 `setup() pid/root` 诊断行；§5.1 补双目录（`plugin/`/`plugins/`）
+  加载字段证据；等待记录 `request_id` 幂等与 message_id 解包修正指向 relay
+  `sessions-relay.md` §4.1/§4.2/§6.2/§14.8.3 行内 supersede（commit `8c807377`）。
 - 2026-09-25 修订 2（contract revision r2，doc-prep follow-up）：§9 关闭 subagent
   lineage（parentID）开放项（probe-lineage VERDICT + evidence，`4dddc8e`；src 消费
   `401e7c1` F1）；§2.1/§3.1 记录子会话 `parentID?/agent?/model?` 实测形状；§3.3 冻结
